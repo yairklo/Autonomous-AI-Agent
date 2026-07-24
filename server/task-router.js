@@ -5,36 +5,40 @@ import { spawn } from 'node:child_process';
 import { config } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dispatchScript = path.join(config.root, 'scripts', 'dispatch-task.js');
+const dispatchScript = process.env.DISPATCH_TASK_SCRIPT
+  ? path.resolve(process.env.DISPATCH_TASK_SCRIPT)
+  : path.join(config.root, 'scripts', 'dispatch-task.js');
 
 /**
  * Detect coding / Cursor-dispatch intent in a user utterance.
- * Used by the Claude orchestration layer to hand work to dispatch-task.js.
+ * Used by the Claude orchestration layer to invoke the dispatch_coding_task MCP tool.
  */
 export function detectCodingDispatch(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
   const wantsDispatch =
-    /שגר|dispatch|grill-?me|cursor\s*cli|headless|סוכן|agent mode/i.test(cleaned) ||
+    /שגר|dispatch|grill-?me|cursor\s*cli|headless|סוכן|agent mode|mcp|dispatch_coding_task/i.test(
+      cleaned
+    ) ||
     (/(תוסיף|הוסף|add|implement|refactor|fix|create|build)/i.test(cleaned) &&
-      /(פרויקט|project|header|כפתור|button|\.js|\.ts|\.tsx|repo)/i.test(cleaned));
+      /(פרויקט|project|header|כפתור|button|\.js|\.ts|\.tsx|repo|mcp)/i.test(cleaned));
 
   if (!wantsDispatch) return null;
 
   const project = extractProjectPath(cleaned) || config.root;
-  if (!fs.existsSync(project)) {
-    return {
-      project: config.root,
-      task: cleaned,
-      dispatchScript,
-    };
-  }
+  const resolvedProject = fs.existsSync(project) ? project : config.root;
 
   return {
-    project,
+    project: resolvedProject,
     task: cleaned,
     dispatchScript,
+    /** MCP tool args Claude / orchestration must use for coding work */
+    mcpTool: 'dispatch_coding_task',
+    mcpArgs: {
+      projectPath: resolvedProject,
+      taskDescription: cleaned,
+    },
   };
 }
 

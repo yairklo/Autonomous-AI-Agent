@@ -12,6 +12,11 @@
 **Date:** 2026-07-24
 
 ## D12 — AUTO_DISPATCH_CODING=1 by default
-**Decision:** Server detects coding/dispatch intent and triggers `dispatch-task.js` directly (Claude layer), rather than only relying on model tool-calls.  
-**Why:** Reliable end-to-end; Grill-Me skip / "שגר ל-Cursor" becomes deterministic. System prompt still documents Bash dispatch for interactive Claude sessions.  
+**Decision:** Server detects coding/dispatch intent and triggers the `dispatch_coding_task` MCP tool (which runs `dispatch-task.js`), rather than only relying on model tool-calls.  
+**Why:** Reliable end-to-end; Grill-Me skip / "שגר ל-Cursor" becomes deterministic.  
+**Date:** 2026-07-24
+
+## D13 — Coding dispatch via MCP tool only
+**Decision:** Coding work is exposed as local MCP tool `dispatch_coding_task` (`server/mcp-tools.js`), which runs `scripts/dispatch-task.js` → Cursor Agent CLI. Claude system prompt states ZERO file/shell capability; `/api/chat` orchestration invokes the MCP tool (not Bash).  
+**Why:** Clear separation of duties; no raw shell/file edits from the voice layer; E2E asserts `tool_call` / `[mcp] tool=dispatch_coding_task`.  
 **Date:** 2026-07-24

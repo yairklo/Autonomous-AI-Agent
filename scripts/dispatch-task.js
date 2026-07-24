@@ -76,10 +76,6 @@ console.log(`✓ Written Cursor rules to: ${cursorrulesPath}`);
 const before = captureGit(resolvedPath);
 console.log(`✓ Pre-agent git: branch=${before.branch} commit=${before.commit}`);
 
-const cursorLaunch = resolveCursorLaunch();
-console.log(`Running headless Cursor agent in: ${resolvedPath}`);
-console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
-
 const agentPrompt = [
   'Read PROMPT.md and .cursorrules in this workspace.',
   'Execute the task fully and autonomously in non-interactive mode.',
@@ -92,6 +88,56 @@ const agentPrompt = [
 ].join(' ');
 
 const runLogPath = path.join(resolvedPath, 'DISPATCH_RUN.log');
+
+// Dry-run path for MCP-layer e2e: still exercises dispatch-task.js + git, without nesting Cursor.
+if (process.env.DISPATCH_DRY_RUN === '1') {
+  console.log(`Running headless Cursor agent in: ${resolvedPath}`);
+  console.log(`✓ Cursor executor resolved: cursor agent (dry-run)`);
+  console.log(`$ cursor agent -p --force --trust --workspace ${resolvedPath} <prompt-from-PROMPT.md>`);
+  fs.writeFileSync(
+    runLogPath,
+    [
+      `executor=cursor agent`,
+      `bin=cursor`,
+      `startedAt=${new Date().toISOString()}`,
+      `requestedMode=${requestedMode}`,
+      `dryRun=1`,
+    ].join('\n') + '\n',
+    'utf8'
+  );
+  try {
+    execSync(`git checkout -b ${branchName}`, { cwd: resolvedPath, stdio: 'inherit' });
+  } catch {
+    execSync(`git checkout ${branchName}`, { cwd: resolvedPath, stdio: 'inherit' });
+  }
+  execSync('git add PROMPT.md .cursorrules', { cwd: resolvedPath, stdio: 'inherit' });
+  try {
+    execSync(`git commit -m "chore: dry-run dispatch for MCP e2e (${branchName})"`, {
+      cwd: resolvedPath,
+      stdio: 'inherit',
+    });
+  } catch {
+    execSync(`git commit --allow-empty -m "chore: dry-run dispatch for MCP e2e (${branchName})"`, {
+      cwd: resolvedPath,
+      stdio: 'inherit',
+    });
+  }
+  const afterDry = captureGit(resolvedPath);
+  console.log(`✓ Post-agent git: branch=${afterDry.branch} commit=${afterDry.commit}`);
+  console.log('✓ Headless agent finished (engine=cursor).');
+  fs.appendFileSync(
+    runLogPath,
+    `finishedAt=${new Date().toISOString()}\nengine=cursor\nbranch=${afterDry.branch}\ncommit=${afterDry.commit}\n`,
+    'utf8'
+  );
+  console.log('✓ Headless Cursor agent execution completed successfully!');
+  process.exit(0);
+}
+
+const cursorLaunch = resolveCursorLaunch();
+console.log(`Running headless Cursor agent in: ${resolvedPath}`);
+console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
+
 fs.writeFileSync(
   runLogPath,
   [

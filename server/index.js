@@ -8,7 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
-import { detectCodingDispatch, runDispatchTask } from './task-router.js';
+import { executeMcpTool, listMcpTools } from './mcp-tools.js';
+import { detectCodingDispatch } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
@@ -49,6 +50,7 @@ app.get('/api/health', (_req, res) => {
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
+    mcpTools: listMcpTools().map((t) => t.name),
     time: new Date().toISOString(),
   });
 });
@@ -90,17 +92,17 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
-  // Claude orchestration layer: coding tasks → headless dispatch-task.js
+  // Claude orchestration layer: coding tasks → dispatch_coding_task MCP tool
   const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
-      await streamDispatch(res, clientId, dispatch, ac.signal);
+      await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
     } catch (err) {
-      console.error('[API CHAT] dispatch error:', err);
+      console.error('[API CHAT] MCP dispatch_coding_task error:', err);
       sendSse(res, 'error', { error: err.message || String(err) });
     }
     res.end();
-    console.log('[API CHAT] dispatch request finished');
+    console.log('[API CHAT] MCP dispatch_coding_task request finished');
     return;
   }
 
@@ -142,7 +144,7 @@ app.post('/api/chat/sync', async (req, res) => {
   if (dispatch) {
     try {
       const logs = [];
-      await runDispatchTask(dispatch, {
+      await executeMcpTool('dispatch_coding_task', dispatch.mcpArgs, {
         onLog: (line) => {
           console.log(line);
           logs.push(line);
@@ -151,8 +153,9 @@ app.post('/api/chat/sync', async (req, res) => {
       return res.json({
         clientId,
         sessionId: null,
-        text: `Dispatched coding task to the headless agent for ${dispatch.project}.`,
+        text: `Dispatched coding task via MCP tool dispatch_coding_task for ${dispatch.project}.`,
         dispatched: true,
+        mcpTool: 'dispatch_coding_task',
         logs: logs.slice(-20),
       });
     } catch (err) {
@@ -224,7 +227,7 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
 
     const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
     if (dispatch) {
-      await streamDispatch(res, clientId, dispatch, ac.signal);
+      await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
       return res.end();
     }
 
@@ -313,17 +316,32 @@ function sendSse(res, event, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-async function streamDispatch(res, clientId, dispatch, signal) {
-  const intro = `Got it — skipping Grill-Me and dispatching this coding task to the headless Cursor/Claude agent for ${dispatch.project}. `;
-  sendSse(res, 'status', { stage: 'dispatch' });
+/**
+ * Orchestration path: Claude has no file/shell tools for coding — coding work
+ * goes solely through the dispatch_coding_task MCP tool → dispatch-task.js → Cursor CLI.
+ */
+async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
+  const toolName = dispatch.mcpTool || 'dispatch_coding_task';
+  const intro =
+    `Got it — skipping Grill-Me and calling MCP tool ${toolName} ` +
+    `to dispatch this coding task to Cursor Agent CLI for ${dispatch.project}. `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: dispatch.mcpArgs,
+  });
   sendSse(res, 'token', { text: intro });
 
   let full = intro;
-  await runDispatchTask(dispatch, {
+  const mcpResult = await executeMcpTool(toolName, dispatch.mcpArgs, {
     signal,
     onLog: (line) => {
       console.log(line);
-      if (/^✓/.test(line) || /Headless agent|feature\/|commit|Written prompt|Written Cursor/i.test(line)) {
+      if (
+        /^✓/.test(line) ||
+        /\[mcp\]/i.test(line) ||
+        /Headless agent|feature\/|commit|Written prompt|Written Cursor|cursor agent/i.test(line)
+      ) {
         const chunk = `${line}\n`;
         full += chunk;
         sendSse(res, 'token', { text: chunk });
@@ -331,16 +349,33 @@ async function streamDispatch(res, clientId, dispatch, signal) {
     },
   });
 
-  const outro = '\nDone. The headless agent created a feature branch and commit for your task.';
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    projectPath: mcpResult.projectPath,
+  });
+
+  const outro =
+    '\nDone. MCP tool dispatch_coding_task ran dispatch-task.js and the headless Cursor agent created a feature branch and commit.';
   full += outro;
   sendSse(res, 'token', { text: outro });
-  sendSse(res, 'done', { result: full, clientId, dispatched: true });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    dispatched: true,
+    mcpTool: toolName,
+  });
 }
 
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
+  console.log(
+    `[voice-agent] mcpTools=${listMcpTools()
+      .map((t) => t.name)
+      .join(',')}`
+  );
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
 });
 

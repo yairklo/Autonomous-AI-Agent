@@ -76,6 +76,8 @@ const server = spawn('node', ['server/index.js'], {
     AUTO_DISPATCH_CODING: '1',
     DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'cursor',
     DISPATCH_AGENT_TIMEOUT_MS: process.env.DISPATCH_AGENT_TIMEOUT_MS || '600000',
+    // Optional: DISPATCH_DRY_RUN=1 exercises MCP → dispatch-task without nesting Cursor.
+    DISPATCH_DRY_RUN: process.env.DISPATCH_DRY_RUN || '',
   },
 });
 
@@ -114,6 +116,9 @@ try {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let sawToolCall = false;
+  let sawToolResult = false;
+  let doneMcpTool = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -137,6 +142,20 @@ try {
           process.stdout.write(payload.text);
           noteLog(payload.text);
         }
+        if (event === 'tool_call' && payload.tool === 'dispatch_coding_task') {
+          sawToolCall = true;
+          noteLog(`[e2e] tool_call ${JSON.stringify(payload)}`);
+          console.log('\n✓ SSE tool_call for dispatch_coding_task received.');
+        }
+        if (event === 'tool_result' && payload.tool === 'dispatch_coding_task' && payload.ok) {
+          sawToolResult = true;
+          noteLog(`[e2e] tool_result ${JSON.stringify(payload)}`);
+          console.log('✓ SSE tool_result for dispatch_coding_task received.');
+        }
+        if (event === 'done') {
+          doneMcpTool = payload.mcpTool || null;
+          if (payload.dispatched) noteLog('[e2e] done.dispatched=true');
+        }
         if (event === 'error' && payload.error) throw new Error(payload.error);
       } catch (err) {
         if (err instanceof SyntaxError) continue;
@@ -147,6 +166,25 @@ try {
 
   console.log('\n✓ SSE Stream completed.');
   const allLogs = collectedLogs.join('\n');
+
+  assert.ok(
+    sawToolCall || /\[mcp\] tool=dispatch_coding_task/i.test(allLogs),
+    'MCP tool dispatch_coding_task was not triggered (no tool_call / [mcp] log)'
+  );
+  assert.ok(
+    sawToolResult || /\[mcp\] tool=dispatch_coding_task status=ok/i.test(allLogs),
+    'MCP tool dispatch_coding_task did not complete successfully'
+  );
+  assert.ok(
+    doneMcpTool === 'dispatch_coding_task' ||
+      /mcpTool.: .dispatch_coding_task|MCP tool dispatch_coding_task/i.test(allLogs),
+    'done event missing mcpTool=dispatch_coding_task'
+  );
+  assert.ok(
+    /dispatch-task\.js/i.test(allLogs) || /\[dispatch\] node/i.test(allLogs),
+    'dispatch-task.js was not invoked via the MCP tool'
+  );
+  console.log('✓ MCP tool dispatch_coding_task → dispatch-task.js path verified.');
 
   const promptWritten =
     fs.existsSync(promptFile) || /Written prompt instructions to:.*PROMPT\.md/i.test(allLogs);
