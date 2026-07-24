@@ -9,6 +9,7 @@ const els = {
   textForm: document.getElementById('textForm'),
   textInput: document.getElementById('textInput'),
   settingsBtn: document.getElementById('settingsBtn'),
+  logoutBtn: document.getElementById('logoutBtn'),
   settingsDialog: document.getElementById('settingsDialog'),
   serverUrl: document.getElementById('serverUrl'),
   autoSpeak: document.getElementById('autoSpeak'),
@@ -39,6 +40,25 @@ if ('serviceWorker' in navigator) {
 els.settingsBtn.addEventListener('click', () => {
   applySettingsToForm();
   els.settingsDialog.showModal();
+});
+
+els.logoutBtn.addEventListener('click', async () => {
+  const previousClientId = state.clientId;
+  try {
+    await fetch(api('/api/session/reset'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: previousClientId }),
+    });
+  } catch {
+    /* best-effort server reset */
+  }
+
+  state.clientId = crypto.randomUUID();
+  localStorage.setItem(CLIENT_KEY, state.clientId);
+  els.transcript.replaceChildren();
+  setStatus('Logged out. New session ready.');
+  addBubble('system', 'Logged out. Conversation cleared.');
 });
 
 els.settingsDialog.addEventListener('close', () => {

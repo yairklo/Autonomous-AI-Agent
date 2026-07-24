@@ -71,6 +71,13 @@ body {
   gap: 1rem;
 }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
