@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 
+loadDotEnv(path.join(repoRoot, '.env'));
+
 const args = process.argv.slice(2);
 let projectPath = '';
 let taskDescription = '';
@@ -27,11 +29,17 @@ if (!projectPath || !taskDescription) {
 
 const resolvedPath = path.resolve(projectPath);
 const branchName = `feature/task-${Date.now()}`;
-const agentMode = (process.env.DISPATCH_AGENT || 'auto').toLowerCase();
-const agentTimeoutMs = Number(process.env.DISPATCH_AGENT_TIMEOUT_MS || 240000);
+const requestedMode = (process.env.DISPATCH_AGENT || 'cursor').toLowerCase();
+const agentTimeoutMs = Number(process.env.DISPATCH_AGENT_TIMEOUT_MS || 600000);
 
 if (!fs.existsSync(resolvedPath)) {
   fs.mkdirSync(resolvedPath, { recursive: true });
+}
+
+if (requestedMode === 'claude' || requestedMode === 'local' || requestedMode === 'local-fallback') {
+  console.warn(
+    `[dispatch] DISPATCH_AGENT=${requestedMode} is not allowed for code execution (Claude/local cannot edit code). Using Cursor Agent CLI.`
+  );
 }
 
 const promptContent = `# Cursor Task Execution Instruction
@@ -46,6 +54,7 @@ ${taskDescription}
 3. **Verification & Completion:**
    - Execute tests/validations to confirm correct behavior.
    - Stage all changes, commit them with a clean descriptive message, and push the branch to the remote origin.
+4. **Do not delete PROMPT.md or .cursorrules** until after commit (E2E verifies them).
 `;
 
 const promptPath = path.join(resolvedPath, 'PROMPT.md');
@@ -58,6 +67,7 @@ const cursorrulesContent = `# Cursor Agent Rules
 - Run in non-interactive/auto-approve mode to execute the task fully. Do NOT prompt for permission on file edits or terminal commands.
 - Run tests/validations, commit changes with a clean message, and push the branch to remote upon completion.
 - Do not open a GUI. Work entirely via terminal/CLI tools.
+- Keep PROMPT.md and .cursorrules in the repo after finishing.
 `;
 const cursorrulesPath = path.join(resolvedPath, '.cursorrules');
 fs.writeFileSync(cursorrulesPath, cursorrulesContent, 'utf8');
@@ -66,73 +76,152 @@ console.log(`✓ Written Cursor rules to: ${cursorrulesPath}`);
 const before = captureGit(resolvedPath);
 console.log(`✓ Pre-agent git: branch=${before.branch} commit=${before.commit}`);
 
-console.log(`Running headless agent in: ${resolvedPath} (mode=${agentMode})...`);
+const cursorLaunch = resolveCursorLaunch();
+console.log(`Running headless Cursor agent in: ${resolvedPath}`);
+console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
 
-let agentUsed = 'none';
-let agentError = null;
+const agentPrompt = [
+  'Read PROMPT.md and .cursorrules in this workspace.',
+  'Execute the task fully and autonomously in non-interactive mode.',
+  `Create and use branch ${branchName} (or the branch named in PROMPT.md).`,
+  'Implement the required code changes, run tests if available (npm test),',
+  'then git add, commit, and push the branch (push best-effort if remote denies).',
+  'Do not ask questions. Do not open a GUI.',
+  'Do not delete PROMPT.md or .cursorrules.',
+  `Task summary: ${taskDescription}`,
+].join(' ');
+
+const runLogPath = path.join(resolvedPath, 'DISPATCH_RUN.log');
+fs.writeFileSync(
+  runLogPath,
+  [
+    `executor=${cursorLaunch.display}`,
+    `bin=${cursorLaunch.bin}`,
+    `args=${JSON.stringify(cursorLaunch.buildArgs(agentPrompt, resolvedPath))}`,
+    `startedAt=${new Date().toISOString()}`,
+    `requestedMode=${requestedMode}`,
+  ].join('\n') + '\n',
+  'utf8'
+);
 
 try {
-  if (agentMode === 'local') {
-    agentUsed = 'local';
-    await runLocalDeterministicAgent(resolvedPath, taskDescription, branchName);
-  } else if (agentMode === 'cursor-sdk') {
-    agentUsed = 'cursor-sdk';
-    await runCursorSdkAgent(resolvedPath, taskDescription);
-  } else if (agentMode === 'claude') {
-    agentUsed = 'claude';
-    await runClaudeHeadlessAgent(resolvedPath, taskDescription);
-  } else {
-    // auto: try cursor-agent CLI → cursor SDK → claude -p → local fallback
-    const tried = [];
-    if (await tryRun(() => runCursorAgentCli(resolvedPath, taskDescription), tried, 'cursor-agent-cli')) {
-      agentUsed = 'cursor-agent-cli';
-    } else if (await tryRun(() => runCursorSdkAgent(resolvedPath, taskDescription), tried, 'cursor-sdk')) {
-      agentUsed = 'cursor-sdk';
-    } else if (await tryRun(() => runClaudeHeadlessAgent(resolvedPath, taskDescription), tried, 'claude')) {
-      agentUsed = 'claude';
-    } else {
-      console.warn(`⚠ Headless LLM agents unavailable (${tried.join('; ')}). Falling back to local deterministic agent.`);
-      agentUsed = 'local-fallback';
-      await runLocalDeterministicAgent(resolvedPath, taskDescription, branchName);
-    }
-  }
+  await runCursorAgent(cursorLaunch, resolvedPath, agentPrompt);
 } catch (err) {
-  agentError = err;
-  console.error(`⚠ Agent (${agentUsed}) failed: ${err.message}`);
-  console.warn('Falling back to local deterministic agent to complete branch/commit requirements...');
-  agentUsed = `${agentUsed}+local-fallback`;
-  await runLocalDeterministicAgent(resolvedPath, taskDescription, branchName);
-}
-
-const after = captureGit(resolvedPath);
-console.log(`✓ Post-agent git: branch=${after.branch} commit=${after.commit}`);
-console.log(`✓ Headless agent finished (engine=${agentUsed}).`);
-
-if (after.branch === before.branch && after.commit === before.commit) {
-  console.error('✗ No new git branch or commit was produced.');
+  console.error(`✗ Cursor agent failed: ${err.message}`);
+  console.error(
+    '✗ Refusing Claude/local fallback — separation of duties requires Cursor to execute code.'
+  );
+  fs.appendFileSync(runLogPath, `error=${err.message}\n`, 'utf8');
   process.exit(1);
 }
 
-if (agentError) {
-  console.log(`✓ Recovered from agent error via fallback. Original: ${agentError.message}`);
+// Re-assert prompt files exist for E2E (Cursor sometimes removes them).
+if (!fs.existsSync(promptPath)) fs.writeFileSync(promptPath, promptContent, 'utf8');
+if (!fs.existsSync(cursorrulesPath)) fs.writeFileSync(cursorrulesPath, cursorrulesContent, 'utf8');
+
+const after = captureGit(resolvedPath);
+console.log(`✓ Post-agent git: branch=${after.branch} commit=${after.commit}`);
+console.log('✓ Headless agent finished (engine=cursor).');
+fs.appendFileSync(
+  runLogPath,
+  `finishedAt=${new Date().toISOString()}\nengine=cursor\nbranch=${after.branch}\ncommit=${after.commit}\n`,
+  'utf8'
+);
+
+if (after.branch === before.branch && after.commit === before.commit) {
+  console.error('✗ Cursor agent produced no new git branch or commit.');
+  process.exit(1);
 }
 
-console.log('✓ Headless agent execution completed successfully!');
+console.log('✓ Headless Cursor agent execution completed successfully!');
 
-async function tryRun(fn, tried, label) {
-  try {
-    await fn();
-    // Confirm git moved; otherwise treat as failure and continue chain
-    const mid = captureGit(resolvedPath);
-    if (mid.branch === before.branch && mid.commit === before.commit) {
-      tried.push(`${label}: completed but no git change`);
-      return false;
+function resolveCursorLaunch() {
+  const override = process.env.CURSOR_BIN?.trim();
+  const localDir = path.join(process.env.LOCALAPPDATA || '', 'cursor-agent');
+  const localAgentPs1 = path.join(localDir, 'cursor-agent.ps1');
+  const localAgentCmd = path.join(localDir, 'cursor-agent.cmd');
+  const localAgent = path.join(localDir, 'agent.cmd');
+
+  const candidates = [
+    override,
+    fs.existsSync(localAgentPs1) ? localAgentPs1 : null,
+    'cursor-agent',
+    fs.existsSync(localAgentCmd) ? localAgentCmd : null,
+    fs.existsSync(localAgent) ? localAgent : null,
+    'cursor',
+  ].filter(Boolean);
+
+  for (const bin of candidates) {
+    const base = path.basename(bin).toLowerCase();
+    if (base === 'claude' || base.startsWith('claude.')) continue;
+
+    if (base === 'cursor' || base === 'cursor.cmd' || base === 'cursor.exe') {
+      return {
+        bin,
+        display: 'cursor agent',
+        kind: 'cursor-ide',
+        buildArgs: (prompt, cwd) => [
+          'agent',
+          '-p',
+          '--force',
+          '--trust',
+          '--workspace',
+          cwd,
+          prompt,
+        ],
+      };
     }
-    return true;
-  } catch (err) {
-    tried.push(`${label}: ${err.message}`);
-    return false;
+
+    if (base.endsWith('.ps1')) {
+      return {
+        bin,
+        display: 'cursor-agent',
+        kind: 'powershell',
+        buildArgs: (prompt, cwd) => [
+          '-p',
+          '--force',
+          '--trust',
+          '--workspace',
+          cwd,
+          prompt,
+        ],
+      };
+    }
+
+    return {
+      bin,
+      display: 'cursor-agent',
+      kind: 'cmd',
+      buildArgs: (prompt, cwd) => [
+        '-p',
+        '--force',
+        '--trust',
+        '--workspace',
+        cwd,
+        prompt,
+      ],
+    };
   }
+
+  throw new Error(
+    'Cursor Agent CLI not found. Install with: irm https://cursor.com/install?win32=true | iex'
+  );
+}
+
+async function runCursorAgent(launch, cwd, prompt) {
+  const argv = launch.buildArgs(prompt, cwd);
+  console.log(`$ cursor agent -p --force --trust --workspace ${cwd} <prompt-from-PROMPT.md>`);
+  console.log(`$ ${launch.bin} ${summarizeArgs(argv)}`);
+  await run(launch, argv, { cwd, timeoutMs: agentTimeoutMs });
+}
+
+function summarizeArgs(argv) {
+  return argv
+    .map((a, i) => {
+      if (i === argv.length - 1 && a.length > 80) return JSON.stringify(`${a.slice(0, 60)}…`);
+      return /\s/.test(a) ? JSON.stringify(a) : a;
+    })
+    .join(' ');
 }
 
 function captureGit(cwd) {
@@ -146,17 +235,37 @@ function captureGit(cwd) {
   }
 }
 
-function run(command, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.env } = {}) {
+function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
-    console.log(`$ ${command} ${argsList.join(' ')}`);
-    // Windows needs shell so PATH shims (claude.cmd / agent.cmd) resolve.
-    const useShell = process.platform === 'win32';
-    const child = spawn(command, argsList, {
+    let command;
+    let spawnArgs;
+    if (launch.kind === 'powershell') {
+      command = 'powershell.exe';
+      spawnArgs = [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        launch.bin,
+        ...argsList,
+      ];
+    } else if (process.platform === 'win32' && /\.cmd$/i.test(launch.bin)) {
+      command = process.env.ComSpec || 'cmd.exe';
+      const quoted = [launch.bin, ...argsList].map(windowsQuote).join(' ');
+      spawnArgs = ['/d', '/s', '/c', quoted];
+    } else {
+      command = launch.bin;
+      spawnArgs = argsList;
+    }
+
+    console.log(`[spawn] ${command} ${spawnArgs.map(windowsQuote).join(' ')}`);
+    const child = spawn(command, spawnArgs, {
       cwd,
-      env,
+      env: { ...env, DISPATCH_NO_CLAUDE: '1' },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: useShell,
+      shell: false,
+      windowsVerbatimArguments: launch.kind === 'cmd' || /\.cmd$/i.test(launch.bin),
     });
     let stdout = '';
     let stderr = '';
@@ -166,7 +275,7 @@ function run(command, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process
       } catch {
         /* ignore */
       }
-      reject(new Error(`Timed out after ${timeoutMs}ms: ${command}`));
+      reject(new Error(`Timed out after ${timeoutMs}ms: ${launch.display}`));
     }, timeoutMs);
     child.stdout.on('data', (c) => {
       const t = c.toString();
@@ -185,168 +294,41 @@ function run(command, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout, stderr, code });
-      else reject(new Error(`${command} exited ${code}: ${(stderr || stdout).slice(-500)}`));
-    });
-  });
-}
-
-/**
- * Preferred: Cursor Agent CLI if installed (`agent` / `cursor-agent`).
- */
-async function runCursorAgentCli(cwd, task) {
-  const prompt =
-    `Read PROMPT.md and .cursorrules in this repo. Execute the task fully and autonomously in non-interactive mode. Task summary: ${task}`;
-  const candidates = [
-    { bin: 'agent', args: ['-p', prompt, '--force'] },
-    { bin: 'cursor-agent', args: ['-p', prompt, '--force'] },
-    { bin: 'agent', args: ['--print', prompt] },
-  ];
-  let lastErr;
-  for (const c of candidates) {
-    try {
-      await run(c.bin, c.args, { cwd });
-      return;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error('No Cursor agent CLI found');
-}
-
-/**
- * Cursor SDK local headless agent (requires CURSOR_API_KEY + @cursor/sdk).
- */
-async function runCursorSdkAgent(cwd, task) {
-  if (!process.env.CURSOR_API_KEY) {
-    throw new Error('CURSOR_API_KEY not set');
-  }
-  const runner = path.join(repoRoot, 'scripts', 'run-cursor-sdk-agent.mjs');
-  if (!fs.existsSync(runner)) {
-    throw new Error('scripts/run-cursor-sdk-agent.mjs missing');
-  }
-  await run(process.execPath, [runner, '--cwd', cwd, '--task', task], {
-    cwd: repoRoot,
-    env: process.env,
-  });
-}
-
-/**
- * Claude Code CLI print mode — supported headless equivalent of Cursor agent.
- */
-async function runClaudeHeadlessAgent(cwd, task) {
-  const claudeBin = process.env.CLAUDE_BIN || 'claude';
-  const promptArg = `Read PROMPT.md and .cursorrules, then execute the task completely autonomously.
-You MUST:
-1) git checkout -b ${branchName} (or the branch named in PROMPT.md)
-2) implement the required code changes for: ${task}
-3) run tests if available (npm test)
-4) git add -A && git commit -m "feat: complete dispatched task"
-5) git push -u origin HEAD (best effort; do not fail the whole task if push is denied)
-
-Work non-interactively. Do not ask questions.`;
-
-  const claudeArgs = [
-    '-p',
-    promptArg,
-    '--permission-mode',
-    'bypassPermissions',
-    '--output-format',
-    'text',
-  ];
-
-  // On Windows prefer spawning via shell so PATH .cmd shims work
-  await run(claudeBin, claudeArgs, {
-    cwd,
-    timeoutMs: agentTimeoutMs,
-    env: { ...process.env, CI: '1' },
-  });
-}
-
-/**
- * Deterministic headless executor used when LLM CLIs are unavailable.
- * Still satisfies PROMPT.md: feature branch, code change, tests, commit, push (best-effort).
- */
-async function runLocalDeterministicAgent(cwd, task, branch) {
-  console.log('[local-agent] Creating feature branch...');
-  try {
-    execSync('git rev-parse --is-inside-work-tree', { cwd, stdio: 'ignore' });
-  } catch {
-    execSync('git init', { cwd, stdio: 'inherit' });
-  }
-
-  // Ensure we are not left on a dirty unexpected state — create branch from current HEAD
-  try {
-    execSync(`git checkout -b ${branch}`, { cwd, stdio: 'inherit' });
-  } catch {
-    execSync(`git checkout -B ${branch}`, { cwd, stdio: 'inherit' });
-  }
-
-  applyTaskChange(cwd, task);
-
-  console.log('[local-agent] Running tests (best effort)...');
-  try {
-    if (fs.existsSync(path.join(cwd, 'package.json'))) {
-      execSync('npm test', { cwd, stdio: 'inherit', env: process.env });
-    }
-  } catch (err) {
-    console.warn(`[local-agent] tests reported failure (continuing): ${err.message}`);
-  }
-
-  console.log('[local-agent] Committing...');
-  execSync('git add -A', { cwd, stdio: 'inherit' });
-  // Avoid failing when nothing to commit (shouldn't happen)
-  try {
-    execSync('git commit -m "feat: complete dispatched task from PROMPT.md"', {
-      cwd,
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'Voice Agent Dispatcher',
-        GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'voice-agent@localhost',
-        GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'Voice Agent Dispatcher',
-        GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'voice-agent@localhost',
-      },
-    });
-  } catch (err) {
-    // If commit failed because identity missing etc., surface it
-    throw new Error(`git commit failed: ${err.message}`);
-  }
-
-  console.log('[local-agent] Pushing (best effort)...');
-  try {
-    execSync('git push -u origin HEAD', { cwd, stdio: 'inherit' });
-  } catch (err) {
-    console.warn(`[local-agent] git push skipped/failed: ${err.message}`);
-  }
-}
-
-function applyTaskChange(cwd, task) {
-  const wantsLogout = /logout|log[\s-]?out|יציאה|sign[\s-]?out/i.test(task);
-  const indexPath = path.join(cwd, 'client', 'index.html');
-
-  if (wantsLogout && fs.existsSync(indexPath)) {
-    let html = fs.readFileSync(indexPath, 'utf8');
-    if (!html.includes('id="logoutBtn"')) {
-      const injected = html.replace(
-        /<button\s+type="button"\s+id="settingsBtn"/,
-        '<button type="button" id="logoutBtn" class="ghost" aria-label="Logout">Logout</button>\n        <button type="button" id="settingsBtn"'
-      );
-      if (injected !== html) {
-        fs.writeFileSync(indexPath, injected, 'utf8');
-        console.log('[local-agent] Added Logout button to client/index.html header');
-        return;
+      else {
+        reject(
+          new Error(`${launch.display} exited ${code}: ${(stderr || stdout).slice(-800)}`)
+        );
       }
-    } else {
-      console.log('[local-agent] Logout control already present — writing dispatch marker');
-    }
-  }
+    });
+  });
+}
 
-  // Generic marker file so there is always a code change to commit
-  const marker = path.join(cwd, 'DISPATCH_RESULT.md');
-  fs.writeFileSync(
-    marker,
-    `# Dispatch Result\n\n- Branch: \`${branchName}\`\n- Task: ${task}\n- Completed: ${new Date().toISOString()}\n`,
-    'utf8'
-  );
-  console.log(`[local-agent] Wrote ${marker}`);
+function windowsQuote(arg) {
+  const s = String(arg);
+  if (!/[ \t"]/g.test(s)) return s;
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+function loadDotEnv(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const text = fs.readFileSync(filePath, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+  } catch {
+    /* ignore */
+  }
 }
