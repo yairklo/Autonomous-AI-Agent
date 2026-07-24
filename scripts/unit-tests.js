@@ -1,7 +1,27 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import ClaudeSessionManager from '../server/claude-session.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..');
+
+test('Header includes a wired Logout button', () => {
+  const html = fs.readFileSync(path.join(root, 'client', 'index.html'), 'utf8');
+  const appJs = fs.readFileSync(path.join(root, 'client', 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'client', 'styles.css'), 'utf8');
+
+  assert.match(html, /<header\s+class="top">/);
+  assert.match(html, /id="logoutBtn"/);
+  assert.match(html, />\s*Logout\s*</);
+  assert.match(html, /class="top-actions"/);
+  assert.match(css, /\.top-actions\s*\{/);
+  assert.match(appJs, /logoutBtn:\s*document\.getElementById\('logoutBtn'\)/);
+  assert.match(appJs, /els\.logoutBtn\.addEventListener\('click'/);
+  assert.match(appJs, /\/api\/session\/reset/);
+});
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
   const sessionsFile = './test-sessions.json';
