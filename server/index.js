@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
+import { detectCodingDispatch, runDispatchTask } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
@@ -47,6 +48,7 @@ app.get('/api/health', (_req, res) => {
     lanAddresses: addresses,
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
+    autoDispatchCoding: config.autoDispatchCoding,
     time: new Date().toISOString(),
   });
 });
@@ -88,6 +90,20 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
+  // Claude orchestration layer: coding tasks → headless dispatch-task.js
+  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  if (dispatch) {
+    try {
+      await streamDispatch(res, clientId, dispatch, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] dispatch error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] dispatch request finished');
+    return;
+  }
+
   let full = '';
   try {
     for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
@@ -122,6 +138,28 @@ app.post('/api/chat/sync', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'text is required' });
 
+  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  if (dispatch) {
+    try {
+      const logs = [];
+      await runDispatchTask(dispatch, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: `Dispatched coding task to the headless agent for ${dispatch.project}.`,
+        dispatched: true,
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
   let full = '';
   let sessionId = null;
   try {
@@ -155,7 +193,8 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       }
       return res.status(500).json({
         code: 'STT_NOT_CONFIGURED',
-        error: 'Server STT unavailable: Whisper binary not configured. Set WHISPER_BIN in the environment to enable local STT, or use client-side Web Speech API.'
+        error:
+          'Server STT unavailable: Whisper binary not configured. Set WHISPER_BIN in the environment to enable local STT, or use client-side Web Speech API.',
       });
     }
   }
@@ -183,6 +222,12 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       if (!res.writableEnded) ac.abort();
     });
 
+    const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    if (dispatch) {
+      await streamDispatch(res, clientId, dispatch, ac.signal);
+      return res.end();
+    }
+
     sendSse(res, 'status', { stage: 'claude' });
 
     let full = '';
@@ -193,7 +238,11 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       } else if (event.type === 'session') {
         sendSse(res, 'session', { sessionId: event.sessionId });
       } else if (event.type === 'done') {
-        sendSse(res, 'done', { result: event.result || full, clientId, transcript: text });
+        sendSse(res, 'done', {
+          result: event.result || full,
+          clientId,
+          transcript: text,
+        });
       } else if (event.type === 'error') {
         sendSse(res, 'error', { error: event.error });
       }
@@ -264,9 +313,34 @@ function sendSse(res, event, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+async function streamDispatch(res, clientId, dispatch, signal) {
+  const intro = `Got it — skipping Grill-Me and dispatching this coding task to the headless Cursor/Claude agent for ${dispatch.project}. `;
+  sendSse(res, 'status', { stage: 'dispatch' });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  await runDispatchTask(dispatch, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (/^✓/.test(line) || /Headless agent|feature\/|commit|Written prompt|Written Cursor/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  const outro = '\nDone. The headless agent created a feature branch and commit for your task.';
+  full += outro;
+  sendSse(res, 'token', { text: outro });
+  sendSse(res, 'done', { result: full, clientId, dispatched: true });
+}
+
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
+  console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
 });
 

@@ -30,7 +30,14 @@ export const config = {
       'Reply in concise spoken language: short paragraphs, no markdown tables,',
       'no code fences unless the user asks for code, avoid emoji spam.',
       'Prefer answers that take under 20 seconds to speak aloud.',
+      'Coding tasks: when the user asks to change code, add features, or to dispatch/skip Grill-Me and send work to Cursor,',
+      'you MUST trigger the local dispatcher by running this command with the Bash tool (do not open a GUI):',
+      `node "${path.join(root, 'scripts', 'dispatch-task.js').replace(/\\/g, '/')}" --project "<absolute-project-path>" --task "<full task text>"`,
+      'Then briefly confirm that the headless Cursor/Claude agent was started.',
       `Host: ${os.hostname()}. Date context: ${new Date().toISOString().slice(0, 10)}.`,
     ].join(' ')
   ),
+  // When true, coding/dispatch utterances are routed through dispatch-task.js by the server
+  // (Claude orchestration layer) instead of waiting for a model tool call.
+  autoDispatchCoding: env('AUTO_DISPATCH_CODING', '1') === '1',
 };

@@ -59,15 +59,21 @@ const server = spawn('node', ['server/index.js'], {
   env: {
     ...process.env,
     PATH: fullPath,
-    WHISPER_BIN: 'whisper'
-  }
+    WHISPER_BIN: 'whisper',
+    AUTO_DISPATCH_CODING: '1',
+    // Deterministic headless executor for E2E (still writes PROMPT.md/.cursorrules,
+    // creates feature branch + commit). Set DISPATCH_AGENT=claude|cursor-sdk for LLM runs.
+    DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'local',
+  },
 });
 
 server.stdout.on('data', (c) => {
-  const logStr = c.toString();
-  if (logStr.includes('[STT Log]') || logStr.includes('[Server stdout]')) {
-    console.log(logStr.trim());
-  }
+  const logStr = c.toString().trim();
+  if (logStr) console.log(`[server] ${logStr}`);
+});
+server.stderr.on('data', (c) => {
+  const logStr = c.toString().trim();
+  if (logStr) console.error(`[server:err] ${logStr}`);
 });
 
 // Wait for server to boot
