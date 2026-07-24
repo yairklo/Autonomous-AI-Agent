@@ -20,3 +20,8 @@
 **Decision:** Coding work is exposed as local MCP tool `dispatch_coding_task` (`server/mcp-tools.js`), which runs `scripts/dispatch-task.js` → Cursor Agent CLI. Claude system prompt states ZERO file/shell capability; `/api/chat` orchestration invokes the MCP tool (not Bash).  
 **Why:** Clear separation of duties; no raw shell/file edits from the voice layer; E2E asserts `tool_call` / `[mcp] tool=dispatch_coding_task`.  
 **Date:** 2026-07-24
+
+## D14 — E2E dispatch test must run in isolation
+**Decision:** `scripts/test-task-dispatch-e2e.js` refuses to start when port 8787 is already listening. Prefer `npm test` (unit tests, including MCP execute stub) when a live voice-agent is up.  
+**Why:** Nesting dispatch against a parent SSE chat kills the outer stream.  
+**Date:** 2026-07-24

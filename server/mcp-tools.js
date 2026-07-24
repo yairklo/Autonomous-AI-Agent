@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { config } from './config.js';
-import { runDispatchTask } from './task-router.js';
+import { resolveDispatchScript, runDispatchTask } from './task-router.js';
 
 /**
  * Local MCP tool registry for the voice-agent orchestration layer.
@@ -72,9 +71,10 @@ async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
     throw err;
   }
 
+  const scriptPath = resolveDispatchScript();
   const dispatchCmd = [
     'node',
-    path.join(config.root, 'scripts', 'dispatch-task.js'),
+    scriptPath,
     '--project',
     projectPath,
     '--task',

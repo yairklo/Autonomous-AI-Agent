@@ -2,6 +2,15 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import assert from 'node:assert';
 import { execSync } from 'node:child_process';
+import net from 'node:net';
+
+/**
+ * E2E for MCP tool dispatch_coding_task → dispatch-task.js → Cursor CLI.
+ *
+ * IMPORTANT: Run this script ONLY in isolation. If a voice-agent server is already
+ * listening on port 8787, do NOT run this test against it — nesting dispatch kills
+ * the parent SSE stream. Prefer `npm test` / unit tests when a live server is up.
+ */
 
 const args = process.argv.slice(2);
 let userPrompt = '';
@@ -18,6 +27,24 @@ const promptText =
 console.log(`--- Starting E2E Task Dispatch Test ---`);
 console.log(`Prompt to send: "${promptText}"`);
 console.log(`DISPATCH_AGENT=${process.env.DISPATCH_AGENT || '(unset)'}`);
+
+async function isPortInUse(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host }, () => {
+      socket.end();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+  });
+}
+
+if (await isPortInUse(8787)) {
+  console.error(
+    '❌ Port 8787 is already in use. Refusing to run test-task-dispatch-e2e.js against a live voice-agent ' +
+      '(nested dispatch would kill the parent SSE). Stop the other server, or run `npm test` instead.'
+  );
+  process.exit(2);
+}
 
 const promptFile = 'C:/Autonomous AI Agent/PROMPT.md';
 const rulesFile = 'C:/Autonomous AI Agent/.cursorrules';

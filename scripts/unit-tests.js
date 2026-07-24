@@ -1,10 +1,12 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import ClaudeSessionManager from '../server/claude-session.js';
 import { config } from '../server/config.js';
 import { detectCodingDispatch } from '../server/task-router.js';
-import { getMcpTool, listMcpTools } from '../server/mcp-tools.js';
+import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
   const sessionsFile = './test-sessions.json';
@@ -83,4 +85,47 @@ test('detectCodingDispatch returns MCP tool args', () => {
   assert.ok(d.mcpArgs.projectPath);
   assert.ok(d.mcpArgs.taskDescription);
   assert.match(d.mcpArgs.taskDescription, /MCP tool/i);
+});
+
+test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () => {
+  const stubPath = path.join(os.tmpdir(), `stub-dispatch-${Date.now()}.mjs`);
+  fs.writeFileSync(
+    stubPath,
+    [
+      'const args = process.argv.slice(2);',
+      'console.log("[dispatch] stub node scripts/dispatch-task.js " + args.join(" "));',
+      'console.log("✓ Written prompt instructions to: PROMPT.md");',
+      'console.log("$ cursor agent -p --force --trust (stub)");',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+
+  const prev = process.env.DISPATCH_TASK_SCRIPT;
+  process.env.DISPATCH_TASK_SCRIPT = stubPath;
+  const logs = [];
+  try {
+    const result = await executeMcpTool(
+      'dispatch_coding_task',
+      {
+        projectPath: config.root,
+        taskDescription: 'unit-test coding task via MCP',
+      },
+      { onLog: (line) => logs.push(line) }
+    );
+    assert.ok(result.ok);
+    assert.strictEqual(result.tool, 'dispatch_coding_task');
+    assert.match(logs.join('\n'), /\[mcp\] tool=dispatch_coding_task/);
+    assert.match(logs.join('\n'), /dispatch-task\.js|\[dispatch\] node/i);
+    assert.match(logs.join('\n'), /status=ok/);
+  } finally {
+    if (prev === undefined) delete process.env.DISPATCH_TASK_SCRIPT;
+    else process.env.DISPATCH_TASK_SCRIPT = prev;
+    try {
+      fs.unlinkSync(stubPath);
+    } catch {
+      /* ignore */
+    }
+  }
 });

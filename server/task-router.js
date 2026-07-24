@@ -5,9 +5,13 @@ import { spawn } from 'node:child_process';
 import { config } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dispatchScript = process.env.DISPATCH_TASK_SCRIPT
-  ? path.resolve(process.env.DISPATCH_TASK_SCRIPT)
-  : path.join(config.root, 'scripts', 'dispatch-task.js');
+
+/** Resolve dispatch-task.js at call time so tests can stub via DISPATCH_TASK_SCRIPT. */
+export function resolveDispatchScript() {
+  return process.env.DISPATCH_TASK_SCRIPT
+    ? path.resolve(process.env.DISPATCH_TASK_SCRIPT)
+    : path.join(config.root, 'scripts', 'dispatch-task.js');
+}
 
 /**
  * Detect coding / Cursor-dispatch intent in a user utterance.
@@ -32,7 +36,7 @@ export function detectCodingDispatch(text) {
   return {
     project: resolvedProject,
     task: cleaned,
-    dispatchScript,
+    dispatchScript: resolveDispatchScript(),
     /** MCP tool args Claude / orchestration must use for coding work */
     mcpTool: 'dispatch_coding_task',
     mcpArgs: {
@@ -73,10 +77,12 @@ function extractProjectPath(text) {
 
 /**
  * Run scripts/dispatch-task.js and stream stdout/stderr lines via onLog.
+ * Invoked only via the dispatch_coding_task MCP tool — not as a raw shell from Claude.
  */
 export function runDispatchTask({ project, task }, { onLog, signal } = {}) {
   return new Promise((resolve, reject) => {
-    const args = [dispatchScript, '--project', project, '--task', task];
+    const script = resolveDispatchScript();
+    const args = [script, '--project', project, '--task', task];
     onLog?.(`[dispatch] node ${args.map(JSON.stringify).join(' ')}`);
 
     const child = spawn(process.execPath, args, {

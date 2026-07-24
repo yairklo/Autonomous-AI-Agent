@@ -27,11 +27,13 @@ Requirements:
 
 Implement this clean MCP layer and confirm the test passes cleanly.
 
+IMPORTANT: If a voice-agent server is already listening on port 8787, do NOT run test-task-dispatch-e2e.js against it (that nests dispatch and kills the parent SSE). Prefer npm test / unit tests, or document that e2e must run in isolation.
+
 Skip Grill-Me Mode and dispatch this coding task directly to Cursor.
 
 ## Strict Instructions for Cursor / Antigravity Agent
 1. **Branching:** Create and switch to a new feature branch before editing code:
-   `git checkout -b feature/task-1784907600724`
+   `git checkout -b feature/task-1784908400571`
 2. **Autonomy:** Run in non-interactive/auto-approve mode. Do NOT prompt for permission on file edits or terminal commands.
 3. **Verification & Completion:**
    - Execute tests/validations to confirm correct behavior.
