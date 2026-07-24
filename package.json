@@ -1,0 +1,27 @@
+{
+  "name": "voice-agent",
+  "version": "1.0.0",
+  "description": "Personal mobile voice agent backed by a local Claude CLI server",
+  "private": true,
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
+    "smoke": "node scripts/smoke-test.js",
+    "test": "node scripts/unit-tests.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}

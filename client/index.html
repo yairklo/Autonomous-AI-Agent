@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#0c1a17" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Personal voice agent powered by local Claude CLI" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>Voice Agent</title>
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="top">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <h1>Voice Agent</h1>
+        </div>
+        <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">
+          Settings
+        </button>
+      </header>
+
+      <p class="status" id="statusLine">Hold the button and speak.</p>
+
+      <section class="transcript" id="transcript" aria-live="polite"></section>
+
+      <form id="textForm" class="text-row" autocomplete="off">
+        <input
+          id="textInput"
+          type="text"
+          enterkeyhint="send"
+          placeholder="Or type a message…"
+          aria-label="Message"
+        />
+        <button type="submit" class="send">Send</button>
+      </form>
+
+      <div class="ptt-wrap">
+        <button
+          type="button"
+          id="ptt"
+          class="ptt"
+          aria-pressed="false"
+          aria-label="Push to talk"
+        >
+          <span class="ptt-ring" aria-hidden="true"></span>
+          <span class="ptt-label" id="pttLabel">Hold to talk</span>
+        </button>
+      </div>
+    </main>
+
+    <dialog id="settingsDialog">
+      <form method="dialog" id="settingsForm" class="settings">
+        <h2>Server</h2>
+        <label>
+          Base URL
+          <input id="serverUrl" type="url" placeholder="http://192.168.x.x:8787" />
+        </label>
+        <label class="check">
+          <input id="autoSpeak" type="checkbox" checked />
+          Speak replies aloud
+        </label>
+        <label class="check">
+          <input id="useServerTts" type="checkbox" />
+          Prefer server TTS when available
+        </label>
+        <p class="hint" id="healthHint">Not checked yet.</p>
+        <div class="settings-actions">
+          <button type="button" id="checkHealth" class="ghost">Check health</button>
+          <button type="button" id="resetSession" class="ghost danger">Reset session</button>
+          <button value="close" class="send">Done</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
