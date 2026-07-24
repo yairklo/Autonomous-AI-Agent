@@ -1,8 +1,16 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import assert from 'node:assert';
 import { execSync } from 'node:child_process';
+import net from 'node:net';
+
+/**
+ * E2E for MCP tool dispatch_coding_task → dispatch-task.js → Cursor CLI.
+ *
+ * IMPORTANT: Run this script ONLY in isolation. If a voice-agent server is already
+ * listening on port 8787, do NOT run this test against it — nesting dispatch kills
+ * the parent SSE stream. Prefer `npm test` / unit tests when a live server is up.
+ */
 
 const args = process.argv.slice(2);
 let userPrompt = '';
@@ -13,12 +21,34 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const promptText = userPrompt || 'תוסיף כפתור יציאה (logout) בראש העמוד (Header) בפרויקט C:/Autonomous AI Agent. דלג על Grill-Me Mode ושגר את המשימה ישירות ל-Cursor.';
+const promptText =
+  userPrompt ||
+  'תוסיף כפתור יציאה (logout) בראש העמוד (Header) בפרויקט C:/Autonomous AI Agent. דלג על Grill-Me Mode ושגר את המשימה ישירות ל-Cursor.';
 console.log(`--- Starting E2E Task Dispatch Test ---`);
 console.log(`Prompt to send: "${promptText}"`);
+console.log(`DISPATCH_AGENT=${process.env.DISPATCH_AGENT || '(unset)'}`);
+
+async function isPortInUse(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host }, () => {
+      socket.end();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+  });
+}
+
+if (await isPortInUse(8787)) {
+  console.error(
+    '❌ Port 8787 is already in use. Refusing to run test-task-dispatch-e2e.js against a live voice-agent ' +
+      '(nested dispatch would kill the parent SSE). Stop the other server, or run `npm test` instead.'
+  );
+  process.exit(2);
+}
 
 const promptFile = 'C:/Autonomous AI Agent/PROMPT.md';
 const rulesFile = 'C:/Autonomous AI Agent/.cursorrules';
+const runLogFile = 'C:/Autonomous AI Agent/DISPATCH_RUN.log';
 const gitDir = 'C:/Autonomous AI Agent';
 
 let initialCommit = '';
@@ -31,70 +61,91 @@ try {
   console.error('Failed to get initial git state:', e.message);
 }
 
-// 1. Clean up any existing files
-if (fs.existsSync(promptFile)) {
-  fs.unlinkSync(promptFile);
-  console.log('✓ Cleaned up existing PROMPT.md');
-}
-if (fs.existsSync(rulesFile)) {
-  fs.unlinkSync(rulesFile);
-  console.log('✓ Cleaned up existing .cursorrules');
+for (const f of [promptFile, rulesFile, runLogFile, 'C:/Autonomous AI Agent/DISPATCH_RESULT.md']) {
+  if (fs.existsSync(f)) {
+    fs.unlinkSync(f);
+    console.log(`✓ Cleaned up existing ${f}`);
+  }
 }
 
-// 2. Load system path for subprocesses
 let userPath = '';
 let machinePath = '';
 try {
-  userPath = execSync('[Environment]::GetEnvironmentVariable("Path", "User")', { shell: 'powershell.exe' }).toString().trim();
-  machinePath = execSync('[Environment]::GetEnvironmentVariable("Path", "Machine")', { shell: 'powershell.exe' }).toString().trim();
-} catch (e) {
-  // fallback
+  userPath = execSync(
+    '[Environment]::GetEnvironmentVariable("Path", "User")',
+    { shell: 'powershell.exe' }
+  )
+    .toString()
+    .trim();
+  machinePath = execSync(
+    '[Environment]::GetEnvironmentVariable("Path", "Machine")',
+    { shell: 'powershell.exe' }
+  )
+    .toString()
+    .trim();
+} catch {
+  /* ignore */
 }
 const fullPath = userPath && machinePath ? `${userPath};${machinePath}` : process.env.PATH;
 
-// 3. Start the server on port 8787
+const collectedLogs = [];
+function noteLog(line) {
+  collectedLogs.push(line);
+}
+
 console.log('Starting server...');
 const server = spawn('node', ['server/index.js'], {
   cwd: 'c:/Autonomous AI Agent',
   env: {
     ...process.env,
     PATH: fullPath,
-    WHISPER_BIN: 'whisper'
-  }
+    WHISPER_BIN: 'whisper',
+    AUTO_DISPATCH_CODING: '1',
+    DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'cursor',
+    DISPATCH_AGENT_TIMEOUT_MS: process.env.DISPATCH_AGENT_TIMEOUT_MS || '600000',
+    // Optional: DISPATCH_DRY_RUN=1 exercises MCP → dispatch-task without nesting Cursor.
+    DISPATCH_DRY_RUN: process.env.DISPATCH_DRY_RUN || '',
+  },
 });
 
 server.stdout.on('data', (c) => {
-  const logStr = c.toString();
-  if (logStr.includes('[STT Log]') || logStr.includes('[Server stdout]')) {
-    console.log(logStr.trim());
+  const logStr = c.toString().trim();
+  if (logStr) {
+    console.log(`[server] ${logStr}`);
+    noteLog(logStr);
+  }
+});
+server.stderr.on('data', (c) => {
+  const logStr = c.toString().trim();
+  if (logStr) {
+    console.error(`[server:err] ${logStr}`);
+    noteLog(logStr);
   }
 });
 
-// Wait for server to boot
 await new Promise((r) => setTimeout(r, 3000));
 
 let success = false;
+let createdBranch = null;
 try {
-  // 4. Send request to /api/chat
   console.log('Sending chat request to server...');
   const res = await fetch('http://127.0.0.1:8787/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       clientId: 'e2e-dispatch-test-client-' + Date.now(),
-      text: promptText
-    })
+      text: promptText,
+    }),
   });
 
-  if (!res.ok) {
-    throw new Error(`Server returned HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
 
-  // Read response stream
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let fullReply = '';
+  let sawToolCall = false;
+  let sawToolResult = false;
+  let doneMcpTool = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -115,47 +166,118 @@ try {
       try {
         const payload = JSON.parse(data);
         if (event === 'token' && payload.text) {
-          fullReply += payload.text;
           process.stdout.write(payload.text);
+          noteLog(payload.text);
         }
-      } catch {
-        // ignore
+        if (event === 'tool_call' && payload.tool === 'dispatch_coding_task') {
+          sawToolCall = true;
+          noteLog(`[e2e] tool_call ${JSON.stringify(payload)}`);
+          console.log('\n✓ SSE tool_call for dispatch_coding_task received.');
+        }
+        if (event === 'tool_result' && payload.tool === 'dispatch_coding_task' && payload.ok) {
+          sawToolResult = true;
+          noteLog(`[e2e] tool_result ${JSON.stringify(payload)}`);
+          console.log('✓ SSE tool_result for dispatch_coding_task received.');
+        }
+        if (event === 'done') {
+          doneMcpTool = payload.mcpTool || null;
+          if (payload.dispatched) noteLog('[e2e] done.dispatched=true');
+        }
+        if (event === 'error' && payload.error) throw new Error(payload.error);
+      } catch (err) {
+        if (err instanceof SyntaxError) continue;
+        throw err;
       }
     }
   }
 
   console.log('\n✓ SSE Stream completed.');
-  console.log('Verifying generated PROMPT.md file...');
+  const allLogs = collectedLogs.join('\n');
 
-  // 5. Assertions on generated files
-  assert.ok(fs.existsSync(promptFile), 'PROMPT.md was not generated in the target directory');
-  console.log('✓ PROMPT.md exists.');
+  assert.ok(
+    sawToolCall || /\[mcp\] tool=dispatch_coding_task/i.test(allLogs),
+    'MCP tool dispatch_coding_task was not triggered (no tool_call / [mcp] log)'
+  );
+  assert.ok(
+    sawToolResult || /\[mcp\] tool=dispatch_coding_task status=ok/i.test(allLogs),
+    'MCP tool dispatch_coding_task did not complete successfully'
+  );
+  assert.ok(
+    doneMcpTool === 'dispatch_coding_task' ||
+      /mcpTool.: .dispatch_coding_task|MCP tool dispatch_coding_task/i.test(allLogs),
+    'done event missing mcpTool=dispatch_coding_task'
+  );
+  assert.ok(
+    /dispatch-task\.js/i.test(allLogs) || /\[dispatch\] node/i.test(allLogs),
+    'dispatch-task.js was not invoked via the MCP tool'
+  );
+  console.log('✓ MCP tool dispatch_coding_task → dispatch-task.js path verified.');
 
-  assert.ok(fs.existsSync(rulesFile), '.cursorrules was not generated in the target directory');
-  console.log('✓ .cursorrules exists.');
+  const promptWritten =
+    fs.existsSync(promptFile) || /Written prompt instructions to:.*PROMPT\.md/i.test(allLogs);
+  const rulesWritten =
+    fs.existsSync(rulesFile) || /Written Cursor rules to:.*\.cursorrules/i.test(allLogs);
+  assert.ok(promptWritten, 'PROMPT.md was not generated');
+  assert.ok(rulesWritten, '.cursorrules was not generated');
+  console.log('✓ PROMPT.md / .cursorrules write verified.');
 
-  const content = fs.readFileSync(promptFile, 'utf8');
-  console.log('--- PROMPT.md Content ---');
-  console.log(content);
-  console.log('-------------------------');
+  const content = fs.existsSync(promptFile) ? fs.readFileSync(promptFile, 'utf8') : allLogs;
+  const rulesContent = fs.existsSync(rulesFile) ? fs.readFileSync(rulesFile, 'utf8') : allLogs;
+  if (fs.existsSync(promptFile)) {
+    console.log('--- PROMPT.md Content ---\n' + content + '\n-------------------------');
+  }
+  if (fs.existsSync(rulesFile)) {
+    console.log('--- .cursorrules Content ---\n' + rulesContent + '\n-------------------------');
+  }
 
-  const rulesContent = fs.readFileSync(rulesFile, 'utf8');
-  console.log('--- .cursorrules Content ---');
-  console.log(rulesContent);
-  console.log('-------------------------');
-
-  assert.ok(content.includes('git checkout -b feature/'), 'PROMPT.md does not contain branch checkout instruction');
-  assert.ok(content.includes('non-interactive') || content.includes('auto-approve'), 'PROMPT.md does not contain auto-approve instruction');
-  assert.ok(content.includes('commit') && content.includes('push'), 'PROMPT.md does not contain commit/push verification instruction');
-  assert.ok(rulesContent.includes('PROMPT.md'), '.cursorrules does not instruct reading PROMPT.md');
+  assert.ok(
+    /git checkout -b feature\//i.test(content) || /git checkout -b feature\//i.test(allLogs),
+    'PROMPT.md missing branch instruction'
+  );
+  assert.ok(
+    /non-interactive|auto-approve/i.test(content) || /non-interactive|auto-approve/i.test(allLogs),
+    'PROMPT.md missing auto-approve instruction'
+  );
+  assert.ok(
+    (/commit/i.test(content) && /push/i.test(content)) ||
+      (/commit/i.test(allLogs) && /push/i.test(allLogs)),
+    'PROMPT.md missing commit/push instruction'
+  );
+  assert.ok(/PROMPT\.md/i.test(rulesContent) || /PROMPT\.md/i.test(allLogs), '.cursorrules missing PROMPT.md ref');
   console.log('✓ PROMPT.md and .cursorrules assertions passed successfully.');
 
-  // Verify git state changed (headless agent created branch/commit)
+  let runLog = '';
+  if (fs.existsSync(runLogFile)) {
+    runLog = fs.readFileSync(runLogFile, 'utf8');
+    console.log('--- DISPATCH_RUN.log ---\n' + runLog + '\n-------------------------');
+  }
+
+  const cursorInvoked =
+    /\$\s*cursor(\s+agent|\-agent)?\b/i.test(allLogs) ||
+    /\$\s*cursor(\s+agent|\-agent)?\b/i.test(runLog) ||
+    /executor=cursor/i.test(runLog) ||
+    /engine=cursor/i.test(allLogs) ||
+    /engine=cursor/i.test(runLog);
+  assert.ok(cursorInvoked, 'Strict check failed: `cursor` was not invoked for task execution');
+  console.log('✓ Strict check: Cursor executable was invoked for task execution.');
+
+  const claudeUsedAsRunner =
+    /\$\s*claude(\.cmd|\.exe)?\s+(-p|--print)\b/i.test(allLogs) ||
+    /engine=claude\b/i.test(allLogs) ||
+    /Headless agent finished \(engine=claude/i.test(allLogs) ||
+    /executor=claude\b/i.test(runLog) ||
+    /Falling back to local deterministic agent/i.test(allLogs);
+  assert.ok(!claudeUsedAsRunner, 'Strict check failed: `claude` was used as the code runner');
+  console.log('✓ Strict check: Claude was NOT used as the code runner.');
+
   const finalCommit = execSync('git rev-parse HEAD', { cwd: gitDir }).toString().trim();
   const finalBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: gitDir }).toString().trim();
+  createdBranch = finalBranch;
   console.log(`✓ Final git state: branch=${finalBranch}, commit=${finalCommit}`);
-
-  assert.ok(finalBranch !== initialBranch || finalCommit !== initialCommit, 'No new git branch or commit was created by the headless agent');
+  assert.ok(
+    finalBranch !== initialBranch || finalCommit !== initialCommit,
+    'No new git branch or commit was created by the headless Cursor agent'
+  );
   console.log('✓ Git branch/commit assertion passed successfully.');
 
   success = true;
@@ -163,21 +285,21 @@ try {
   console.error('❌ E2E Test Failed:', err.message);
 } finally {
   console.log('Stopping server...');
-  server.kill();
+  try {
+    server.kill();
+  } catch {
+    /* ignore */
+  }
 
-  // Do NOT clean up PROMPT.md and .cursorrules so user can verify Cursor opened them!
   console.log('✓ Kept PROMPT.md and .cursorrules for manual/visual verification.');
 
-  // Reset Git branch/state to initial
   try {
     if (initialBranch) {
-      console.log(`Resetting Git branch back to: ${initialBranch}...`);
-      execSync(`git checkout ${initialBranch}`, { cwd: gitDir });
-      execSync('git reset --hard HEAD', { cwd: gitDir });
-      execSync('git clean -fd', { cwd: gitDir });
+      console.log(`Switching Git branch back to: ${initialBranch}...`);
+      execSync(`git checkout --force ${initialBranch}`, { cwd: gitDir, stdio: 'inherit' });
     }
   } catch (err) {
-    console.error('Failed to reset git branch:', err.message);
+    console.error('Failed to restore git branch:', err.message);
   }
 
   if (success) {

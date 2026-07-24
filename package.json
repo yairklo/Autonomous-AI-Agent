@@ -10,7 +10,9 @@
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "smoke": "node scripts/smoke-test.js",
-    "test": "node scripts/unit-tests.js"
+    "test": "node scripts/unit-tests.js",
+    "dispatch": "node scripts/dispatch-task.js",
+    "test:dispatch": "node scripts/test-task-dispatch-e2e.js"
   },
   "engines": {
     "node": ">=18"

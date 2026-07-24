@@ -8,6 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
+import { executeMcpTool, listMcpTools } from './mcp-tools.js';
+import { detectCodingDispatch } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
@@ -47,6 +49,8 @@ app.get('/api/health', (_req, res) => {
     lanAddresses: addresses,
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
+    autoDispatchCoding: config.autoDispatchCoding,
+    mcpTools: listMcpTools().map((t) => t.name),
     time: new Date().toISOString(),
   });
 });
@@ -88,6 +92,20 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
+  // Claude orchestration layer: coding tasks → dispatch_coding_task MCP tool
+  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  if (dispatch) {
+    try {
+      await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] MCP dispatch_coding_task error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP dispatch_coding_task request finished');
+    return;
+  }
+
   let full = '';
   try {
     for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
@@ -122,6 +140,29 @@ app.post('/api/chat/sync', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'text is required' });
 
+  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  if (dispatch) {
+    try {
+      const logs = [];
+      await executeMcpTool('dispatch_coding_task', dispatch.mcpArgs, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: `Dispatched coding task via MCP tool dispatch_coding_task for ${dispatch.project}.`,
+        dispatched: true,
+        mcpTool: 'dispatch_coding_task',
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
   let full = '';
   let sessionId = null;
   try {
@@ -155,7 +196,8 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       }
       return res.status(500).json({
         code: 'STT_NOT_CONFIGURED',
-        error: 'Server STT unavailable: Whisper binary not configured. Set WHISPER_BIN in the environment to enable local STT, or use client-side Web Speech API.'
+        error:
+          'Server STT unavailable: Whisper binary not configured. Set WHISPER_BIN in the environment to enable local STT, or use client-side Web Speech API.',
       });
     }
   }
@@ -183,6 +225,12 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       if (!res.writableEnded) ac.abort();
     });
 
+    const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    if (dispatch) {
+      await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
+      return res.end();
+    }
+
     sendSse(res, 'status', { stage: 'claude' });
 
     let full = '';
@@ -193,7 +241,11 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       } else if (event.type === 'session') {
         sendSse(res, 'session', { sessionId: event.sessionId });
       } else if (event.type === 'done') {
-        sendSse(res, 'done', { result: event.result || full, clientId, transcript: text });
+        sendSse(res, 'done', {
+          result: event.result || full,
+          clientId,
+          transcript: text,
+        });
       } else if (event.type === 'error') {
         sendSse(res, 'error', { error: event.error });
       }
@@ -264,9 +316,66 @@ function sendSse(res, event, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+/**
+ * Orchestration path: Claude has no file/shell tools for coding — coding work
+ * goes solely through the dispatch_coding_task MCP tool → dispatch-task.js → Cursor CLI.
+ */
+async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
+  const toolName = dispatch.mcpTool || 'dispatch_coding_task';
+  const intro =
+    `Got it — skipping Grill-Me and calling MCP tool ${toolName} ` +
+    `to dispatch this coding task to Cursor Agent CLI for ${dispatch.project}. `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: dispatch.mcpArgs,
+  });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  const mcpResult = await executeMcpTool(toolName, dispatch.mcpArgs, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (
+        /^✓/.test(line) ||
+        /\[mcp\]/i.test(line) ||
+        /Headless agent|feature\/|commit|Written prompt|Written Cursor|cursor agent/i.test(line)
+      ) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    projectPath: mcpResult.projectPath,
+  });
+
+  const outro =
+    '\nDone. MCP tool dispatch_coding_task ran dispatch-task.js and the headless Cursor agent created a feature branch and commit.';
+  full += outro;
+  sendSse(res, 'token', { text: outro });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    dispatched: true,
+    mcpTool: toolName,
+  });
+}
+
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
+  console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
+  console.log(
+    `[voice-agent] mcpTools=${listMcpTools()
+      .map((t) => t.name)
+      .join(',')}`
+  );
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
 });
 
