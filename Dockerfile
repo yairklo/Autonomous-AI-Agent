@@ -17,10 +17,13 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install dependencies first for better layer caching.
-# Coolify often injects NODE_ENV=production at build time, which would skip
-# devDependencies — force a full install, then switch to production for runtime.
+# Use npm install (not npm ci) so Coolify builds tolerate lockfile
+# cross-platform variations. Force development during install so Coolify's
+# build-time NODE_ENV=production does not omit deps.
+ENV NODE_ENV=development
 COPY package.json package-lock.json ./
-RUN npm ci --include=dev
+RUN npm install
+ENV NODE_ENV=production
 
 # Claude Code CLI (subscription / browser login — not API-key based)
 RUN npm install -g @anthropic-ai/claude-code
