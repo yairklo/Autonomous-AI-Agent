@@ -203,6 +203,20 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
+  // Explicit Grill-Me Pack request → serve the domain questionnaire here (not Cursor).
+  const packId = conversational ? detectGrillMePack(text) : null;
+  if (packId) {
+    try {
+      await streamGrillMePack(res, clientId, text, packId);
+    } catch (err) {
+      console.error('[API CHAT] Grill-Me pack error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log(`[API CHAT] Grill-Me pack ${packId} served`);
+    return;
+  }
+
   let full = '';
   try {
     for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
@@ -325,6 +339,18 @@ app.post('/api/chat/sync', async (req, res) => {
     }
   }
 
+  const packId = conversational ? detectGrillMePack(text) : null;
+  if (packId) {
+    const locale = /[א-ת]/.test(text) ? 'he' : 'en';
+    const reply = formatGrillMeReply(packId, { locale, openingLimit: 5 });
+    return res.json({
+      clientId,
+      sessionId: null,
+      text: reply,
+      grillMePack: packId,
+    });
+  }
+
   let full = '';
   let sessionId = null;
   try {
@@ -395,6 +421,12 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
     if (dispatch) {
       await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
+      return res.end();
+    }
+
+    const packId = conversational ? detectGrillMePack(text) : null;
+    if (packId) {
+      await streamGrillMePack(res, clientId, text, packId);
       return res.end();
     }
 
@@ -516,6 +548,21 @@ async function prepareDispatchTask(clientId, dispatch, signal) {
     };
   }
   return dispatch;
+}
+
+/**
+ * Serve a domain Grill-Me Pack questionnaire in-chat (never dispatch to Cursor).
+ */
+async function streamGrillMePack(res, clientId, text, packId) {
+  const locale = /[א-ת]/.test(text) ? 'he' : 'en';
+  const reply = formatGrillMeReply(packId, { locale, openingLimit: 5 });
+  sendSse(res, 'status', { stage: 'grill_me_pack', packId });
+  sendSse(res, 'token', { text: reply });
+  sendSse(res, 'done', {
+    result: reply,
+    clientId,
+    grillMePack: packId,
+  });
 }
 
 /**
