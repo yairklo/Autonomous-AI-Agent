@@ -1,11 +1,11 @@
 # Cursor Task Execution Instruction
 
 ## Task Description
-אני רוצה להוסיף לסוכן שלנו כלי לסריקת משרות בקבוצות WhatsApp
+אני רוצה להוסיף לסוכן שלנו כלי לסריקת משרות בקבוצות WhatsApp והגשת קורות חיים
 
 ## Strict Instructions for Cursor / Antigravity Agent
 1. **Branching:** Create and switch to a new feature branch before editing code:
-   `git checkout -b feature/task-1785054529747`
+   `git checkout -b feature/task-1785054958532`
 2. **Autonomy:** Run in non-interactive/auto-approve mode. Do NOT prompt for permission on file edits or terminal commands.
 3. **Verification & Completion:**
    - Execute tests/validations to confirm correct behavior.
