@@ -15,6 +15,14 @@ npm install
 npm start
 ```
 
+### Interactive terminal chat (Grill-Me Mode)
+
+```bash
+npm run chat
+```
+
+Line-by-line Claude Orchestrator in the terminal. Coding tasks stay in **Grill-Me Mode** (clarifying questions) until you confirm with e.g. `skip Grill-Me Mode and dispatch` / `שגר ל-Cursor`, which invokes `dispatch_coding_task`. Use `npm run chat:mock` without Claude auth. If the server is not already up, `chat` starts it for you.
+
 Open on your phone (same LAN or Tailscale):
 
 `http://<your-pc-ip>:8787`

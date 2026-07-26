@@ -25,3 +25,8 @@
 **Decision:** `scripts/test-task-dispatch-e2e.js` refuses to start when port 8787 is already listening. Prefer `npm test` (unit tests, including MCP execute stub) when a live voice-agent is up.  
 **Why:** Nesting dispatch against a parent SSE chat kills the outer stream.  
 **Date:** 2026-07-24
+
+## D15 — Grill-Me Mode default for interactive chat
+**Decision:** Interactive conversations use Grill-Me Mode by default (system prompt). Server auto-dispatch via `dispatch_coding_task` runs only when the user explicitly skips Grill-Me or confirms dispatch (`skip Grill-Me Mode` / `דלג על Grill-Me` / `שגר ל-Cursor`). Ordinary coding utterances go to Claude for clarifying questions. Terminal UX: `npm run chat` (`scripts/interactive-chat.js`).  
+**Why:** Scope, requirements, profile structure, and approval workflows must be refined before headless Cursor work starts.  
+**Date:** 2026-07-26

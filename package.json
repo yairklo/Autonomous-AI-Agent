@@ -9,6 +9,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
+    "chat": "node scripts/interactive-chat.js",
+    "chat:mock": "node scripts/interactive-chat.js --mock",
     "smoke": "node scripts/smoke-test.js",
     "test": "node scripts/unit-tests.js",
     "dispatch": "node scripts/dispatch-task.js",

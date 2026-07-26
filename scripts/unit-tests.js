@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import ClaudeSessionManager from '../server/claude-session.js';
 import { config } from '../server/config.js';
-import { detectCodingDispatch } from '../server/task-router.js';
+import {
+  detectCodingDispatch,
+  isShortDispatchConfirmation,
+  wantsSkipGrillMe,
+} from '../server/task-router.js';
 import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
@@ -69,22 +73,56 @@ test('MCP tools - dispatch_coding_task registration', () => {
   assert.ok(tool.inputSchema.properties.taskDescription);
 });
 
-test('System prompt forbids raw shell/file edits; mandates MCP tool', () => {
+test('System prompt forbids raw shell/file edits; mandates MCP tool + Grill-Me', () => {
   assert.match(config.systemPrompt, /ZERO capability/i);
   assert.match(config.systemPrompt, /dispatch_coding_task/);
   assert.match(config.systemPrompt, /MUST be executed solely/i);
+  assert.match(config.systemPrompt, /GRILL-ME MODE/i);
+  assert.match(config.systemPrompt, /skip Grill-Me Mode/i);
+  assert.match(config.systemPrompt, /candidate profile structure/i);
+  assert.match(config.systemPrompt, /approval workflows/i);
   assert.doesNotMatch(config.systemPrompt, /Bash tool/i);
 });
 
-test('detectCodingDispatch returns MCP tool args', () => {
+test('Grill-Me: ordinary coding request does NOT auto-dispatch', () => {
+  const d = detectCodingDispatch(
+    'Add a logout button to the Header in project C:/Autonomous AI Agent'
+  );
+  assert.strictEqual(d, null, 'should stay in Grill-Me Mode (no skip signal)');
+  assert.strictEqual(wantsSkipGrillMe('Add a logout button please'), false);
+});
+
+test('detectCodingDispatch returns MCP tool args only when skip Grill-Me / dispatch', () => {
   const d = detectCodingDispatch(
     'Implement a focused MCP tool and skip Grill-Me Mode; dispatch to Cursor for C:/Autonomous AI Agent'
   );
   assert.ok(d);
   assert.strictEqual(d.mcpTool, 'dispatch_coding_task');
+  assert.strictEqual(d.skipGrillMe, true);
   assert.ok(d.mcpArgs.projectPath);
   assert.ok(d.mcpArgs.taskDescription);
   assert.match(d.mcpArgs.taskDescription, /MCP tool/i);
+  assert.strictEqual(d.shortConfirmation, false);
+});
+
+test('Hebrew skip Grill-Me + שגר triggers dispatch detection', () => {
+  const d = detectCodingDispatch(
+    'תוסיף כפתור יציאה. דלג על Grill-Me Mode ושגר את המשימה ישירות ל-Cursor.'
+  );
+  assert.ok(d);
+  assert.strictEqual(d.mcpTool, 'dispatch_coding_task');
+  assert.ok(wantsSkipGrillMe(d.task));
+});
+
+test('Short dispatch confirmation is flagged for session refine', () => {
+  assert.ok(isShortDispatchConfirmation('skip Grill-Me Mode and dispatch to Cursor'));
+  assert.ok(isShortDispatchConfirmation('שגר ל-Cursor'));
+  assert.strictEqual(
+    isShortDispatchConfirmation(
+      'Implement logout button and skip Grill-Me Mode; dispatch to Cursor for C:/Autonomous AI Agent'
+    ),
+    false
+  );
 });
 
 test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () => {

@@ -14,21 +14,49 @@ export function resolveDispatchScript() {
 }
 
 /**
- * Detect coding / Cursor-dispatch intent in a user utterance.
+ * True when the user explicitly opts out of Grill-Me Mode or orders an immediate dispatch.
+ * Ordinary coding requests without this signal stay in Grill-Me Mode (Claude asks questions).
+ */
+export function wantsSkipGrillMe(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return false;
+
+  return (
+    /skip\s+grill-?me(\s+mode)?/i.test(cleaned) ||
+    /דלג\s+על\s+grill-?me(\s+mode)?/i.test(cleaned) ||
+    /grill-?me\s+mode\s+off/i.test(cleaned) ||
+    /שגר\s*(את\s*)?(המשימה\s*)?(ישירות\s*)?(ל-?\s*)?cursor/i.test(cleaned) ||
+    /dispatch\s+(this|it|the\s+task|now|directly)?\s*(to\s+)?cursor/i.test(cleaned) ||
+    /dispatch\s+to\s+cursor/i.test(cleaned) ||
+    /invoke\s+dispatch_coding_task/i.test(cleaned) ||
+    /call\s+dispatch_coding_task/i.test(cleaned)
+  );
+}
+
+/**
+ * Short confirmations after a Grill-Me dialogue (need session-refined task text).
+ */
+export function isShortDispatchConfirmation(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned || cleaned.length > 320) return false;
+  if (!wantsSkipGrillMe(cleaned)) return false;
+  // Full task bodies usually include implementation verbs + project cues.
+  const looksLikeFullTask =
+    /(implement|refactor|fix|create|build|תוסיף|הוסף|תקן|בנה)/i.test(cleaned) &&
+    /(project|פרויקט|header|\.js|\.ts|\.tsx|repo|mcp|path:|C:\/|\/)/i.test(cleaned);
+  return !looksLikeFullTask;
+}
+
+/**
+ * Detect explicit coding / Cursor-dispatch intent (skip Grill-Me or confirm dispatch).
  * Used by the Claude orchestration layer to invoke the dispatch_coding_task MCP tool.
+ * Returns null for ordinary interactive coding requests so Grill-Me Mode can run.
  */
 export function detectCodingDispatch(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
-  const wantsDispatch =
-    /שגר|dispatch|grill-?me|cursor\s*cli|headless|סוכן|agent mode|mcp|dispatch_coding_task/i.test(
-      cleaned
-    ) ||
-    (/(תוסיף|הוסף|add|implement|refactor|fix|create|build)/i.test(cleaned) &&
-      /(פרויקט|project|header|כפתור|button|\.js|\.ts|\.tsx|repo|mcp)/i.test(cleaned));
-
-  if (!wantsDispatch) return null;
+  if (!wantsSkipGrillMe(cleaned)) return null;
 
   const project = extractProjectPath(cleaned) || config.root;
   const resolvedProject = fs.existsSync(project) ? project : config.root;
@@ -37,6 +65,8 @@ export function detectCodingDispatch(text) {
     project: resolvedProject,
     task: cleaned,
     dispatchScript: resolveDispatchScript(),
+    skipGrillMe: true,
+    shortConfirmation: isShortDispatchConfirmation(cleaned),
     /** MCP tool args Claude / orchestration must use for coding work */
     mcpTool: 'dispatch_coding_task',
     mcpArgs: {

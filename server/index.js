@@ -92,10 +92,12 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
-  // Claude orchestration layer: coding tasks → dispatch_coding_task MCP tool
+  // Explicit skip-Grill-Me / dispatch confirm → dispatch_coding_task MCP tool.
+  // Ordinary coding requests fall through to Claude (Grill-Me Mode).
   const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
+      await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
     } catch (err) {
       console.error('[API CHAT] MCP dispatch_coding_task error:', err);
@@ -143,6 +145,7 @@ app.post('/api/chat/sync', async (req, res) => {
   const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
+      await prepareDispatchTask(clientId, dispatch);
       const logs = [];
       await executeMcpTool('dispatch_coding_task', dispatch.mcpArgs, {
         onLog: (line) => {
@@ -227,6 +230,7 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
 
     const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
     if (dispatch) {
+      await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
       return res.end();
     }
@@ -317,13 +321,49 @@ function sendSse(res, event, data) {
 }
 
 /**
+ * After Grill-Me confirmation, ask Claude for the refined final task prompt
+ * when the user's message is only a short "dispatch / skip Grill-Me" confirm.
+ */
+async function prepareDispatchTask(clientId, dispatch, signal) {
+  if (!dispatch?.shortConfirmation) return dispatch;
+  const session = claude.getSession(clientId);
+  if (!session?.sessionId) return dispatch;
+
+  const refinePrompt =
+    'The user confirmed dispatch after Grill-Me Mode. ' +
+    'Based on our refined requirements, output ONLY the final taskDescription ' +
+    'string to pass to dispatch_coding_task (complete, self-contained, ready for ' +
+    'Cursor Agent CLI). No preamble, no markdown fences, no questions.';
+
+  let refined = '';
+  for await (const event of claude.ask(clientId, refinePrompt, { signal })) {
+    if (event.type === 'text') refined += event.text;
+    if (event.type === 'done') refined = event.result || refined;
+    if (event.type === 'error') {
+      throw new Error(event.error || 'Failed to refine Grill-Me task for dispatch');
+    }
+  }
+
+  refined = String(refined || '').trim();
+  if (refined) {
+    dispatch.task = refined;
+    dispatch.mcpArgs = {
+      ...dispatch.mcpArgs,
+      taskDescription: refined,
+    };
+  }
+  return dispatch;
+}
+
+/**
  * Orchestration path: Claude has no file/shell tools for coding — coding work
  * goes solely through the dispatch_coding_task MCP tool → dispatch-task.js → Cursor CLI.
+ * Triggered only after skip-Grill-Me / explicit dispatch confirmation.
  */
 async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
   const toolName = dispatch.mcpTool || 'dispatch_coding_task';
   const intro =
-    `Got it — skipping Grill-Me and calling MCP tool ${toolName} ` +
+    `Got it — Grill-Me complete (or skipped). Calling MCP tool ${toolName} ` +
     `to dispatch this coding task to Cursor Agent CLI for ${dispatch.project}. `;
   sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
   sendSse(res, 'tool_call', {
@@ -376,6 +416,8 @@ const server = app.listen(config.port, config.host, () => {
       .map((t) => t.name)
       .join(',')}`
   );
+  console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
+  console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
 });
 
