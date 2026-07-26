@@ -36,6 +36,11 @@
 **Why:** Sending Grill-Me questioning to headless Cursor fails — Cursor cannot talk back to the user.  
 **Date:** 2026-07-26
 
+## D17 — Chat refuses / replaces stale voice-agent without grillMeConversation
+**Decision:** `/api/health` exposes `grillMeConversation: true`. `npm run chat` connects only to servers that advertise it; otherwise it frees the port and starts a fresh local server (`--restart` / `npm run chat:restart` forces replace).  
+**Why:** An old process on :8787 still matched bare "Grill-Me" and dispatched to Cursor while the updated client thought it was fine.  
+**Date:** 2026-07-26
+
 ## D16 — WhatsApp job scan via local chat exports (MCP)
 **Decision:** Job scanning is exposed as MCP tool `scan_whatsapp_jobs` (`server/mcp-tools.js` + `server/whatsapp-job-scanner.js`). v1 reads WhatsApp **Export chat** `.txt` files from `data/whatsapp-exports` (or an explicit `exportPath`); no live WhatsApp Web/Baileys client. Hebrew/English keyword scoring finds posts; optional `roles` boost relevance. Chat orchestration auto-invokes the tool when the user asks to scan WhatsApp groups for jobs (`detectWhatsappJobScan`). Empty export dir falls back to `fixtures/whatsapp` for demos/tests. Job results include extracted `contacts` (email/phone/URL).  
 **Why:** Local exports keep privacy and avoid QR/session complexity while still giving the agent a real, testable scan tool.  

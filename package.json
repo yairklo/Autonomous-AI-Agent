@@ -11,6 +11,7 @@
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",
     "chat:mock": "node scripts/interactive-chat.js --mock",
+    "chat:restart": "node scripts/interactive-chat.js --restart",
     "smoke": "node scripts/smoke-test.js",
     "test": "node scripts/unit-tests.js",
     "dispatch": "node scripts/dispatch-task.js",

@@ -10,6 +10,14 @@ import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
 import {
+  buildSpecMarkdown,
+  detectGrillMePack,
+  formatGrillMeReply,
+  getGrillMePack,
+  listGrillMePacks,
+  PACK_WHATSAPP_JOBS_CV,
+} from './grill-me-packs.js';
+import {
   detectCodingDispatch,
   detectWhatsappCvSubmit,
   detectWhatsappJobScan,
@@ -58,11 +66,45 @@ app.get('/api/health', (_req, res) => {
     autoDispatchCoding: config.autoDispatchCoding,
     autoScanWhatsappJobs: config.autoScanWhatsappJobs,
     autoSubmitWhatsappCv: config.autoSubmitWhatsappCv,
+    // Chat clients require this. Missing ⇒ stale server that still auto-dispatches "Grill-Me Pack".
+    grillMeConversation: true,
+    grillMePacks: listGrillMePacks().map((p) => p.id),
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
     cvApplicationsDir: config.cvApplicationsDir,
     time: new Date().toISOString(),
   });
+});
+
+/**
+ * Grill-Me domain packs (question banks for perfect specs before tools / dispatch).
+ * GET /api/grill-me/packs
+ * GET /api/grill-me/packs/:packId?locale=he|en&format=reply|spec|json
+ */
+app.get('/api/grill-me/packs', (_req, res) => {
+  res.json({ ok: true, packs: listGrillMePacks() });
+});
+
+app.get('/api/grill-me/packs/:packId', (req, res) => {
+  const packId = String(req.params.packId || '').trim() || PACK_WHATSAPP_JOBS_CV;
+  const pack = getGrillMePack(packId);
+  if (!pack) {
+    return res.status(404).json({
+      error: `Unknown Grill-Me pack: ${packId}`,
+      known: listGrillMePacks().map((p) => p.id),
+    });
+  }
+  const locale = String(req.query.locale || 'he').toLowerCase() === 'en' ? 'en' : 'he';
+  const format = String(req.query.format || 'json').toLowerCase();
+  if (format === 'reply') {
+    res.type('text/plain; charset=utf-8').send(formatGrillMeReply(packId, { locale }));
+    return;
+  }
+  if (format === 'spec') {
+    res.type('text/markdown; charset=utf-8').send(buildSpecMarkdown(packId, { locale }));
+    return;
+  }
+  res.json({ ok: true, locale, pack });
 });
 
 app.get('/api/session/:clientId', (req, res) => {
