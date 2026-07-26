@@ -6,7 +6,8 @@
   "type": "module",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node scripts/start-with-bootstrap.js",
+    "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",
@@ -27,7 +28,11 @@
     "test:joinup-vercel": "node scripts/test-joinup-vercel.js",
     "test:joinup-staging": "node scripts/test-joinup-render-staging.js",
     "test:activity": "node scripts/test-activity-store.js",
-    "test:run-events": "node scripts/test-cursor-log-parser.js"
+    "test:run-events": "node scripts/test-cursor-log-parser.js",
+    "auth:cli": "node scripts/auth-cli.js",
+    "auth:claude": "node scripts/auth-cli.js claude",
+    "auth:cursor": "node scripts/auth-cli.js cursor",
+    "auth:git": "node scripts/auth-cli.js git"
   },
   "engines": {
     "node": ">=18"

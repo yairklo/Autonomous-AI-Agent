@@ -144,7 +144,11 @@ async function defaultCreateClient({ onLog } = {}) {
   onLog?.('[whatsapp] creating whatsapp-web.js Client (LocalAuth, local only)');
   return new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
-    puppeteer: { headless: true },
+    puppeteer: {
+      headless: true,
+      // Required inside Docker / Coolify (Chromium sandbox restrictions)
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    },
   });
 }
 

@@ -101,11 +101,17 @@ export async function submitJobFormWithPlaywright({
         err.cause = cause;
         throw err;
       }
+      // HEADLESS_BROWSER=true|false (default true). In Docker/Coolify set HEADLESS_BROWSER=true.
+      const launchArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+      ];
+      if (headless) {
+        launchArgs.push('--disable-blink-features=AutomationControlled');
+      }
       const browser = await playwright.chromium.launch({
         headless,
-        args: headless
-          ? ['--disable-blink-features=AutomationControlled']
-          : [],
+        args: launchArgs,
       });
       const context = await browser.newContext({
         userAgent:

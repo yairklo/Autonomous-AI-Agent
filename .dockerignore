@@ -1,0 +1,39 @@
+node_modules
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Local runtime / session data (persisted via named volumes instead)
+.wwebjs_auth
+.wwebjs_cache
+data
+uploads
+sessions.json
+*.log
+DISPATCH_RUN.log
+
+# Local clutter / personal files
+*.png
+*.pdf
+!assets/cv.pdf
+Yair Klausner cv.pdf
+coverage
+dist
+.tmp
+.claude
+.cursor
+agent-transcripts
+*.md
+!README.md
+!PROMPT.md
+.cursorrules
+test-*.js
+scripts/test-*.js
+# Keep scripts/auth-cli.js and scripts/dispatch-task.js in the image
+scripts/connect-whatsapp.js
+scripts/mock-scan.js
+scripts/scan-last-message.js
+whatsapp-debug.png
+whatsapp-dom-error.png

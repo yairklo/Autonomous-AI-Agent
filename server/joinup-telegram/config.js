@@ -36,8 +36,10 @@ export function parseAllowedUserIds(raw) {
 export function resolveJoinUpRoot(rawPath = env('JOINUP_PROJECT_ROOT')) {
   const candidate =
     rawPath ||
-    // Sensible sibling default for this machine layout; override via env.
-    path.resolve('C:\\JoinUpApp');
+    // Coolify/Docker default; Windows local sibling layout as fallback.
+    (process.platform === 'win32'
+      ? path.resolve('C:\\JoinUpApp')
+      : '/workspaces/JoinUpApp');
   const resolved = path.resolve(candidate);
 
   if (!fs.existsSync(resolved)) {

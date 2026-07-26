@@ -254,10 +254,18 @@ function resolveCursorLaunch() {
   const localAgentPs1 = path.join(localDir, 'cursor-agent.ps1');
   const localAgentCmd = path.join(localDir, 'cursor-agent.cmd');
   const localAgent = path.join(localDir, 'agent.cmd');
+  const linuxLocalAgent = path.join(
+    process.env.HOME || '/root',
+    '.local',
+    'bin',
+    'agent'
+  );
 
   const candidates = [
     override,
     fs.existsSync(localAgentPs1) ? localAgentPs1 : null,
+    fs.existsSync(linuxLocalAgent) ? linuxLocalAgent : null,
+    'agent',
     'cursor-agent',
     fs.existsSync(localAgentCmd) ? localAgentCmd : null,
     fs.existsSync(localAgent) ? localAgent : null,
@@ -268,6 +276,19 @@ function resolveCursorLaunch() {
     const base = path.basename(bin).toLowerCase();
     if (base === 'claude' || base.startsWith('claude.')) continue;
 
+    // Non-interactive / headless flags for Coolify + local Docker:
+    //   -p / --print   print mode (no TTY chat)
+    //   --force        auto-approve edits
+    //   --trust        trust workspace without prompt
+    const headlessArgs = (prompt, cwd) => [
+      '-p',
+      '--force',
+      '--trust',
+      '--workspace',
+      cwd,
+      prompt,
+    ];
+
     if (base === 'cursor' || base === 'cursor.cmd' || base === 'cursor.exe') {
       return {
         bin,
@@ -275,12 +296,7 @@ function resolveCursorLaunch() {
         kind: 'cursor-ide',
         buildArgs: (prompt, cwd) => [
           'agent',
-          '-p',
-          '--force',
-          '--trust',
-          '--workspace',
-          cwd,
-          prompt,
+          ...headlessArgs(prompt, cwd),
         ],
       };
     }
@@ -290,14 +306,17 @@ function resolveCursorLaunch() {
         bin,
         display: 'cursor-agent',
         kind: 'powershell',
-        buildArgs: (prompt, cwd) => [
-          '-p',
-          '--force',
-          '--trust',
-          '--workspace',
-          cwd,
-          prompt,
-        ],
+        buildArgs: headlessArgs,
+      };
+    }
+
+    // Linux Coolify / Docker: `agent` binary from cursor.com/install
+    if (base === 'agent' || base === 'cursor-agent') {
+      return {
+        bin,
+        display: 'cursor-agent',
+        kind: 'cmd',
+        buildArgs: headlessArgs,
       };
     }
 
@@ -305,19 +324,12 @@ function resolveCursorLaunch() {
       bin,
       display: 'cursor-agent',
       kind: 'cmd',
-      buildArgs: (prompt, cwd) => [
-        '-p',
-        '--force',
-        '--trust',
-        '--workspace',
-        cwd,
-        prompt,
-      ],
+      buildArgs: headlessArgs,
     };
   }
 
   throw new Error(
-    'Cursor Agent CLI not found. Install with: irm https://cursor.com/install?win32=true | iex'
+    'Cursor Agent CLI not found. Install with: curl https://cursor.com/install -fsS | bash  (Linux) or irm https://cursor.com/install?win32=true | iex (Windows). Then run: npm run auth:cli'
   );
 }
 
@@ -547,7 +559,13 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     console.log(`[spawn] ${command} ${spawnArgs.map(windowsQuote).join(' ')}`);
     const child = spawn(command, spawnArgs, {
       cwd,
-      env: { ...env, DISPATCH_NO_CLAUDE: '1' },
+      env: {
+        ...env,
+        DISPATCH_NO_CLAUDE: '1',
+        // Prefer headless / non-interactive behavior inside Coolify containers
+        CI: env.CI || '1',
+        NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
+      },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
