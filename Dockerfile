@@ -1,6 +1,6 @@
 # Playwright Node image includes Chromium OS dependencies for Linux containers.
-# Keep this tag aligned with package-lock.json playwright version.
-FROM mcr.microsoft.com/playwright:v1.62.0-jammy
+# Use a published MCR tag (v1.62.0-jammy does not exist; v1.61.1-jammy is latest stable jammy).
+FROM mcr.microsoft.com/playwright:v1.61.1-jammy
 
 USER root
 
@@ -16,9 +16,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install app dependencies first for better layer caching
+# Install dependencies first for better layer caching.
+# Coolify often injects NODE_ENV=production at build time, which would skip
+# devDependencies — force a full install, then switch to production for runtime.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 # Claude Code CLI (subscription / browser login — not API-key based)
 RUN npm install -g @anthropic-ai/claude-code
@@ -37,7 +39,7 @@ COPY . .
 # Ensure persistent dirs exist (workspaces mounted as named volume at runtime)
 RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin /workspaces
 
-# Production / Coolify defaults (subscription CLIs; no API keys required)
+# Production / Coolify runtime defaults (subscription CLIs; no API keys required)
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8787 \
