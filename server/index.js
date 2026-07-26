@@ -9,10 +9,11 @@ import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
-import { detectCodingDispatch, detectWhatsappJobScan } from './task-router.js';
+import { detectCodingDispatch, detectWhatsappCvSubmit, detectWhatsappJobScan } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
+fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
 
 const app = express();
 const claude = new ClaudeSessionManager();
@@ -51,8 +52,10 @@ app.get('/api/health', (_req, res) => {
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
     autoScanWhatsappJobs: config.autoScanWhatsappJobs,
+    autoSubmitWhatsappCv: config.autoSubmitWhatsappCv,
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
+    cvApplicationsDir: config.cvApplicationsDir,
     time: new Date().toISOString(),
   });
 });
@@ -121,6 +124,20 @@ app.post('/api/chat', async (req, res) => {
     }
     res.end();
     console.log('[API CHAT] MCP scan_whatsapp_jobs request finished');
+    return;
+  }
+
+  // CV application draft → submit_whatsapp_job_cv MCP tool.
+  const waCv = config.autoSubmitWhatsappCv ? detectWhatsappCvSubmit(text) : null;
+  if (waCv) {
+    try {
+      await streamWhatsappCvSubmitViaMcp(res, clientId, waCv, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] MCP submit_whatsapp_job_cv error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP submit_whatsapp_job_cv request finished');
     return;
   }
 
@@ -200,6 +217,36 @@ app.post('/api/chat/sync', async (req, res) => {
         mcpTool: 'scan_whatsapp_jobs',
         jobCount: mcpResult.jobCount,
         jobs: mcpResult.jobs,
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
+  const waCv = config.autoSubmitWhatsappCv ? detectWhatsappCvSubmit(text) : null;
+  if (waCv) {
+    try {
+      const logs = [];
+      const mcpArgs = await resolveCvSubmitArgs(waCv, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const mcpResult = await executeMcpTool('submit_whatsapp_job_cv', mcpArgs, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const summary = formatWhatsappCvSubmitSummary(mcpResult);
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: summary,
+        mcpTool: 'submit_whatsapp_job_cv',
+        application: mcpResult.application,
         logs: logs.slice(-20),
       });
     } catch (err) {
@@ -465,9 +512,119 @@ function formatWhatsappJobScanSummary(mcpResult) {
 
   const lines = jobs.slice(0, 8).map((j, i) => {
     const when = j.timestamp ? ` @ ${j.timestamp}` : '';
-    return `${i + 1}. [${j.groupName}] ${j.author}${when}: ${j.snippet}`;
+    const contact =
+      j.contacts?.emails?.[0] || j.contacts?.phones?.[0] || j.contacts?.urls?.[0];
+    const contactBit = contact ? ` → ${contact}` : '';
+    return `${i + 1}. [${j.groupName}] ${j.author}${when}${contactBit}: ${j.snippet}`;
   });
-  return `${header}\n${lines.join('\n')}`;
+  return `${header}\n${lines.join('\n')}\nSay "הגש קו״ח" / "submit CV" to draft an application for a match.`;
+}
+
+async function resolveCvSubmitArgs(waCv, { onLog } = {}) {
+  const args = { ...(waCv.mcpArgs || {}) };
+  if (!waCv.resolveFromScan || args.jobText || args.recipientEmail) {
+    return args;
+  }
+
+  onLog?.('[mcp] submit_whatsapp_job_cv resolving job via scan_whatsapp_jobs…');
+  const scan = await executeMcpTool(
+    'scan_whatsapp_jobs',
+    { exportPath: config.whatsappExportsDir, limit: 20 },
+    { onLog }
+  );
+  const withEmail = (scan.jobs || []).find((j) => j.contacts?.emails?.length);
+  const pick = withEmail || (scan.jobs || [])[0];
+  if (!pick) {
+    const err = new Error(
+      'No WhatsApp jobs found to apply to. Scan exports first or pass jobText/recipientEmail.'
+    );
+    err.code = 'CV_NO_JOB';
+    throw err;
+  }
+  return {
+    ...args,
+    jobId: pick.id,
+    jobText: pick.text,
+    groupName: pick.groupName,
+    author: pick.author,
+    recipientEmail: args.recipientEmail || pick.contacts?.emails?.[0],
+  };
+}
+
+function formatWhatsappCvSubmitSummary(mcpResult) {
+  const app = mcpResult.application || {};
+  const lines = [
+    `Drafted CV application via submit_whatsapp_job_cv (${app.status || 'unknown'}).`,
+    app.job?.groupName ? `Group: ${app.job.groupName}` : null,
+    app.contacts?.emails?.[0]
+      ? `To: ${app.contacts.emails[0]}`
+      : 'To: (no email — needs contact)',
+    app.mailto ? 'mailto: ready' : null,
+    app.note || null,
+    mcpResult.files?.json ? `Saved: ${mcpResult.files.json}` : null,
+  ].filter(Boolean);
+  return lines.join(' ');
+}
+
+/**
+ * Orchestration path for CV drafts via submit_whatsapp_job_cv.
+ */
+async function streamWhatsappCvSubmitViaMcp(res, clientId, waCv, signal) {
+  const toolName = waCv.mcpTool || 'submit_whatsapp_job_cv';
+  const intro = `Preparing CV application draft via MCP tool ${toolName}… `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  const mcpArgs = await resolveCvSubmitArgs(waCv, {
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: {
+      ...mcpArgs,
+      jobText: mcpArgs.jobText
+        ? `${String(mcpArgs.jobText).slice(0, 120)}…`
+        : undefined,
+    },
+  });
+
+  const mcpResult = await executeMcpTool(toolName, mcpArgs, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    status: mcpResult.application?.status,
+    applicationId: mcpResult.application?.id,
+  });
+
+  const summary = `\n${formatWhatsappCvSubmitSummary(mcpResult)}`;
+  full += summary;
+  sendSse(res, 'token', { text: summary });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    mcpTool: toolName,
+    application: mcpResult.application,
+  });
 }
 
 /**
@@ -520,6 +677,7 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
   console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
+  console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
   console.log(
     `[voice-agent] mcpTools=${listMcpTools()
       .map((t) => t.name)

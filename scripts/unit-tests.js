@@ -7,12 +7,15 @@ import ClaudeSessionManager from '../server/claude-session.js';
 import { config } from '../server/config.js';
 import {
   detectCodingDispatch,
+  detectWhatsappCvSubmit,
   detectWhatsappJobScan,
   isShortDispatchConfirmation,
   wantsSkipGrillMe,
 } from '../server/task-router.js';
 import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
+import { submitWhatsappJobCv } from '../server/cv-submitter.js';
 import {
+  extractApplyContacts,
   parseWhatsappExport,
   scanWhatsappJobs,
   scoreJobMessage,
@@ -219,6 +222,7 @@ test('scanWhatsappJobs reads fixture export', () => {
   assert.ok(result.jobCount >= 3);
   assert.ok(result.jobs.every((j) => j.matchedSignals.length > 0));
   assert.ok(result.jobs.some((j) => j.matchedSignals.some((s) => /role:/i.test(s))));
+  assert.ok(result.jobs.some((j) => j.contacts?.emails?.length > 0));
 });
 
 test('detectWhatsappJobScan matches Hebrew/English scan requests', () => {
@@ -256,4 +260,98 @@ test('executeMcpTool scan_whatsapp_jobs uses fixture when exports empty', async 
   assert.ok(result.jobCount >= 3);
   assert.match(logs.join('\n'), /\[mcp\] tool=scan_whatsapp_jobs/);
   assert.match(logs.join('\n'), /status=ok/);
+});
+
+test('extractApplyContacts finds emails in job posts', () => {
+  const contacts = extractApplyContacts(
+    'דרוש Full Stack. שלחו קו"ח ל-jobs@example.com או https://jobs.example.com/apply'
+  );
+  assert.deepStrictEqual(contacts.emails, ['jobs@example.com']);
+  assert.ok(contacts.urls.some((u) => /jobs\.example\.com/.test(u)));
+});
+
+test('MCP tools - submit_whatsapp_job_cv registration', () => {
+  const tools = listMcpTools();
+  assert.ok(tools.some((t) => t.name === 'submit_whatsapp_job_cv'));
+  const tool = getMcpTool('submit_whatsapp_job_cv');
+  assert.ok(tool);
+  assert.match(tool.description, /CV|mailto|draft/i);
+  assert.ok(tool.inputSchema.properties.jobText);
+  assert.ok(tool.inputSchema.properties.confirm);
+});
+
+test('System prompt documents submit_whatsapp_job_cv', () => {
+  assert.match(config.systemPrompt, /submit_whatsapp_job_cv/);
+  assert.match(config.systemPrompt, /mailto/i);
+});
+
+test('submitWhatsappJobCv drafts package with mailto', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-apps-'));
+  try {
+    const result = submitWhatsappJobCv({
+      jobId: 'test-job-1',
+      jobText:
+        "We're hiring a Backend Engineer. Send resume to mike@acme.dev",
+      groupName: 'Jobs Israel',
+      author: 'Recruiter Mike',
+      profilePath: config.cvFixtureProfilePath,
+      applicationsDir: dir,
+    });
+    assert.ok(result.ok);
+    assert.strictEqual(result.application.status, 'draft');
+    assert.ok(result.application.mailto?.startsWith('mailto:'));
+    assert.ok(result.application.contacts.emails.includes('mike@acme.dev'));
+    assert.ok(fs.existsSync(result.files.json));
+    assert.ok(fs.existsSync(result.files.cover));
+    assert.ok(fs.existsSync(result.files.cv));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectWhatsappCvSubmit matches Hebrew/English apply requests', () => {
+  const he = detectWhatsappCvSubmit('הגש קו״ח למשרה מ-WhatsApp');
+  assert.ok(he);
+  assert.strictEqual(he.mcpTool, 'submit_whatsapp_job_cv');
+  assert.strictEqual(he.resolveFromScan, true);
+
+  const en = detectWhatsappCvSubmit('Submit CV to jobs@example.com');
+  assert.ok(en);
+  assert.strictEqual(en.mcpArgs.recipientEmail, 'jobs@example.com');
+  assert.strictEqual(en.resolveFromScan, false);
+});
+
+test('detectWhatsappCvSubmit ignores tool-implementation requests', () => {
+  assert.strictEqual(
+    detectWhatsappCvSubmit(
+      'אני רוצה להוסיף לסוכן שלנו כלי לסריקת משרות בקבוצות WhatsApp והגשת קורות חיים'
+    ),
+    null
+  );
+});
+
+test('executeMcpTool submit_whatsapp_job_cv uses fixture profile', async () => {
+  const logs = [];
+  const result = await executeMcpTool(
+    'submit_whatsapp_job_cv',
+    {
+      jobText: 'דרוש Full Stack. שלחו קו"ח ל-jobs@example.com',
+      groupName: 'Jobs Israel',
+      author: 'Dana HR',
+    },
+    { onLog: (line) => logs.push(line) }
+  );
+  assert.ok(result.ok);
+  assert.strictEqual(result.tool, 'submit_whatsapp_job_cv');
+  assert.strictEqual(result.application.status, 'draft');
+  assert.ok(result.usedFixtureProfile);
+  assert.match(logs.join('\n'), /\[mcp\] tool=submit_whatsapp_job_cv/);
+  assert.match(logs.join('\n'), /status=ok/);
+  try {
+    if (result.files?.json) fs.unlinkSync(result.files.json);
+    if (result.files?.cover) fs.unlinkSync(result.files.cover);
+    if (result.files?.cv) fs.unlinkSync(result.files.cv);
+  } catch {
+    /* ignore */
+  }
 });
