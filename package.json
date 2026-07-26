@@ -6,7 +6,8 @@
   "type": "module",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node scripts/start-with-bootstrap.js",
+    "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",

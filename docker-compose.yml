@@ -15,8 +15,14 @@ services:
       - NO_OPEN_BROWSER=1
       # Persist git identity via volume (named volumes cannot bind a single file)
       - GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig
+      # External coding workspace (JoinUpApp clone lives here)
+      - JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp
+      - JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git
+      - JOINUP_GITHUB_REPO=yairklo/JoinUpApp
+      - WORKSPACE_BOOTSTRAP_STRICT=1
       # Inject secrets via Coolify environment variables:
-      # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, JOINUP_TELEGRAM_BOT_TOKEN, etc.
+      # GITHUB_TOKEN (required for clone/push), TELEGRAM_*, JOINUP_TELEGRAM_*,
+      # GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
     volumes:
       # WhatsApp LocalAuth session (survives redeploys)
       - wwebjs_auth:/app/.wwebjs_auth
@@ -30,6 +36,8 @@ services:
       - cursor_config:/root/.cursor
       # Git identity for automated commits (see GIT_CONFIG_GLOBAL)
       - git_config:/root/.git-config-data
+      # Persistent clones of external repos (JoinUpApp, etc.)
+      - app_workspaces:/workspaces
     restart: unless-stopped
     # Interactive one-time login from Coolify terminal / SSH needs a TTY:
     #   docker compose exec -it app npm run auth:cli
@@ -41,3 +49,4 @@ volumes:
   claude_config:
   cursor_config:
   git_config:
+  app_workspaces:

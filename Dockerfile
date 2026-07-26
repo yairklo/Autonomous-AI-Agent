@@ -34,8 +34,8 @@ RUN curl -fsSL https://cursor.com/install | bash \
 # Application source
 COPY . .
 
-# Ensure git-config volume directory exists (file is created on first auth:cli)
-RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin
+# Ensure persistent dirs exist (workspaces mounted as named volume at runtime)
+RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin /workspaces
 
 # Production / Coolify defaults (subscription CLIs; no API keys required)
 ENV NODE_ENV=production \
@@ -46,7 +46,11 @@ ENV NODE_ENV=production \
     CLAUDE_BIN=claude \
     CURSOR_BIN=agent \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
-    NO_OPEN_BROWSER=1
+    NO_OPEN_BROWSER=1 \
+    JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp \
+    JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git \
+    JOINUP_GITHUB_REPO=yairklo/JoinUpApp \
+    WORKSPACE_BOOTSTRAP_STRICT=1
 
 EXPOSE 8787
 

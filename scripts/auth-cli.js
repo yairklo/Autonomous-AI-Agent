@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { bootstrapWorkspace } from './bootstrap-workspace.js';
 
 const mode = (process.argv[2] || 'all').toLowerCase();
 
@@ -123,11 +124,13 @@ function printBanner() {
 ║    claude_config → /root/.claude                         ║
 ║    cursor_config → /root/.cursor                         ║
 ║    git_config    → /root/.git-config-data                ║
+║    app_workspaces→ /workspaces (JoinUpApp clone)         ║
 ║                                                          ║
 ║  Coolify: open container Terminal, then:                 ║
 ║    npm run auth:cli                                      ║
 ║  Or from the VPS host:                                   ║
 ║    docker compose exec -it app npm run auth:cli          ║
+║  Set GITHUB_TOKEN in Coolify for git clone/push.         ║
 ╚══════════════════════════════════════════════════════════╝
 `);
   console.log(`PATH claude: ${which(CLAUDE_BIN) || '(not found)'}`);
@@ -137,6 +140,12 @@ function printBanner() {
 
 async function main() {
   printBanner();
+  // Ensure /workspaces/JoinUpApp clone + GITHUB_TOKEN credential helper exist first
+  try {
+    await bootstrapWorkspace();
+  } catch (err) {
+    console.warn(`[auth:cli] workspace bootstrap: ${err.message}`);
+  }
   const rl = readline.createInterface({ input, output });
   try {
     if (mode === 'all' || mode === 'git') {
