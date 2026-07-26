@@ -30,10 +30,13 @@
           <span class="brand-mark" aria-hidden="true"></span>
           <h1>Voice Agent</h1>
         </div>
-        <button type="button" id="logoutBtn" class="ghost" aria-label="Logout">Logout</button>
-        <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">
-          Settings
-        </button>
+        <div class="top-actions">
+          <button type="button" id="historyBtn" class="ghost" aria-label="History">History</button>
+          <button type="button" id="logoutBtn" class="ghost" aria-label="Logout">Logout</button>
+          <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">
+            Settings
+          </button>
+        </div>
       </header>
 
       <p class="status" id="statusLine">Hold the button and speak.</p>
@@ -79,6 +82,37 @@
         </button>
       </div>
     </main>
+
+    <dialog id="historyDialog" class="history-dialog">
+      <div class="history-panel">
+        <header class="history-head">
+          <div>
+            <h2>Agent History</h2>
+            <p class="history-sub">כל הפלטפורמות · רק אצלך ב־GUI</p>
+          </div>
+          <button type="button" id="historyClose" class="ghost">Close</button>
+        </header>
+        <div class="history-filters" role="tablist" aria-label="Filter history">
+          <button type="button" class="history-chip is-active" data-platform="">All</button>
+          <button type="button" class="history-chip" data-platform="cursor">Cursor</button>
+          <button type="button" class="history-chip" data-platform="telegram">Telegram</button>
+          <button type="button" class="history-chip" data-platform="voice">Voice</button>
+        </div>
+        <input
+          id="historySearch"
+          class="history-search"
+          type="search"
+          placeholder="Search title, actor, project…"
+          aria-label="Search history"
+        />
+        <div class="history-layout">
+          <div id="historyList" class="history-list" role="list"></div>
+          <div id="historyDetail" class="history-detail" aria-live="polite">
+            <p class="history-empty">בחר פעילות כדי לראות את הטיימליין המלא.</p>
+          </div>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="settingsDialog">
       <form method="dialog" id="settingsForm" class="settings">

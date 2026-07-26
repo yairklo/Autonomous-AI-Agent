@@ -7,6 +7,10 @@ import {
   resolveJoinUpVercelUrl,
 } from './vercel.js';
 import {
+  formatStagingTelegramLines,
+  redeployAndWatchStaging,
+} from './render-staging.js';
+import {
   bridgeEndRun,
   bridgeLogLine,
   bridgeStartRun,
@@ -22,6 +26,7 @@ export class JoinUpCursorExecutor {
    *   joinUpRoot: string,
    *   runDispatch?: typeof runDispatchTask,
    *   resolveVercelUrl?: typeof resolveJoinUpVercelUrl,
+   *   redeployStaging?: typeof redeployAndWatchStaging,
    *   bridge?: boolean,
    * }} options
    */
@@ -32,6 +37,7 @@ export class JoinUpCursorExecutor {
     this.joinUpRoot = pinToJoinUpRoot(options.joinUpRoot);
     this.runDispatch = options.runDispatch || runDispatchTask;
     this.resolveVercelUrl = options.resolveVercelUrl || resolveJoinUpVercelUrl;
+    this.redeployStaging = options.redeployStaging || redeployAndWatchStaging;
     this.bridge = options.bridge !== false;
   }
 
@@ -71,7 +77,10 @@ export class JoinUpCursorExecutor {
       '- After coding: run `cd next_app && npm run build` and fix TypeScript/build errors in a loop until green.',
       '- Run server tests when relevant (`cd server && npm test`).',
       '- Do not consider the task done while Next build is red (Vercel will fail otherwise).',
-      '- When green: merge the feature branch into Dev and push (triggers Vercel).',
+      '- When green: merge the feature branch into Dev and push (triggers Vercel preview).',
+      '- Server/API staging is https://my-app-staging-ijyp.onrender.com (NOT the old joinupapp-1.onrender.com).',
+      '- Production API is https://joinup-api.duckdns.org — do not treat old Render prod as current.',
+      '- After server/ changes the orchestrator redeploys Render staging and watches /api/health for errors.',
       '',
       task,
     ].join('\n');
@@ -139,10 +148,34 @@ export class JoinUpCursorExecutor {
     await log(
       `[joinup-telegram] vercel preview=${vercel.url || '(none)'} state=${vercel.state} source=${vercel.source || ''}`
     );
+
+    // Redeploy Render staging when server/ changed; listen until /api/health is green.
+    const staging = await this.redeployStaging({
+      projectRoot: project,
+      force: process.env.JOINUP_STAGING_FORCE_REDEPLOY === '1',
+      onLog: (line) => {
+        void log(line);
+      },
+      timeoutMs: Number(process.env.JOINUP_STAGING_WAIT_MS || 420000),
+    });
+    await log(
+      `[joinup-telegram] staging=${staging.stagingUrl} ok=${staging.ok} skipped=${!!staging.skipped}`
+    );
+    if (staging.errors?.length) {
+      for (const e of staging.errors.slice(0, 5)) {
+        await log(`[joinup-telegram] staging-error: ${e}`);
+      }
+    }
+
+    const summaryParts = [];
+    if (vercel.url) summaryParts.push(`Preview: ${vercel.url}`);
+    if (staging.stagingUrl) summaryParts.push(`Staging: ${staging.stagingUrl}`);
+    if (!staging.ok && !staging.skipped) summaryParts.push('Staging health FAILED');
+
     if (this.bridge) {
       await bridgeEndRun(runId, {
-        ok: true,
-        text: vercel.url ? `Done. Preview: ${vercel.url}` : 'Done.',
+        ok: staging.ok || !!staging.skipped,
+        text: summaryParts.length ? `Done. ${summaryParts.join(' | ')}` : 'Done.',
       });
     }
 
@@ -150,6 +183,7 @@ export class JoinUpCursorExecutor {
       ok: true,
       projectPath: project,
       vercel,
+      staging,
       runId,
       ...result,
     };
@@ -158,16 +192,22 @@ export class JoinUpCursorExecutor {
 
 /**
  * Human-readable completion note for Telegram (non-technical).
- * Always includes a Vercel link when configured / discovered.
- * @param {{ ok?: boolean, projectPath?: string, error?: string, vercel?: object }} result
+ * Includes Vercel preview + Render staging when available.
+ * @param {{ ok?: boolean, projectPath?: string, error?: string, vercel?: object, staging?: object }} result
  */
 export function formatCompletionMessage(result) {
   const vercelLines = formatVercelTelegramLines(result?.vercel);
+  const stagingLines = formatStagingTelegramLines(result?.staging);
+  const middle = [
+    ...vercelLines,
+    ...(stagingLines.length && vercelLines.length ? [''] : []),
+    ...stagingLines,
+  ];
   if (result?.ok) {
     return [
       'מוכן — העדכון ל-joinUp נבנה ועלה.',
       '',
-      ...vercelLines,
+      ...middle,
       '',
       'אפשר לפתוח את הקישור ולבדוק את השינוי. אם משהו לא מרגיש נכון — כתבו לי.',
     ].join('\n');
@@ -175,7 +215,7 @@ export function formatCompletionMessage(result) {
   return [
     'משהו השתבש בבנייה של joinUp.',
     '',
-    ...vercelLines,
+    ...middle,
     '',
     'נסו לאשר שוב בעוד רגע, או בקשו ממישהו מהצוות לבדוק את סטטוס הבילד.',
     result?.error ? `הערה: ${String(result.error).slice(0, 200)}` : '',

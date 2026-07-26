@@ -26,6 +26,7 @@ export {
   isExplicitConfirmation,
   isCancelOrReset,
   extractReadyToBuild,
+  claimsSendingToBuild,
 } from './session-store.js';
 export { JoinUpCursorExecutor, formatCompletionMessage, assertPinnedProjectPath } from './executor.js';
 export { JoinUpProductAgent } from './product-agent.js';
@@ -34,6 +35,13 @@ export {
   resolveJoinUpVercelUrl,
   formatVercelTelegramLines,
 } from './vercel.js';
+export {
+  redeployAndWatchStaging,
+  formatStagingTelegramLines,
+  getJoinUpStagingUrl,
+  getJoinUpApiProductionUrl,
+  detectServerCodeChanges,
+} from './render-staging.js';
 
 import { loadJoinUpTelegramConfig } from './config.js';
 import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';
@@ -43,6 +51,8 @@ import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';
  * @param {{ onLog?: (line: string) => void, force?: boolean }} [options]
  */
 export async function startJoinUpTelegramService(options = {}) {
+  // Persist activity via HTTP bridge to voice-agent only (host GUI history).
+  process.env.AGENT_ACTIVITY_PERSIST = '0';
   const onLog = options.onLog || ((line) => console.log(line));
   const config = loadJoinUpTelegramConfig();
 

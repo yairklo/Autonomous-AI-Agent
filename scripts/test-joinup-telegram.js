@@ -8,6 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import {
   createAuthMiddleware,
+  claimsSendingToBuild,
   extractReadyToBuild,
   isAllowedTelegramUser,
   isExplicitConfirmation,
@@ -126,7 +127,15 @@ test('extractReadyToBuild and confirmation helpers', () => {
   assert.equal(isExplicitConfirmation('כן תבנה'), true);
   assert.equal(isExplicitConfirmation('היה באג, תנסה עכשיו לבצע את המשימה!'), true);
   assert.equal(isExplicitConfirmation('יש אישור להתחיל לעבוד!'), true);
+  assert.equal(isExplicitConfirmation('תעביר לתיקון'), true);
   assert.equal(isExplicitConfirmation('maybe later'), false);
+  assert.equal(
+    claimsSendingToBuild(
+      'הבנתי - מנהל תמיד משחק... שולח את זה לתיקון:'
+    ),
+    true
+  );
+  assert.equal(claimsSendingToBuild('עוד שאלה אחת לפני שנמשיך'), false);
 });
 
 test('mock product agent grills then dispatches only after confirm', async () => {

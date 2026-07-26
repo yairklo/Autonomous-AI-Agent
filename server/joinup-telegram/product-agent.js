@@ -1,6 +1,7 @@
 import { ClaudeSessionManager } from '../claude-session.js';
 import { JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT } from './prompt.js';
 import {
+  claimsSendingToBuild,
   extractReadyToBuild,
   isCancelOrReset,
   isExplicitConfirmation,
@@ -102,22 +103,21 @@ export class JoinUpProductAgent {
       };
     }
 
-    // Safety net: LLM claimed "sending to build" but omitted READY_TO_BUILD —
-    // if we already have a pending technical prompt, actually dispatch.
-    const claimsBuilding =
-      /(שולח (שוב )?(את )?(זה|המשימה)?\s*(עכשיו )?לבני|שולח שוב|sending (it |this )?(to )?(build|cursor)|i('m| am) (now )?send|start(ing)? (the )?build)/i.test(
-        cleanReply
-      );
-    if (hasPendingBuild && claimsBuilding) {
-      this.onLog(
-        '[joinup-telegram] LLM claimed build start — dispatching pending technical prompt'
-      );
-      return this._executeConfirmed(userId, signal);
+    // Safety net: LLM claimed "sending to fix/build" but omitted READY_TO_BUILD.
+    // Example that previously failed: "שולח את זה לתיקון:" with no marker → no Cursor.
+    if (claimsSendingToBuild(cleanReply)) {
+      const synthesized = this._ensureTechnicalPrompt(userId, cleanReply);
+      if (synthesized) {
+        this.onLog(
+          '[joinup-telegram] LLM claimed send-to-fix/build — dispatching (synthesized READY_TO_BUILD if needed)'
+        );
+        return this._executeConfirmed(userId, signal);
+      }
     }
 
     // Heuristic: if the agent asked for confirmation without the marker, still track phase.
     const asksConfirm =
-      /should i proceed|proceed with building|תבנה|לאשר|מאשר|לְאַשֵׁר|האם להמשיך/i.test(
+      /should i proceed|proceed with building|תבנה|לאשר|מאשר|לְאַשֵׁר|האם להמשיך|נכון\?/i.test(
         cleanReply
       );
     this.store.update(userId, {
@@ -127,6 +127,44 @@ export class JoinUpProductAgent {
     });
 
     return { reply: cleanReply, phase: this.store.get(userId).phase };
+  }
+
+  /**
+   * Ensure a pending technical prompt exists before Cursor dispatch.
+   * Synthesizes one from the product summary + recent history when the LLM forgot READY_TO_BUILD.
+   */
+  _ensureTechnicalPrompt(userId, cleanReply) {
+    const session = this.store.get(userId);
+    if (session.pendingTechnicalPrompt) return session.pendingTechnicalPrompt;
+
+    const history = (session.history || [])
+      .slice(-14)
+      .map((h) => `${h.role}: ${String(h.text || '').slice(0, 500)}`)
+      .join('\n');
+    const summary = String(cleanReply || session.lastAgentReply || '').slice(0, 1800);
+    if (!summary && !history) return null;
+
+    const technicalPrompt = [
+      'Product-confirmed joinUp fix from Telegram collaborator.',
+      'Stay strictly inside the joinUp repository. Do not touch other projects.',
+      '',
+      'Product summary / intent:',
+      summary || '(see conversation)',
+      '',
+      'Recent conversation:',
+      history || '(none)',
+      '',
+      'Implement the described UX/behavior change end-to-end (web + mobile if the feature spans both).',
+      'Run local quality gates, then merge to Dev when green.',
+    ].join('\n');
+
+    this.store.update(userId, {
+      phase: 'awaiting_confirmation',
+      pendingTechnicalPrompt: technicalPrompt,
+      pendingSpecSummary: summary,
+      lastAgentReply: summary,
+    });
+    return technicalPrompt;
   }
 
   async _askAgent(userId, userText, signal) {
@@ -211,13 +249,19 @@ export class JoinUpProductAgent {
         phase: 'completed',
         pendingTechnicalPrompt: '',
         lastVercelUrl: execResult?.vercel?.url || '',
+        lastStagingUrl: execResult?.staging?.stagingUrl || '',
       });
       this.claude.reset(this.clientIdFor(userId));
       return {
-        reply: formatCompletionMessage({ ok: true, vercel: execResult?.vercel }),
+        reply: formatCompletionMessage({
+          ok: true,
+          vercel: execResult?.vercel,
+          staging: execResult?.staging,
+        }),
         phase: 'completed',
         dispatched: true,
         vercelUrl: execResult?.vercel?.url || '',
+        stagingUrl: execResult?.staging?.stagingUrl || '',
       };
     } catch (err) {
       this.store.update(userId, { phase: 'awaiting_confirmation' });
@@ -227,6 +271,13 @@ export class JoinUpProductAgent {
           ok: false,
           error: err.message,
           vercel: { url: process.env.JOINUP_VERCEL_PRODUCTION_URL || '' },
+          staging: {
+            stagingUrl:
+              process.env.JOINUP_STAGING_URL ||
+              'https://my-app-staging-ijyp.onrender.com',
+            skipped: true,
+            reason: 'execute_failed',
+          },
         }),
         phase: 'awaiting_confirmation',
         dispatched: false,

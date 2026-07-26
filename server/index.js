@@ -27,6 +27,8 @@ import {
 } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 import { mountRunEventsRoutes } from './run-events-http.js';
+import { mountActivityRoutes } from './activity-http.js';
+import { recordActivity } from './activity-store.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
 fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
@@ -48,6 +50,7 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 mountRunEventsRoutes(app);
+mountActivityRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -65,6 +68,8 @@ app.get('/api/health', (_req, res) => {
     host: config.host,
     hostname: os.hostname(),
     lanAddresses: addresses,
+    // Client/GUI: if missing, the process is stale (restart npm start for Cursor Live).
+    runEvents: true,
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
@@ -148,6 +153,18 @@ app.post('/api/chat', async (req, res) => {
 
   initSse(res);
   sendSse(res, 'meta', { clientId, interactiveChat });
+
+  const voiceActivityId = `voice:${clientId}:${new Date().toISOString().slice(0, 10)}`;
+  recordActivity({
+    activityId: voiceActivityId,
+    kind: 'chat_user',
+    source: 'voice',
+    platform: 'voice',
+    actorId: clientId,
+    actorLabel: 'Voice GUI',
+    title: 'Voice / chat turn',
+    text,
+  });
 
   const ac = new AbortController();
   res.on('close', () => {
@@ -264,16 +281,45 @@ app.post('/api/chat', async (req, res) => {
       } else if (event.type === 'session') {
         sendSse(res, 'session', { sessionId: event.sessionId });
       } else if (event.type === 'done') {
+        const result = event.result || full;
+        recordActivity({
+          activityId: voiceActivityId,
+          kind: 'chat_assistant',
+          source: 'voice',
+          platform: 'voice',
+          actorId: clientId,
+          actorLabel: 'Claude (voice)',
+          title: 'Voice / chat turn',
+          text: result,
+        });
         sendSse(res, 'done', {
-          result: event.result || full,
+          result,
           clientId,
         });
       } else if (event.type === 'error') {
+        recordActivity({
+          activityId: voiceActivityId,
+          kind: 'error',
+          source: 'voice',
+          platform: 'voice',
+          actorId: clientId,
+          actorLabel: 'Claude (voice)',
+          text: event.error || 'chat error',
+        });
         sendSse(res, 'error', { error: event.error });
       }
     }
   } catch (err) {
     console.error('[API CHAT] error caught:', err);
+    recordActivity({
+      activityId: voiceActivityId,
+      kind: 'error',
+      source: 'voice',
+      platform: 'voice',
+      actorId: clientId,
+      actorLabel: 'Voice GUI',
+      text: err.message || String(err),
+    });
     sendSse(res, 'error', { error: err.message || String(err) });
   }
   res.end();
