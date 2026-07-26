@@ -9,7 +9,7 @@ services:
       - PORT=8787
       - HEADLESS_BROWSER=true
       # Headless CLI: Claude uses -p + bypassPermissions; Cursor uses -p --force --trust
-      - CI=1
+      # CI is managed via Coolify UI (not hardcoded here)
       - CLAUDE_BIN=claude
       - CURSOR_BIN=agent
       - NO_OPEN_BROWSER=1
