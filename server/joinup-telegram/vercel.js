@@ -32,7 +32,9 @@ export async function resolveJoinUpVercelUrl(opts = {}) {
   const productionUrl = (
     opts.productionUrl ||
     env('JOINUP_VERCEL_PRODUCTION_URL') ||
-    env('JOINUP_VERCEL_URL')
+    env('JOINUP_VERCEL_URL') ||
+    // Known joinUp Vercel production host (override via env if it changes).
+    'https://join-up-app.vercel.app'
   ).replace(/\/$/, '');
 
   const token = opts.token || env('VERCEL_TOKEN');
