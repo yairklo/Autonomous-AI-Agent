@@ -9,7 +9,12 @@ import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
-import { detectCodingDispatch, detectWhatsappCvSubmit, detectWhatsappJobScan } from './task-router.js';
+import {
+  detectCodingDispatch,
+  detectWhatsappCvSubmit,
+  detectWhatsappJobScan,
+  isInteractiveConversationRequest,
+} from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
@@ -97,9 +102,18 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
+  // "שאל אותי" / Grill-Me Pack → Claude talks here; no Cursor / MCP auto-fire.
+  const conversational = isInteractiveConversationRequest(text);
+  if (conversational) {
+    console.log(
+      '[API CHAT] interactive Grill-Me conversation — skipping auto MCP (Claude must talk to the user)'
+    );
+  }
+
   // Explicit skip-Grill-Me / dispatch confirm → dispatch_coding_task MCP tool.
   // Ordinary coding requests fall through to Claude (Grill-Me Mode).
-  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  const dispatch =
+    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
       await prepareDispatchTask(clientId, dispatch, ac.signal);
@@ -114,7 +128,10 @@ app.post('/api/chat', async (req, res) => {
   }
 
   // WhatsApp group job scan → scan_whatsapp_jobs MCP tool.
-  const waScan = config.autoScanWhatsappJobs ? detectWhatsappJobScan(text) : null;
+  const waScan =
+    !conversational && config.autoScanWhatsappJobs
+      ? detectWhatsappJobScan(text)
+      : null;
   if (waScan) {
     try {
       await streamWhatsappJobScanViaMcp(res, clientId, waScan, ac.signal);
@@ -128,7 +145,10 @@ app.post('/api/chat', async (req, res) => {
   }
 
   // CV application draft → submit_whatsapp_job_cv MCP tool.
-  const waCv = config.autoSubmitWhatsappCv ? detectWhatsappCvSubmit(text) : null;
+  const waCv =
+    !conversational && config.autoSubmitWhatsappCv
+      ? detectWhatsappCvSubmit(text)
+      : null;
   if (waCv) {
     try {
       await streamWhatsappCvSubmitViaMcp(res, clientId, waCv, ac.signal);
@@ -175,7 +195,10 @@ app.post('/api/chat/sync', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'text is required' });
 
-  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  const conversational = isInteractiveConversationRequest(text);
+
+  const dispatch =
+    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
       await prepareDispatchTask(clientId, dispatch);
@@ -199,7 +222,10 @@ app.post('/api/chat/sync', async (req, res) => {
     }
   }
 
-  const waScan = config.autoScanWhatsappJobs ? detectWhatsappJobScan(text) : null;
+  const waScan =
+    !conversational && config.autoScanWhatsappJobs
+      ? detectWhatsappJobScan(text)
+      : null;
   if (waScan) {
     try {
       const logs = [];
@@ -224,7 +250,10 @@ app.post('/api/chat/sync', async (req, res) => {
     }
   }
 
-  const waCv = config.autoSubmitWhatsappCv ? detectWhatsappCvSubmit(text) : null;
+  const waCv =
+    !conversational && config.autoSubmitWhatsappCv
+      ? detectWhatsappCvSubmit(text)
+      : null;
   if (waCv) {
     try {
       const logs = [];
@@ -316,7 +345,11 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       if (!res.writableEnded) ac.abort();
     });
 
-    const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    const conversational = isInteractiveConversationRequest(text);
+    const dispatch =
+      !conversational && config.autoDispatchCoding
+        ? detectCodingDispatch(text)
+        : null;
     if (dispatch) {
       await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);

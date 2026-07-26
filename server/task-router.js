@@ -34,6 +34,28 @@ export function wantsSkipGrillMe(text) {
 }
 
 /**
+ * True when the user wants an interactive dialogue with Claude in this chat
+ * (Grill-Me Pack / "ask me questions") — NOT an automatic MCP tool or Cursor run.
+ * Mentioning "Grill-Me", WhatsApp, or CV as conversation topics must not auto-fire tools.
+ */
+export function isInteractiveConversationRequest(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return false;
+  // Explicit skip / dispatch confirmation always wins.
+  if (wantsSkipGrillMe(cleaned)) return false;
+
+  return (
+    /שאל\s+אותי|תשאל\s+אותי|ask\s+me\b|interview\s+me/i.test(cleaned) ||
+    /grill-?me\s+pack/i.test(cleaned) ||
+    /שאלות\s+מתוך|questions?\s+from\b/i.test(cleaned) ||
+    /תשאל\s+שאלות|ask\s+(me\s+)?(clarifying\s+)?questions/i.test(cleaned) ||
+    /בוא\s+נ(?:עשה|ריץ)\s+grill|let'?s\s+(do\s+)?grill/i.test(cleaned) ||
+    (/\bgrill-?me\b/i.test(cleaned) &&
+      /(איתי|with\s+me|שיחה|chat|conversation|תשאל|שאל)/i.test(cleaned))
+  );
+}
+
+/**
  * Short confirmations after a Grill-Me dialogue (need session-refined task text).
  */
 export function isShortDispatchConfirmation(text) {
@@ -56,6 +78,8 @@ export function detectCodingDispatch(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
+  // "Grill-Me Pack" / "שאל אותי" must stay in this chat — never open Cursor mid-dialogue.
+  if (isInteractiveConversationRequest(cleaned)) return null;
   if (!wantsSkipGrillMe(cleaned)) return null;
 
   const project = extractProjectPath(cleaned) || config.root;
@@ -83,6 +107,9 @@ export function detectCodingDispatch(text) {
 export function detectWhatsappJobScan(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
+
+  // Grill-Me / "ask me" dialogue stays with Claude — do not auto-scan mid-conversation.
+  if (isInteractiveConversationRequest(cleaned)) return null;
 
   // Building/dispatching the scanner itself is a coding task, not a scan run.
   if (
@@ -127,6 +154,10 @@ export function detectWhatsappJobScan(text) {
 export function detectWhatsappCvSubmit(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
+
+  // e.g. "שאל אותי … Grill-Me Pack … והגשת קורות חיים" is a questionnaire request,
+  // not an instruction to draft/submit a CV package right now.
+  if (isInteractiveConversationRequest(cleaned)) return null;
 
   if (
     /(implement|refactor|dispatch_coding|skip\s+grill-?me|שגר\s*ל-?\s*cursor)/i.test(

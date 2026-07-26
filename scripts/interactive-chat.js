@@ -215,8 +215,8 @@ Commands:
   /quit  or  /exit   Leave chat (stops auto-started server)
 
 Grill-Me Mode (default):
-  Describe a coding task — the orchestrator asks clarifying questions first.
-  When requirements are confirmed, say e.g.:
+  Claude interviews YOU in this terminal (e.g. "שאל אותי … Grill-Me Pack").
+  Cursor is NOT opened during the dialogue — only after you confirm at the end:
     skip Grill-Me Mode and dispatch this to Cursor
     שגר ל-Cursor
   That invokes MCP tool dispatch_coding_task → Cursor Agent CLI.

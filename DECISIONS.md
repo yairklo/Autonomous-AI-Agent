@@ -31,6 +31,11 @@
 **Why:** Scope, requirements, profile structure, and approval workflows must be refined before headless Cursor work starts.  
 **Date:** 2026-07-26
 
+## D16 — Conversational Grill-Me never auto-fires MCP / Cursor
+**Decision:** Utterances like "שאל אותי", "Grill-Me Pack", or "ask me questions" are classified as interactive conversation (`isInteractiveConversationRequest`). They skip auto `dispatch_coding_task`, `scan_whatsapp_jobs`, and `submit_whatsapp_job_cv` so Claude interviews the user in-chat; Cursor/tools run only after explicit end-of-dialogue confirmation.  
+**Why:** Sending Grill-Me questioning to headless Cursor fails — Cursor cannot talk back to the user.  
+**Date:** 2026-07-26
+
 ## D16 — WhatsApp job scan via local chat exports (MCP)
 **Decision:** Job scanning is exposed as MCP tool `scan_whatsapp_jobs` (`server/mcp-tools.js` + `server/whatsapp-job-scanner.js`). v1 reads WhatsApp **Export chat** `.txt` files from `data/whatsapp-exports` (or an explicit `exportPath`); no live WhatsApp Web/Baileys client. Hebrew/English keyword scoring finds posts; optional `roles` boost relevance. Chat orchestration auto-invokes the tool when the user asks to scan WhatsApp groups for jobs (`detectWhatsappJobScan`). Empty export dir falls back to `fixtures/whatsapp` for demos/tests. Job results include extracted `contacts` (email/phone/URL).  
 **Why:** Local exports keep privacy and avoid QR/session complexity while still giving the agent a real, testable scan tool.  

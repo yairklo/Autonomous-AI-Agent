@@ -9,6 +9,7 @@ import {
   detectCodingDispatch,
   detectWhatsappCvSubmit,
   detectWhatsappJobScan,
+  isInteractiveConversationRequest,
   isShortDispatchConfirmation,
   wantsSkipGrillMe,
 } from '../server/task-router.js';
@@ -90,7 +91,22 @@ test('System prompt forbids raw shell/file edits; mandates MCP tool + Grill-Me',
   assert.match(config.systemPrompt, /skip Grill-Me Mode/i);
   assert.match(config.systemPrompt, /candidate profile structure/i);
   assert.match(config.systemPrompt, /approval workflows/i);
+  assert.match(config.systemPrompt, /happen HERE with the user/i);
+  assert.match(config.systemPrompt, /never send Grill-Me/i);
   assert.doesNotMatch(config.systemPrompt, /Bash tool/i);
+});
+
+test('Grill-Me Pack / שאל אותי stays conversational — no Cursor or CV auto-tool', () => {
+  const t =
+    'שאל אותי את השאלות מתוך ה-Grill-Me Pack של WhatsApp והגשת קורות חיים.';
+  assert.ok(isInteractiveConversationRequest(t));
+  assert.strictEqual(wantsSkipGrillMe(t), false);
+  assert.strictEqual(detectCodingDispatch(t), null);
+  assert.strictEqual(
+    detectWhatsappCvSubmit(t),
+    null,
+    'must not auto-submit CV while asking Grill-Me questions'
+  );
 });
 
 test('Grill-Me: ordinary coding request does NOT auto-dispatch', () => {
