@@ -23,6 +23,8 @@ npm run chat
 
 Line-by-line Claude Orchestrator in the terminal. Coding tasks stay in **Grill-Me Mode** (clarifying questions) until you confirm with e.g. `skip Grill-Me Mode and dispatch` / `שגר ל-Cursor`, which invokes `dispatch_coding_task`. Use `npm run chat:mock` without Claude auth. If the server is not already up, `chat` starts it for you.
 
+For the planned WhatsApp jobs + CV tool, Grill-Me uses pack `whatsapp-jobs-cv` (`GET /api/grill-me/packs/whatsapp-jobs-cv?format=reply&locale=he`). See `specs/whatsapp-jobs-cv-grill-me.md`.
+
 Open on your phone (same LAN or Tailscale):
 
 `http://<your-pc-ip>:8787`

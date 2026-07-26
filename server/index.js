@@ -9,6 +9,13 @@ import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
+import {
+  buildSpecMarkdown,
+  formatGrillMeReply,
+  getGrillMePack,
+  listGrillMePacks,
+  PACK_WHATSAPP_JOBS_CV,
+} from './grill-me-packs.js';
 import { detectCodingDispatch } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
@@ -51,8 +58,40 @@ app.get('/api/health', (_req, res) => {
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
     mcpTools: listMcpTools().map((t) => t.name),
+    grillMePacks: listGrillMePacks().map((p) => p.id),
     time: new Date().toISOString(),
   });
+});
+
+/**
+ * Grill-Me domain packs (question banks for perfect specs before dispatch).
+ * GET /api/grill-me/packs
+ * GET /api/grill-me/packs/:packId?locale=he|en&format=reply|spec|json
+ */
+app.get('/api/grill-me/packs', (_req, res) => {
+  res.json({ ok: true, packs: listGrillMePacks() });
+});
+
+app.get('/api/grill-me/packs/:packId', (req, res) => {
+  const packId = String(req.params.packId || '').trim() || PACK_WHATSAPP_JOBS_CV;
+  const pack = getGrillMePack(packId);
+  if (!pack) {
+    return res.status(404).json({
+      error: `Unknown Grill-Me pack: ${packId}`,
+      known: listGrillMePacks().map((p) => p.id),
+    });
+  }
+  const locale = String(req.query.locale || 'he').toLowerCase() === 'en' ? 'en' : 'he';
+  const format = String(req.query.format || 'json').toLowerCase();
+  if (format === 'reply') {
+    res.type('text/plain; charset=utf-8').send(formatGrillMeReply(packId, { locale }));
+    return;
+  }
+  if (format === 'spec') {
+    res.type('text/markdown; charset=utf-8').send(buildSpecMarkdown(packId, { locale }));
+    return;
+  }
+  res.json({ ok: true, locale, pack });
 });
 
 app.get('/api/session/:clientId', (req, res) => {

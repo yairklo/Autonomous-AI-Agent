@@ -30,3 +30,8 @@
 **Decision:** Interactive conversations use Grill-Me Mode by default (system prompt). Server auto-dispatch via `dispatch_coding_task` runs only when the user explicitly skips Grill-Me or confirms dispatch (`skip Grill-Me Mode` / `דלג על Grill-Me` / `שגר ל-Cursor`). Ordinary coding utterances go to Claude for clarifying questions. Terminal UX: `npm run chat` (`scripts/interactive-chat.js`).  
 **Why:** Scope, requirements, profile structure, and approval workflows must be refined before headless Cursor work starts.  
 **Date:** 2026-07-26
+
+## D16 — WhatsApp jobs/CV Grill-Me pack (spec before tool)
+**Decision:** Before implementing a WhatsApp group job-scan + CV-submit tool, requirements are captured via a domain Grill-Me pack (`server/grill-me-packs.js`, pack id `whatsapp-jobs-cv`). Mock chat and `GET /api/grill-me/packs/:packId` serve the questionnaire; live Claude is steered by the system-prompt domain section. No WhatsApp client / apply automation ships until the user answers and confirms dispatch.  
+**Why:** Access method, matching, CV assets, approval, and privacy choices dominate the design; premature coding would lock the wrong integration.  
+**Date:** 2026-07-26
