@@ -3,6 +3,10 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import {
+  detectGrillMePack,
+  formatGrillMeReply,
+} from './grill-me-packs.js';
 
 /**
  * Manages continuous Claude CLI conversations via print + resume.
@@ -199,14 +203,26 @@ export class ClaudeSessionManager extends EventEmitter {
     this._save();
     yield { type: 'session', sessionId };
 
-    const reply =
-      `Got it. You said: "${prompt.slice(0, 200)}". ` +
-      `This is a mock voice-agent reply from the local server. ` +
-      `When Claude CLI is connected, I will answer for real.`;
+    const packId = detectGrillMePack(prompt);
+    const locale = /[א-ת]/.test(prompt) ? 'he' : 'en';
+    const reply = packId
+      ? formatGrillMeReply(packId, { locale, openingLimit: 5 })
+      : `Got it. You said: "${prompt.slice(0, 200)}". ` +
+        `This is a mock voice-agent reply from the local server. ` +
+        `When Claude CLI is connected, I will answer for real.`;
 
-    for (const word of reply.split(/(\s+)/)) {
-      yield { type: 'text', text: word };
-      await delay(25);
+    // Stream pack replies in larger chunks; generic mock stays word-by-word.
+    const chunkSize = packId ? 80 : 0;
+    if (chunkSize > 0) {
+      for (let i = 0; i < reply.length; i += chunkSize) {
+        yield { type: 'text', text: reply.slice(i, i + chunkSize) };
+        await delay(10);
+      }
+    } else {
+      for (const word of reply.split(/(\s+)/)) {
+        yield { type: 'text', text: word };
+        await delay(25);
+      }
     }
     yield { type: 'done', result: reply };
   }

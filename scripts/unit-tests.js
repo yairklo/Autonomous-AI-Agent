@@ -14,6 +14,17 @@ import {
   wantsSkipGrillMe,
 } from '../server/task-router.js';
 import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
+import {
+  buildSpecMarkdown,
+  detectGrillMePack,
+  formatGrillMeReply,
+  getAllQuestions,
+  getOpeningQuestions,
+  isWhatsAppJobsGrillMeRequest,
+  listGrillMePacks,
+  PACK_WHATSAPP_JOBS_CV,
+  WHATSAPP_JOBS_CV_PACK,
+} from '../server/grill-me-packs.js';
 import { submitWhatsappJobCv } from '../server/cv-submitter.js';
 import {
   extractApplyContacts,
@@ -110,6 +121,8 @@ test('System prompt forbids raw shell/file edits; mandates MCP tool + Grill-Me',
   assert.match(config.systemPrompt, /approval workflows/i);
   assert.match(config.systemPrompt, /happen HERE with the user/i);
   assert.match(config.systemPrompt, /never send Grill-Me/i);
+  assert.match(config.systemPrompt, /DOMAIN PACK: WhatsApp jobs \+ CV/i);
+  assert.match(config.systemPrompt, /human approval before send/i);
   assert.doesNotMatch(config.systemPrompt, /Bash tool/i);
 });
 
@@ -124,6 +137,66 @@ test('Grill-Me Pack / שאל אותי stays conversational — no Cursor or CV a
     null,
     'must not auto-submit CV while asking Grill-Me questions'
   );
+  assert.strictEqual(detectGrillMePack(t), PACK_WHATSAPP_JOBS_CV);
+  assert.ok(isWhatsAppJobsGrillMeRequest(t));
+});
+
+test('WhatsApp jobs/CV Grill-Me pack covers mandatory themes', () => {
+  assert.ok(listGrillMePacks().some((p) => p.id === PACK_WHATSAPP_JOBS_CV));
+  const cats = WHATSAPP_JOBS_CV_PACK.categories.map((c) => c.id);
+  for (const id of [
+    'scope-goals',
+    'whatsapp-access',
+    'job-matching',
+    'candidate-profile',
+    'submission-flow',
+    'approval-workflow',
+    'acceptance-privacy',
+  ]) {
+    assert.ok(cats.includes(id), `missing category ${id}`);
+  }
+  const all = getAllQuestions(PACK_WHATSAPP_JOBS_CV);
+  assert.ok(all.length >= 20, 'full bank should be substantial for a perfect spec');
+  const opening = getOpeningQuestions(PACK_WHATSAPP_JOBS_CV, { limit: 5 });
+  assert.strictEqual(opening.length, 5);
+  assert.ok(opening.some((q) => q.id === 'who-approves'));
+  assert.ok(opening.some((q) => q.id === 'profile-fields'));
+});
+
+test('formatGrillMeReply returns Hebrew questionnaire with opening + full bank', () => {
+  const reply = formatGrillMeReply(PACK_WHATSAPP_JOBS_CV, {
+    locale: 'he',
+    openingLimit: 5,
+  });
+  assert.match(reply, /Grill-Me Mode/);
+  assert.match(reply, /היקף ומטרות|גישה ל-WhatsApp|מבנה פרופיל|אישורי אדם/);
+  assert.match(reply, /שגר ל-Cursor|skip Grill-Me Mode/);
+  const spec = buildSpecMarkdown(PACK_WHATSAPP_JOBS_CV, { locale: 'he' });
+  assert.match(spec, /_TBD_/);
+  assert.match(spec, /primary-goal/);
+  assert.match(spec, /wa-client/);
+});
+
+test('Mock ClaudeSessionManager returns WhatsApp Grill-Me pack for HE request', async () => {
+  const sessionsFile = `./test-sessions-grillme-${Date.now()}.json`;
+  const manager = new ClaudeSessionManager({ mock: true, sessionsFile });
+  try {
+    const prompt =
+      'שאל אותי את השאלות מתוך ה-Grill-Me Pack של WhatsApp והגשת קורות חיים.';
+    let result = '';
+    for await (const event of manager.ask('grill-client', prompt)) {
+      if (event.type === 'done') result = event.result || result;
+    }
+    assert.match(result, /Grill-Me Mode/);
+    assert.match(result, /WhatsApp|וואטסאפ|קבוצות/);
+    assert.match(result, /קורות חיים|פרופיל|אישור/);
+  } finally {
+    try {
+      fs.unlinkSync(sessionsFile);
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 test('Grill-Me: ordinary coding request does NOT auto-dispatch', () => {
