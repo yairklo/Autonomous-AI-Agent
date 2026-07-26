@@ -65,6 +65,8 @@ app.get('/api/health', (_req, res) => {
     host: config.host,
     hostname: os.hostname(),
     lanAddresses: addresses,
+    // Client/GUI: if missing, the process is stale (restart npm start for Cursor Live).
+    runEvents: true,
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,

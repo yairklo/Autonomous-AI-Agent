@@ -63,7 +63,8 @@ els.checkHealth.addEventListener('click', async () => {
   try {
     const res = await fetch(api('/api/health'));
     const data = await res.json();
-    els.healthHint.textContent = `OK · ${data.hostname} · mock=${data.mock} · lan=${(data.lanAddresses || []).join(', ') || 'n/a'}`;
+    const live = data.runEvents ? 'live-logs=on' : 'live-logs=OFF (restart npm start)';
+    els.healthHint.textContent = `OK · ${data.hostname} · mock=${data.mock} · ${live} · lan=${(data.lanAddresses || []).join(', ') || 'n/a'}`;
   } catch (err) {
     els.healthHint.textContent = `Unreachable: ${err.message}`;
   }
@@ -514,7 +515,42 @@ function appendLiveRunEvent(event) {
   }
 }
 
-function connectLiveRunStream() {
+async function ensureLiveRunBackend() {
+  try {
+    const res = await fetch(api('/api/health'));
+    const data = await res.json();
+    if (!data.runEvents) {
+      els.liveRunStatus.textContent = 'server stale';
+      if (!state._liveRunStaleWarned) {
+        state._liveRunStaleWarned = true;
+        appendLiveRunEvent({
+          type: 'error',
+          text: 'Voice-agent server is stale — /api/runs missing. Stop the old node process and run npm start again.',
+        });
+      }
+      return false;
+    }
+    const probe = await fetch(api('/api/runs'));
+    if (!probe.ok) {
+      els.liveRunStatus.textContent = 'server stale';
+      if (!state._liveRunStaleWarned) {
+        state._liveRunStaleWarned = true;
+        appendLiveRunEvent({
+          type: 'error',
+          text: `Cannot open Cursor Live (/api/runs → HTTP ${probe.status}). Restart npm start.`,
+        });
+      }
+      return false;
+    }
+    state._liveRunStaleWarned = false;
+    return true;
+  } catch (err) {
+    els.liveRunStatus.textContent = 'offline';
+    return false;
+  }
+}
+
+async function connectLiveRunStream() {
   if (!els.liveRunLog || typeof EventSource === 'undefined') return;
   if (state._liveRunEs) {
     try {
@@ -522,6 +558,11 @@ function connectLiveRunStream() {
     } catch {
       /* ignore */
     }
+  }
+  const ok = await ensureLiveRunBackend();
+  if (!ok) {
+    setTimeout(connectLiveRunStream, 4000);
+    return;
   }
   const url = api('/api/runs/stream');
   const es = new EventSource(url);

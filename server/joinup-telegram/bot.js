@@ -6,7 +6,7 @@ import {
   JOINUP_UNAUTHORIZED_MESSAGE,
   JOINUP_WELCOME_MESSAGE,
 } from './prompt.js';
-import { JoinUpSessionStore } from './session-store.js';
+import { isExplicitConfirmation, JoinUpSessionStore } from './session-store.js';
 
 /**
  * Create the joinUp Telegram bot (Telegraf) with auth + product grilling workflow.
@@ -54,7 +54,15 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       onLog,
     });
 
-  const bot = new Telegraf(config.botToken, deps.telegrafOptions);
+  // Cursor builds take far longer than Telegraf's default 90s handlerTimeout
+  // (p-timeout kills the whole bot process on expiry — silent log loss).
+  const handlerTimeout = Number(
+    process.env.JOINUP_TELEGRAM_HANDLER_TIMEOUT_MS || 3_600_000
+  );
+  const bot = new Telegraf(config.botToken, {
+    handlerTimeout: Number.isFinite(handlerTimeout) ? handlerTimeout : 3_600_000,
+    ...(deps.telegrafOptions || {}),
+  });
 
   // Authorization: reject anyone not in ALLOWED_TELEGRAM_USER_IDS.
   bot.use(
@@ -109,6 +117,17 @@ export function createJoinUpTelegramBot(config, deps = {}) {
     const text = ctx.message.text;
     onLog(`[joinup-telegram] message from=${userId} chars=${text.length}`);
 
+    const session = store.get(userId);
+    const startingBuild =
+      Boolean(session?.pendingTechnicalPrompt) && isExplicitConfirmation(text);
+
+    // Acknowledge immediately so Telegraf isn't left hanging on a multi-hour Cursor run.
+    if (startingBuild) {
+      await ctx.reply(
+        'מתחיל לבנות ב-joinUp. הלוגים החיים ב־http://localhost:8787/ (Cursor Live). אעדכן כאן כשזה מוכן.'
+      );
+    }
+
     const typing = setInterval(() => {
       ctx.sendChatAction('typing').catch(() => {});
     }, 4000);
@@ -116,7 +135,9 @@ export function createJoinUpTelegramBot(config, deps = {}) {
 
     try {
       const result = await agent.handleMessage({ userId, text });
-      await ctx.reply(result.reply.slice(0, 4000));
+      if (result?.reply) {
+        await ctx.reply(result.reply.slice(0, 4000));
+      }
     } catch (err) {
       onLog(`[joinup-telegram] handler error: ${err.message}`);
       await ctx.reply(
@@ -139,7 +160,24 @@ export async function launchJoinUpTelegramBot(instance, options = {}) {
   const onLog = options.onLog || ((line) => console.log(line));
   const { bot } = instance;
 
-  await bot.launch();
+  bot.catch((err, ctx) => {
+    onLog(
+      `[joinup-telegram] telegraf error update=${ctx?.update?.update_id ?? '?'} ${err.message}`
+    );
+  });
+
+  // Telegraf's launch() awaits the polling loop forever — do not await it or
+  // our service bootstrap (and "bot launched" logs) never complete.
+  onLog('[joinup-telegram] connecting to Telegram…');
+  bot.botInfo = await bot.telegram.getMe();
+  onLog(`[joinup-telegram] authenticated as @${bot.botInfo.username}`);
+
+  void bot
+    .launch({ dropPendingUpdates: false })
+    .catch((err) => {
+      onLog(`[joinup-telegram] launch error: ${err.message}`);
+    });
+
   onLog('[joinup-telegram] bot launched (long polling)');
 
   const stop = (reason = 'stop') => {
