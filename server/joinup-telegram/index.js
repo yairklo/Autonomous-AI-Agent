@@ -34,6 +34,13 @@ export {
   resolveJoinUpVercelUrl,
   formatVercelTelegramLines,
 } from './vercel.js';
+export {
+  redeployAndWatchStaging,
+  formatStagingTelegramLines,
+  getJoinUpStagingUrl,
+  getJoinUpApiProductionUrl,
+  detectServerCodeChanges,
+} from './render-staging.js';
 
 import { loadJoinUpTelegramConfig } from './config.js';
 import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';

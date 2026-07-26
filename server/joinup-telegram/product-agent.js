@@ -211,13 +211,19 @@ export class JoinUpProductAgent {
         phase: 'completed',
         pendingTechnicalPrompt: '',
         lastVercelUrl: execResult?.vercel?.url || '',
+        lastStagingUrl: execResult?.staging?.stagingUrl || '',
       });
       this.claude.reset(this.clientIdFor(userId));
       return {
-        reply: formatCompletionMessage({ ok: true, vercel: execResult?.vercel }),
+        reply: formatCompletionMessage({
+          ok: true,
+          vercel: execResult?.vercel,
+          staging: execResult?.staging,
+        }),
         phase: 'completed',
         dispatched: true,
         vercelUrl: execResult?.vercel?.url || '',
+        stagingUrl: execResult?.staging?.stagingUrl || '',
       };
     } catch (err) {
       this.store.update(userId, { phase: 'awaiting_confirmation' });
@@ -227,6 +233,13 @@ export class JoinUpProductAgent {
           ok: false,
           error: err.message,
           vercel: { url: process.env.JOINUP_VERCEL_PRODUCTION_URL || '' },
+          staging: {
+            stagingUrl:
+              process.env.JOINUP_STAGING_URL ||
+              'https://my-app-staging-ijyp.onrender.com',
+            skipped: true,
+            reason: 'execute_failed',
+          },
         }),
         phase: 'awaiting_confirmation',
         dispatched: false,

@@ -23,6 +23,7 @@
     "test:quality-gates": "node scripts/test-dispatch-quality-gates.js",
     "joinup:notify-vercel": "node scripts/notify-joinup-vercel.js",
     "test:joinup-vercel": "node scripts/test-joinup-vercel.js",
+    "test:joinup-staging": "node scripts/test-joinup-render-staging.js",
     "test:run-events": "node scripts/test-cursor-log-parser.js"
   },
   "engines": {
