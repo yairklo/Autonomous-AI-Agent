@@ -50,6 +50,8 @@ import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';
  * @param {{ onLog?: (line: string) => void, force?: boolean }} [options]
  */
 export async function startJoinUpTelegramService(options = {}) {
+  // Persist activity via HTTP bridge to voice-agent only (host GUI history).
+  process.env.AGENT_ACTIVITY_PERSIST = '0';
   const onLog = options.onLog || ((line) => console.log(line));
   const config = loadJoinUpTelegramConfig();
 

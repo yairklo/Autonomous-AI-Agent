@@ -24,6 +24,7 @@
     "joinup:notify-vercel": "node scripts/notify-joinup-vercel.js",
     "test:joinup-vercel": "node scripts/test-joinup-vercel.js",
     "test:joinup-staging": "node scripts/test-joinup-render-staging.js",
+    "test:activity": "node scripts/test-activity-store.js",
     "test:run-events": "node scripts/test-cursor-log-parser.js"
   },
   "engines": {

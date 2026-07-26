@@ -16,5 +16,6 @@ data/cv-applications/*
 data/jobs-db.json
 data/joinup-telegram-sessions.json
 data/joinup-telegram-state.json
+data/agent-activity.jsonl
 .wwebjs_auth/
 .wwebjs_cache/

@@ -14,6 +14,12 @@ const els = {
   textInput: document.getElementById('textInput'),
   settingsBtn: document.getElementById('settingsBtn'),
   settingsDialog: document.getElementById('settingsDialog'),
+  historyBtn: document.getElementById('historyBtn'),
+  historyDialog: document.getElementById('historyDialog'),
+  historyClose: document.getElementById('historyClose'),
+  historyList: document.getElementById('historyList'),
+  historyDetail: document.getElementById('historyDetail'),
+  historySearch: document.getElementById('historySearch'),
   serverUrl: document.getElementById('serverUrl'),
   autoSpeak: document.getElementById('autoSpeak'),
   useServerTts: document.getElementById('useServerTts'),
@@ -31,6 +37,10 @@ const state = {
   partial: '',
   settings: loadSettings(),
   clientId: localStorage.getItem(CLIENT_KEY) || crypto.randomUUID(),
+  historyPlatform: '',
+  historyQuery: '',
+  historySelectedId: '',
+  historyItems: [],
 };
 
 localStorage.setItem(CLIENT_KEY, state.clientId);
@@ -594,3 +604,191 @@ if (els.liveRunClear) {
 }
 
 connectLiveRunStream();
+
+/* ---- Agent History panel (durable, all platforms, host-only) ---- */
+function formatHistoryTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(iso);
+  }
+}
+
+function renderHistoryList() {
+  if (!els.historyList) return;
+  const items = state.historyItems || [];
+  if (!items.length) {
+    els.historyList.innerHTML =
+      '<p class="history-empty">אין עדיין היסטוריה שמורה. אחרי שיחות / Cursor יופיע כאן.</p>';
+    return;
+  }
+  els.historyList.innerHTML = '';
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'history-item' +
+      (item.activityId === state.historySelectedId ? ' is-selected' : '');
+    btn.dataset.id = item.activityId;
+    btn.innerHTML = `
+      <div class="history-item-top">
+        <span class="history-badge" data-platform="${item.platform || 'system'}">${item.platform || item.source || 'agent'}</span>
+        <span class="history-status" data-status="${item.status || ''}">${item.status || ''}</span>
+      </div>
+      <div class="history-item-title"></div>
+      <div class="history-item-meta"></div>
+      <div class="history-item-preview"></div>
+    `;
+    btn.querySelector('.history-item-title').textContent = item.title || item.activityId;
+    btn.querySelector('.history-item-meta').textContent = [
+      item.actorLabel,
+      formatHistoryTime(item.updatedAt),
+      item.eventCount ? `${item.eventCount} events` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    btn.querySelector('.history-item-preview').textContent = item.preview || '';
+    btn.addEventListener('click', () => {
+      state.historySelectedId = item.activityId;
+      renderHistoryList();
+      void loadHistoryDetail(item.activityId);
+    });
+    els.historyList.appendChild(btn);
+  }
+}
+
+async function loadHistoryList() {
+  if (!els.historyList) return;
+  const params = new URLSearchParams({ limit: '100' });
+  if (state.historyPlatform) params.set('platform', state.historyPlatform);
+  if (state.historyQuery) params.set('q', state.historyQuery);
+  try {
+    const res = await fetch(api(`/api/history?${params}`));
+    const data = await res.json();
+    state.historyItems = data.activities || [];
+    renderHistoryList();
+    if (
+      state.historySelectedId &&
+      state.historyItems.some((a) => a.activityId === state.historySelectedId)
+    ) {
+      await loadHistoryDetail(state.historySelectedId);
+    } else if (state.historyItems[0]) {
+      state.historySelectedId = state.historyItems[0].activityId;
+      renderHistoryList();
+      await loadHistoryDetail(state.historySelectedId);
+    } else if (els.historyDetail) {
+      els.historyDetail.innerHTML =
+        '<p class="history-empty">בחר פעילות כדי לראות את הטיימליין המלא.</p>';
+    }
+  } catch (err) {
+    els.historyList.innerHTML = `<p class="history-empty">Failed to load history: ${err.message}</p>`;
+  }
+}
+
+async function loadHistoryDetail(activityId) {
+  if (!els.historyDetail || !activityId) return;
+  els.historyDetail.innerHTML = '<p class="history-empty">Loading…</p>';
+  try {
+    const res = await fetch(api(`/api/history/${encodeURIComponent(activityId)}`));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const a = data.activity || {};
+    const events = data.events || [];
+    const head = document.createElement('div');
+    head.innerHTML = `
+      <h3 class="history-detail-title"></h3>
+      <p class="history-detail-meta"></p>
+      <div class="history-timeline"></div>
+    `;
+    head.querySelector('.history-detail-title').textContent = a.title || activityId;
+    head.querySelector('.history-detail-meta').textContent = [
+      a.platform || a.source,
+      a.actorLabel,
+      a.status,
+      a.project,
+      formatHistoryTime(a.startedAt),
+      '→',
+      formatHistoryTime(a.updatedAt),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const timeline = head.querySelector('.history-timeline');
+    if (!events.length) {
+      timeline.innerHTML = '<p class="history-empty">No events in this activity.</p>';
+    } else {
+      for (const ev of events) {
+        const row = document.createElement('div');
+        row.className = 'history-event';
+        row.innerHTML = `
+          <span class="history-event-kind"></span>
+          <span class="history-event-time"></span>
+          <div class="history-event-text"></div>
+        `;
+        row.querySelector('.history-event-kind').textContent = ev.kind || ev.type || 'log';
+        row.querySelector('.history-event-time').textContent = formatHistoryTime(ev.at);
+        row.querySelector('.history-event-text').textContent = ev.text || '';
+        timeline.appendChild(row);
+      }
+    }
+    els.historyDetail.innerHTML = '';
+    els.historyDetail.appendChild(head);
+  } catch (err) {
+    els.historyDetail.innerHTML = `<p class="history-empty">${err.message}</p>`;
+  }
+}
+
+function connectHistoryStream() {
+  if (typeof EventSource === 'undefined') return;
+  if (state._historyEs) {
+    try {
+      state._historyEs.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  const es = new EventSource(api('/api/history/stream'));
+  state._historyEs = es;
+  es.addEventListener('activity_event', () => {
+    if (els.historyDialog?.open) void loadHistoryList();
+  });
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectHistoryStream, 4000);
+  };
+}
+
+if (els.historyBtn && els.historyDialog) {
+  els.historyBtn.addEventListener('click', () => {
+    els.historyDialog.showModal();
+    void loadHistoryList();
+  });
+}
+if (els.historyClose && els.historyDialog) {
+  els.historyClose.addEventListener('click', () => els.historyDialog.close());
+}
+document.querySelectorAll('.history-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.history-chip').forEach((c) => c.classList.remove('is-active'));
+    chip.classList.add('is-active');
+    state.historyPlatform = chip.dataset.platform || '';
+    void loadHistoryList();
+  });
+});
+if (els.historySearch) {
+  let t = null;
+  els.historySearch.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      state.historyQuery = els.historySearch.value.trim();
+      void loadHistoryList();
+    }, 220);
+  });
+}
+
+connectHistoryStream();

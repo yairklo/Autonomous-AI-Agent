@@ -7,6 +7,7 @@
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import { classifyCursorLogLine } from './cursor-log-parser.js';
+import { recordFromRunEvent } from './activity-store.js';
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
@@ -57,6 +58,13 @@ export function publishRunEvent(partial = {}) {
   const prefix = `[run:${event.runId.slice(0, 8)}]`;
   const tag = event.type !== 'log' ? ` ${event.type}` : '';
   console.log(`${prefix}${tag} ${event.text}`);
+
+  // Durable history for the host GUI (all platforms).
+  try {
+    recordFromRunEvent(event);
+  } catch {
+    /* ignore persistence errors */
+  }
   return event;
 }
 

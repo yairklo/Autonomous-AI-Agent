@@ -7,6 +7,11 @@ import {
   JOINUP_WELCOME_MESSAGE,
 } from './prompt.js';
 import { isExplicitConfirmation, JoinUpSessionStore } from './session-store.js';
+import {
+  bridgeActivity,
+  telegramActivityId,
+  telegramActorLabel,
+} from './activity-bridge.js';
 
 /**
  * Create the joinUp Telegram bot (Telegraf) with auth + product grilling workflow.
@@ -121,11 +126,35 @@ export function createJoinUpTelegramBot(config, deps = {}) {
     const startingBuild =
       Boolean(session?.pendingTechnicalPrompt) && isExplicitConfirmation(text);
 
+    void bridgeActivity({
+      activityId: telegramActivityId(userId),
+      kind: 'chat_user',
+      source: 'joinup-telegram',
+      platform: 'telegram',
+      actorId: String(userId),
+      actorLabel: telegramActorLabel(userId),
+      title: 'joinUp Telegram',
+      text,
+      project: config.joinUpRoot,
+    });
+
     // Acknowledge immediately so Telegraf isn't left hanging on a multi-hour Cursor run.
+    // Do NOT stream Cursor progress into Telegram — live logs are host-only (GUI).
     if (startingBuild) {
       await ctx.reply(
-        'מתחיל לבנות ב-joinUp. הלוגים החיים ב־http://localhost:8787/ (Cursor Live). אעדכן כאן כשזה מוכן.'
+        'מתחיל לבנות ב-joinUp. אעדכן כאן כשזה מוכן, עם קישור לבילד.'
       );
+      void bridgeActivity({
+        activityId: telegramActivityId(userId),
+        kind: 'status',
+        source: 'joinup-telegram',
+        platform: 'telegram',
+        actorId: String(userId),
+        actorLabel: telegramActorLabel(userId),
+        title: 'joinUp build confirmed',
+        text: 'User confirmed — Cursor dispatch starting',
+        project: config.joinUpRoot,
+      });
     }
 
     const typing = setInterval(() => {
@@ -137,6 +166,22 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       const result = await agent.handleMessage({ userId, text });
       if (result?.reply) {
         await ctx.reply(result.reply.slice(0, 4000));
+        void bridgeActivity({
+          activityId: telegramActivityId(userId),
+          kind: result.dispatched ? 'run_end' : 'chat_assistant',
+          source: 'joinup-telegram',
+          platform: 'telegram',
+          actorId: String(userId),
+          actorLabel: telegramActorLabel(userId),
+          title: result.dispatched ? 'joinUp build finished' : 'joinUp Telegram',
+          text: result.reply.slice(0, 2000),
+          project: config.joinUpRoot,
+          meta: {
+            phase: result.phase,
+            vercelUrl: result.vercelUrl || '',
+            stagingUrl: result.stagingUrl || '',
+          },
+        });
       }
     } catch (err) {
       onLog(`[joinup-telegram] handler error: ${err.message}`);
