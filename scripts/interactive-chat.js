@@ -80,7 +80,11 @@ async function fetchHealth() {
 }
 
 function supportsGrillMeConversation(health) {
-  return health?.ok === true && health?.grillMeConversation === true;
+  return (
+    health?.ok === true &&
+    health?.grillMeConversation === true &&
+    health?.interactiveChatSafe === true
+  );
 }
 
 async function waitForHealth(timeoutMs = 20000, { requireGrillMe = true } = {}) {
@@ -182,10 +186,10 @@ async function ensureServer() {
 
   if (health && !supportsGrillMeConversation(health)) {
     logOut(
-      '[chat] Stale voice-agent detected on this port (missing grillMeConversation).'
+      '[chat] Stale voice-agent detected (need grillMeConversation + interactiveChatSafe).'
     );
     logOut(
-      '[chat] That old server still auto-dispatches "Grill-Me Pack" to Cursor — replacing it.'
+      '[chat] That old server still auto-dispatches to Cursor — replacing it with a safe local server.'
     );
     await freeListenPort(port);
   } else if (forceRestart && health) {
@@ -243,7 +247,8 @@ function createBidiStdoutWriter() {
 
 function postChatSse(text) {
   const { hostname, port } = parseUrl(baseUrl);
-  const payload = JSON.stringify({ clientId, text });
+  // Hard-disable auto dispatch_coding_task unless explicit trigger phrases.
+  const payload = JSON.stringify({ clientId, text, interactiveChat: true });
 
   return new Promise((resolve, reject) => {
     const req = http.request(

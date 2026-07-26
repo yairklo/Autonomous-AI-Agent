@@ -14,23 +14,27 @@ export function resolveDispatchScript() {
 }
 
 /**
- * True when the user explicitly opts out of Grill-Me Mode or orders an immediate dispatch.
- * Ordinary coding requests without this signal stay in Grill-Me Mode (Claude asks questions).
+ * True when the user explicitly orders dispatch / skips Grill-Me.
+ * ONLY these triggers may invoke dispatch_coding_task.
+ * Phrases: dispatch | confirm dispatch | skip Grill-Me | שגר | בצע | דלג על Grill-Me
  */
-export function wantsSkipGrillMe(text) {
+export function wantsExplicitDispatch(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return false;
 
   return (
-    /skip\s+grill-?me(\s+mode)?/i.test(cleaned) ||
-    /דלג\s+על\s+grill-?me(\s+mode)?/i.test(cleaned) ||
-    /grill-?me\s+mode\s+off/i.test(cleaned) ||
-    /שגר\s*(את\s*)?(המשימה\s*)?(ישירות\s*)?(ל-?\s*)?cursor/i.test(cleaned) ||
-    /dispatch\s+(this|it|the\s+task|now|directly)?\s*(to\s+)?cursor/i.test(cleaned) ||
-    /dispatch\s+to\s+cursor/i.test(cleaned) ||
-    /invoke\s+dispatch_coding_task/i.test(cleaned) ||
-    /call\s+dispatch_coding_task/i.test(cleaned)
+    /\bdispatch\b/i.test(cleaned) ||
+    /confirm\s+dispatch/i.test(cleaned) ||
+    /skip\s+grill-?me/i.test(cleaned) ||
+    /דלג\s+על\s+grill-?me/i.test(cleaned) ||
+    /שגר/.test(cleaned) ||
+    /בצע/.test(cleaned)
   );
+}
+
+/** @deprecated Use wantsExplicitDispatch — alias for older call sites/tests. */
+export function wantsSkipGrillMe(text) {
+  return wantsExplicitDispatch(text);
 }
 
 /**
@@ -42,7 +46,7 @@ export function isInteractiveConversationRequest(text) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return false;
   // Explicit skip / dispatch confirmation always wins.
-  if (wantsSkipGrillMe(cleaned)) return false;
+  if (wantsExplicitDispatch(cleaned)) return false;
 
   return (
     /שאל\s+אותי|תשאל\s+אותי|ask\s+me\b|interview\s+me/i.test(cleaned) ||
@@ -70,17 +74,23 @@ export function isShortDispatchConfirmation(text) {
 }
 
 /**
- * Detect explicit coding / Cursor-dispatch intent (skip Grill-Me or confirm dispatch).
- * Used by the Claude orchestration layer to invoke the dispatch_coding_task MCP tool.
- * Returns null for ordinary interactive coding requests so Grill-Me Mode can run.
+ * Detect explicit coding / Cursor-dispatch intent.
+ * @param {string} text
+ * @param {{ interactiveChat?: boolean }} [options]
+ *   interactiveChat: hard-disable auto dispatch unless an explicit trigger phrase is present.
  */
-export function detectCodingDispatch(text) {
+export function detectCodingDispatch(text, options = {}) {
   const cleaned = String(text || '').trim();
   if (!cleaned) return null;
 
   // "Grill-Me Pack" / "שאל אותי" must stay in this chat — never open Cursor mid-dialogue.
   if (isInteractiveConversationRequest(cleaned)) return null;
-  if (!wantsSkipGrillMe(cleaned)) return null;
+
+  if (options.interactiveChat && !wantsExplicitDispatch(cleaned)) {
+    return null;
+  }
+
+  if (!wantsExplicitDispatch(cleaned)) return null;
 
   const project = extractProjectPath(cleaned) || config.root;
   const resolvedProject = fs.existsSync(project) ? project : config.root;

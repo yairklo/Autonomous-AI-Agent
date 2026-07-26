@@ -11,6 +11,7 @@ import {
   detectWhatsappJobScan,
   isInteractiveConversationRequest,
   isShortDispatchConfirmation,
+  wantsExplicitDispatch,
   wantsSkipGrillMe,
 } from '../server/task-router.js';
 import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
@@ -34,20 +35,20 @@ import {
 } from '../server/whatsapp-job-scanner.js';
 import { containsHebrew, formatBidi } from './format-bidi.js';
 
-test('formatBidi leaves English and code untouched; reorders Hebrew for CLI', () => {
+test('formatBidi leaves English/Hebrew logical by default (no double-flip)', () => {
   assert.strictEqual(formatBidi('Hello agent'), 'Hello agent');
   assert.strictEqual(containsHebrew('Hello agent'), false);
 
   const he = 'שלום עולם';
   assert.ok(containsHebrew(he));
-  const visual = formatBidi(he);
-  assert.notStrictEqual(visual, he, 'Hebrew should be visually reordered for LTR terminals');
-  assert.strictEqual([...visual].sort().join(''), [...he].sort().join(''));
+  // Default: logical order (Windows Terminal already applies BiDi).
+  assert.strictEqual(formatBidi(he), he);
 
   const fenced = 'intro\n```js\nconst x = 1;\n```\nסוף';
   const out = formatBidi(fenced);
   assert.ok(out.includes('```js\nconst x = 1;\n```'), 'code fence must stay intact');
   assert.ok(out.startsWith('intro\n'));
+  assert.ok(out.includes('סוף'));
 });
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
@@ -131,7 +132,9 @@ test('Grill-Me Pack / שאל אותי stays conversational — no Cursor or CV a
     'שאל אותי את השאלות מתוך ה-Grill-Me Pack של WhatsApp והגשת קורות חיים.';
   assert.ok(isInteractiveConversationRequest(t));
   assert.strictEqual(wantsSkipGrillMe(t), false);
+  assert.strictEqual(wantsExplicitDispatch(t), false);
   assert.strictEqual(detectCodingDispatch(t), null);
+  assert.strictEqual(detectCodingDispatch(t, { interactiveChat: true }), null);
   assert.strictEqual(
     detectWhatsappCvSubmit(t),
     null,
@@ -139,6 +142,30 @@ test('Grill-Me Pack / שאל אותי stays conversational — no Cursor or CV a
   );
   assert.strictEqual(detectGrillMePack(t), PACK_WHATSAPP_JOBS_CV);
   assert.ok(isWhatsAppJobsGrillMeRequest(t));
+});
+
+test('dispatch_coding_task only on explicit trigger phrases', () => {
+  for (const phrase of [
+    'dispatch',
+    'confirm dispatch',
+    'skip Grill-Me',
+    'שגר',
+    'בצע',
+    'skip Grill-Me Mode and dispatch to Cursor',
+  ]) {
+    assert.ok(wantsExplicitDispatch(phrase), `should trigger: ${phrase}`);
+  }
+  assert.strictEqual(wantsExplicitDispatch('שאל אותי שאלות'), false);
+  assert.strictEqual(
+    detectCodingDispatch('Add a logout button please', { interactiveChat: true }),
+    null,
+    'interactive chat must not auto-dispatch without trigger'
+  );
+  const d = detectCodingDispatch('שגר ל-Cursor: implement logout', {
+    interactiveChat: true,
+  });
+  assert.ok(d);
+  assert.strictEqual(d.mcpTool, 'dispatch_coding_task');
 });
 
 test('WhatsApp jobs/CV Grill-Me pack covers mandatory themes', () => {

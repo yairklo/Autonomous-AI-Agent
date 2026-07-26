@@ -1,13 +1,19 @@
 /**
- * Visual BiDi helper for terminals that print left-to-right only.
- * Reorders Hebrew (and other RTL) runs so they appear correct in CLI stdout.
- * English and fenced code blocks are left unchanged.
+ * Visual BiDi helper for CLI terminals.
+ *
+ * Modern Windows Terminal already applies Unicode BiDi. Character-level
+ * reordering (bidi-js getReorderedString) then DOUBLE-FLIPS Hebrew.
+ *
+ * Default: keep logical order (Hebrew reads correctly on WT / most consoles).
+ * Opt-in legacy reorder: CHAT_BIDI_REORDER=1 for dumb LTR-only consoles.
  */
 import bidiFactory from 'bidi-js';
 
 const bidi = bidiFactory();
 const HEBREW_RE = /[\u0590-\u05FF]/;
 const FENCE_SPLIT_RE = /(```[\s\S]*?```)/g;
+const REORDER =
+  process.env.CHAT_BIDI_REORDER === '1' || process.env.CHAT_BIDI_REORDER === 'true';
 
 export function containsHebrew(text) {
   return HEBREW_RE.test(String(text ?? ''));
@@ -20,20 +26,19 @@ function reorderLine(line) {
 }
 
 /**
- * Return a visually ordered string for dumb LTR terminals.
- * No-op when the text has no Hebrew / RTL letters.
+ * Format text for CLI stdout. Hebrew stays in logical order by default
+ * so it is not flipped on terminals that already handle RTL.
  */
 export function formatBidi(text) {
   const s = String(text ?? '');
   if (!s || !containsHebrew(s)) return s;
+  if (!REORDER) return s;
 
-  // Keep fenced code blocks byte-for-byte; only reshape surrounding prose.
   return s
     .split(FENCE_SPLIT_RE)
     .map((part) => {
       if (part.startsWith('```')) return part;
       if (!containsHebrew(part)) return part;
-      // Preserve newlines; reorder each visual line independently.
       return part
         .split(/(\r?\n)/)
         .map((chunk) => (chunk === '\n' || chunk === '\r\n' ? chunk : reorderLine(chunk)))
