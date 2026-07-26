@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pinToJoinUpRoot } from './config.js';
 import { runDispatchTask } from '../task-router.js';
+import {
+  formatVercelTelegramLines,
+  resolveJoinUpVercelUrl,
+} from './vercel.js';
 
 /**
  * Cursor Agent runner pinned exclusively to the joinUp repository root.
@@ -51,6 +55,12 @@ export class JoinUpCursorExecutor {
       'Product-confirmed feature request for the joinUp project only.',
       'Stay strictly inside this repository. Do not touch other projects or system paths.',
       '',
+      'QUALITY / DEPLOY REQUIREMENTS (joinUp):',
+      '- After coding: run `cd next_app && npm run build` and fix TypeScript/build errors in a loop until green.',
+      '- Run server tests when relevant (`cd server && npm test`).',
+      '- Do not consider the task done while Next build is red (Vercel will fail otherwise).',
+      '- When green: merge the feature branch into Dev and push (triggers Vercel).',
+      '',
       task,
     ].join('\n');
 
@@ -58,14 +68,45 @@ export class JoinUpCursorExecutor {
       `[joinup-telegram] dispatch pinned cwd=${project} taskChars=${wrappedTask.length}`
     );
 
-    const result = await this.runDispatch(
-      { project, task: wrappedTask },
-      { onLog: opts.onLog, signal: opts.signal }
+    // Enforce joinUp deploy branch + longer agent window for build/fix loops.
+    const prevMerge = process.env.DISPATCH_MERGE_TARGET;
+    const prevTimeout = process.env.DISPATCH_AGENT_TIMEOUT_MS;
+    const prevLoops = process.env.DISPATCH_MAX_FIX_LOOPS;
+    process.env.DISPATCH_MERGE_TARGET = process.env.DISPATCH_MERGE_TARGET || 'Dev';
+    process.env.DISPATCH_AGENT_TIMEOUT_MS =
+      process.env.DISPATCH_AGENT_TIMEOUT_MS || '1200000';
+    process.env.DISPATCH_MAX_FIX_LOOPS = process.env.DISPATCH_MAX_FIX_LOOPS || '5';
+
+    let result;
+    try {
+      result = await this.runDispatch(
+        { project, task: wrappedTask },
+        { onLog: opts.onLog, signal: opts.signal }
+      );
+    } finally {
+      if (prevMerge === undefined) delete process.env.DISPATCH_MERGE_TARGET;
+      else process.env.DISPATCH_MERGE_TARGET = prevMerge;
+      if (prevTimeout === undefined) delete process.env.DISPATCH_AGENT_TIMEOUT_MS;
+      else process.env.DISPATCH_AGENT_TIMEOUT_MS = prevTimeout;
+      if (prevLoops === undefined) delete process.env.DISPATCH_MAX_FIX_LOOPS;
+      else process.env.DISPATCH_MAX_FIX_LOOPS = prevLoops;
+    }
+
+    // Always resolve a Vercel link after merge/push to Dev (best-effort wait for READY).
+    const vercel = await resolveJoinUpVercelUrl({
+      gitBranch: process.env.JOINUP_VERCEL_BRANCH || 'Dev',
+      onLog: opts.onLog,
+      // After dispatch we already waited a long time; keep poll modest unless configured.
+      timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 180000),
+    });
+    opts.onLog?.(
+      `[joinup-telegram] vercel url=${vercel.url || '(none)'} state=${vercel.state}`
     );
 
     return {
       ok: true,
       projectPath: project,
+      vercel,
       ...result,
     };
   }
@@ -73,22 +114,27 @@ export class JoinUpCursorExecutor {
 
 /**
  * Human-readable completion note for Telegram (non-technical).
- * @param {{ ok?: boolean, projectPath?: string, error?: string }} result
+ * Always includes a Vercel link when configured / discovered.
+ * @param {{ ok?: boolean, projectPath?: string, error?: string, vercel?: object }} result
  */
 export function formatCompletionMessage(result) {
+  const vercelLines = formatVercelTelegramLines(result?.vercel);
   if (result?.ok) {
     return [
-      'Done — the joinUp update has been built.',
+      'מוכן — העדכון ל-joinUp נבנה ועלה.',
       '',
-      'The changes are ready in the joinUp project. A teammate can review them when convenient.',
-      'Tell me if you want to tweak anything or specify another improvement.',
+      ...vercelLines,
+      '',
+      'אפשר לפתוח את הקישור ולבדוק את השינוי. אם משהו לא מרגיש נכון — כתבו לי.',
     ].join('\n');
   }
   return [
-    'Something went wrong while building this for joinUp.',
+    'משהו השתבש בבנייה של joinUp.',
     '',
-    'No need for technical details on your side — please share the idea again or ask a teammate to check the build status.',
-    result?.error ? `Note: ${String(result.error).slice(0, 200)}` : '',
+    ...vercelLines,
+    '',
+    'נסו לאשר שוב בעוד רגע, או בקשו ממישהו מהצוות לבדוק את סטטוס הבילד.',
+    result?.error ? `הערה: ${String(result.error).slice(0, 200)}` : '',
   ]
     .filter(Boolean)
     .join('\n');

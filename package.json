@@ -19,7 +19,9 @@
     "dispatch": "node scripts/dispatch-task.js",
     "test:dispatch": "node scripts/test-task-dispatch-e2e.js",
     "joinup:telegram": "node scripts/joinup-telegram-bot.js",
-    "test:joinup-telegram": "node scripts/test-joinup-telegram.js"
+    "test:joinup-telegram": "node scripts/test-joinup-telegram.js",
+    "test:quality-gates": "node scripts/test-dispatch-quality-gates.js",
+    "joinup:notify-vercel": "node scripts/notify-joinup-vercel.js"
   },
   "engines": {
     "node": ">=18"

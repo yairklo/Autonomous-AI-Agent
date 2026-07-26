@@ -30,6 +30,10 @@ export {
 export { JoinUpCursorExecutor, formatCompletionMessage, assertPinnedProjectPath } from './executor.js';
 export { JoinUpProductAgent } from './product-agent.js';
 export { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';
+export {
+  resolveJoinUpVercelUrl,
+  formatVercelTelegramLines,
+} from './vercel.js';
 
 import { loadJoinUpTelegramConfig } from './config.js';
 import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';

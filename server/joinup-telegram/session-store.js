@@ -100,29 +100,44 @@ export class JoinUpSessionStore {
 }
 
 /**
- * Detect explicit product confirmation from a non-technical collaborator.
+ * Detect explicit product confirmation / "go build now" intent.
+ * Non-technical collaborators often confirm in full sentences (HE/EN).
  * @param {string} text
  */
 export function isExplicitConfirmation(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return false;
+
+  // Short English confirmations
   if (
-    /^(yes|y|ok|okay|sure|proceed|confirm|confirmed|go ahead|build it|do it|approve|approved)\b/i.test(
+    /^(yes|y|ok|okay|sure|proceed|confirm|confirmed|go ahead|build it|do it|approve|approved)[.!]?$/i.test(
       t
     )
   ) {
     return true;
   }
-  if (/should i proceed|go ahead and build|yes,? (please )?build/i.test(t)) {
+  if (
+    /\b(go ahead and build|yes,?\s*(please\s+)?build|please (build|proceed|execute)|run it|execute (it|now|the task)|start building)\b/i.test(
+      t
+    )
+  ) {
     return true;
   }
-  // Hebrew affirmations
-  if (/^(כן|בטח|קדימה|אשר|מאשר|לבנות|תבנה|תתחיל|יאללה)\b/i.test(t)) {
+
+  // Short Hebrew confirmations
+  if (/^(כן|בטח|קדימה|אשר|מאשר|לבנות|תבנה|תתחיל|יאללה|בצע|תבצע)[.!]?$/i.test(t)) {
     return true;
   }
-  if (/תבנה את זה|אפשר לבנות|כן,? תבנה|שגר|תתחיל לבנות/i.test(t)) {
+
+  // Hebrew / mixed full-sentence approvals (common Telegram phrasing)
+  if (
+    /(יש אישור|אפשר לבנות|תבנה את זה|כן,?\s*תבנה|שגר(\s*ל-?\s*cursor)?|תתחיל לבנות|תתחיל לעבוד|לבצע את המשימה|תבצע את המשימה|תנסה עכשיו|עכשיו לבצע|תריץ (את )?(זה|המשימה)|בצע (את )?המשימה|שלח (את זה )?לבנייה|תשלח לבנייה)/i.test(
+      t
+    )
+  ) {
     return true;
   }
+
   return false;
 }
 

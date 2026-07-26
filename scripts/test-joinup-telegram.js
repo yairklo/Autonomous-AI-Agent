@@ -14,6 +14,8 @@ import {
   JoinUpCursorExecutor,
   JoinUpProductAgent,
   JoinUpSessionStore,
+  formatCompletionMessage,
+  formatVercelTelegramLines,
   parseAllowedUserIds,
   pinToJoinUpRoot,
 } from '../server/joinup-telegram/index.js';
@@ -103,6 +105,8 @@ test('JoinUpCursorExecutor always dispatches to pinned joinUp root', async () =>
   assert.equal(calls[0].project, path.resolve(tmpRoot));
   assert.match(calls[0].task, /joinUp/);
   assert.match(calls[0].task, /friendlier empty state/i);
+  assert.match(calls[0].task, /npm run build/i);
+  assert.match(calls[0].task, /merge.*Dev/i);
 });
 
 test('extractReadyToBuild and confirmation helpers', () => {
@@ -113,6 +117,8 @@ test('extractReadyToBuild and confirmation helpers', () => {
   assert.equal(technicalPrompt, 'Implement the onboarding tip banner');
   assert.equal(isExplicitConfirmation('yes'), true);
   assert.equal(isExplicitConfirmation('כן תבנה'), true);
+  assert.equal(isExplicitConfirmation('היה באג, תנסה עכשיו לבצע את המשימה!'), true);
+  assert.equal(isExplicitConfirmation('יש אישור להתחיל לעבוד!'), true);
   assert.equal(isExplicitConfirmation('maybe later'), false);
 });
 
@@ -163,6 +169,20 @@ test('mock product agent grills then dispatches only after confirm', async () =>
   assert.equal(t4.phase, 'completed');
   assert.equal(dispatches.length, 1);
   assert.equal(dispatches[0].project, path.resolve(tmpRoot));
+});
+
+test('completion message always includes Vercel link when present', () => {
+  const lines = formatVercelTelegramLines({
+    url: 'https://joinup.vercel.app',
+    state: 'READY',
+  });
+  assert.ok(lines.some((l) => /vercel\.app/i.test(l)));
+  const msg = formatCompletionMessage({
+    ok: true,
+    vercel: { url: 'https://joinup.vercel.app', state: 'READY' },
+  });
+  assert.match(msg, /https:\/\/joinup\.vercel\.app/);
+  assert.match(msg, /קישור לגרסה באוויר/);
 });
 
 console.log('joinUp Telegram bot tests: ok');

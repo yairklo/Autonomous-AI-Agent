@@ -5,6 +5,7 @@ import {
   isCancelOrReset,
   isExplicitConfirmation,
 } from './session-store.js';
+import { formatCompletionMessage } from './executor.js';
 
 /**
  * Conversational product agent: grill → summarize → confirm → hand off to Cursor.
@@ -64,18 +65,18 @@ export class JoinUpProductAgent {
     }
 
     const session = this.store.get(userId);
+    const hasPendingBuild = Boolean(session.pendingTechnicalPrompt);
 
-    // If we already have a technical prompt and the user confirms, execute.
-    if (
-      (session.phase === 'awaiting_confirmation' || session.pendingTechnicalPrompt) &&
-      isExplicitConfirmation(cleaned) &&
-      session.pendingTechnicalPrompt
-    ) {
+    // If we already have a technical prompt and the user confirms / asks to run it, execute.
+    if (hasPendingBuild && isExplicitConfirmation(cleaned)) {
+      this.store.appendHistory(userId, 'user', cleaned);
       return this._executeConfirmed(userId, signal);
     }
 
     this.store.appendHistory(userId, 'user', cleaned);
-    this.store.update(userId, { phase: 'grilling' });
+    if (!hasPendingBuild) {
+      this.store.update(userId, { phase: 'grilling' });
+    }
 
     const agentReply = await this._askAgent(userId, cleaned, signal);
     const { cleanReply, technicalPrompt } = extractReadyToBuild(agentReply);
@@ -89,8 +90,10 @@ export class JoinUpProductAgent {
         pendingSpecSummary: cleanReply,
         lastAgentReply: cleanReply,
       });
-      // If the same message both produced READY_TO_BUILD and the user already said yes
-      // in a prior turn, still wait for explicit confirmation on the summary.
+      // If the user already confirmed in this same message, build immediately.
+      if (isExplicitConfirmation(cleaned)) {
+        return this._executeConfirmed(userId, signal);
+      }
       return {
         reply:
           cleanReply ||
@@ -99,15 +102,28 @@ export class JoinUpProductAgent {
       };
     }
 
+    // Safety net: LLM claimed "sending to build" but omitted READY_TO_BUILD —
+    // if we already have a pending technical prompt, actually dispatch.
+    const claimsBuilding =
+      /(שולח (שוב )?(את )?(זה|המשימה)?\s*(עכשיו )?לבני|שולח שוב|sending (it |this )?(to )?(build|cursor)|i('m| am) (now )?send|start(ing)? (the )?build)/i.test(
+        cleanReply
+      );
+    if (hasPendingBuild && claimsBuilding) {
+      this.onLog(
+        '[joinup-telegram] LLM claimed build start — dispatching pending technical prompt'
+      );
+      return this._executeConfirmed(userId, signal);
+    }
+
     // Heuristic: if the agent asked for confirmation without the marker, still track phase.
     const asksConfirm =
       /should i proceed|proceed with building|תבנה|לאשר|מאשר|לְאַשֵׁר|האם להמשיך/i.test(
         cleanReply
       );
     this.store.update(userId, {
-      phase: asksConfirm ? 'awaiting_confirmation' : 'grilling',
+      phase:
+        asksConfirm || hasPendingBuild ? 'awaiting_confirmation' : 'grilling',
       lastAgentReply: cleanReply,
-      // Keep any earlier technical prompt until replaced.
     });
 
     return { reply: cleanReply, phase: this.store.get(userId).phase };
@@ -187,32 +203,31 @@ export class JoinUpProductAgent {
     this.onLog(`[joinup-telegram] executing for user=${userId}`);
 
     try {
-      await this.executor.execute(technicalPrompt, {
+      const execResult = await this.executor.execute(technicalPrompt, {
         signal,
         onLog: this.onLog,
       });
       this.store.update(userId, {
         phase: 'completed',
         pendingTechnicalPrompt: '',
+        lastVercelUrl: execResult?.vercel?.url || '',
       });
       this.claude.reset(this.clientIdFor(userId));
       return {
-        reply: [
-          'Done — the joinUp update has been built.',
-          '',
-          'The changes are ready in the joinUp project. Tell me if you want another improvement.',
-        ].join('\n'),
+        reply: formatCompletionMessage({ ok: true, vercel: execResult?.vercel }),
         phase: 'completed',
         dispatched: true,
+        vercelUrl: execResult?.vercel?.url || '',
       };
     } catch (err) {
       this.store.update(userId, { phase: 'awaiting_confirmation' });
       this.onLog(`[joinup-telegram] execute failed: ${err.message}`);
       return {
-        reply: [
-          'I could not finish building this for joinUp right now.',
-          'Please try confirming again in a moment, or ask a teammate to check the build status.',
-        ].join('\n'),
+        reply: formatCompletionMessage({
+          ok: false,
+          error: err.message,
+          vercel: { url: process.env.JOINUP_VERCEL_PRODUCTION_URL || '' },
+        }),
         phase: 'awaiting_confirmation',
         dispatched: false,
       };
