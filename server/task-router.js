@@ -76,6 +76,82 @@ export function detectCodingDispatch(text) {
   };
 }
 
+/**
+ * Detect WhatsApp group job-scan intent (Hebrew or English).
+ * Used by orchestration to invoke the scan_whatsapp_jobs MCP tool.
+ */
+export function detectWhatsappJobScan(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return null;
+
+  // Building/dispatching the scanner itself is a coding task, not a scan run.
+  if (
+    /(implement|refactor|dispatch_coding|skip\s+grill-?me|שגר\s*ל-?\s*cursor)/i.test(
+      cleaned
+    ) ||
+    (/(add|create|build|הוסף|להוסיף|תיישם|לבנות)/i.test(cleaned) &&
+      /(tool|כלי|mcp)/i.test(cleaned))
+  ) {
+    return null;
+  }
+
+  const mentionsWhatsapp = /whatsapp|וואטסאפ|ווטסאפ|וואצאפ/i.test(cleaned);
+  const mentionsJobs =
+    /משרות?|דרוש(?:ים|ות|ה)?|גיוס|jobs?|hiring|recruit/i.test(cleaned);
+  const mentionsScan =
+    /סרוק|לסרוק|תסרוק|סריק(?:ת|ה)?|scan|scrape|חפש(?:י|ו)?(?:\s+ב)?/i.test(cleaned);
+
+  if (!mentionsWhatsapp) return null;
+  if (!mentionsJobs) return null;
+  // Prefer an explicit scan verb; also accept "whatsapp jobs in groups"
+  if (!mentionsScan && !/(קבוצ|groups?)/i.test(cleaned)) return null;
+
+  const roles = extractRoles(cleaned);
+  const exportPath = extractExportPath(cleaned) || config.whatsappExportsDir;
+  const groupNames = extractGroupNames(cleaned);
+
+  return {
+    mcpTool: 'scan_whatsapp_jobs',
+    mcpArgs: {
+      exportPath,
+      ...(groupNames.length ? { groupNames } : {}),
+      ...(roles.length ? { roles } : {}),
+    },
+  };
+}
+
+function extractRoles(text) {
+  const roles = [];
+  const patterns = [
+    /(?:role|תפקיד|roles?)\s*[:=]\s*([^,.\n]+)/i,
+    /\b(full\s*stack|backend|frontend|devops|product\s*manager|data\s*scientist|mobile|android|ios|qa)\b/i,
+    /(פול\s*סטאק|בק.?אנד|פרונט|דבאופס|מנהל מוצר)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m?.[1]) roles.push(m[1].trim());
+  }
+  return [...new Set(roles)].slice(0, 5);
+}
+
+function extractGroupNames(text) {
+  const quoted = [...text.matchAll(/["«»„‟]([^"«»„‟]{2,80})["«»„‟]/g)].map((m) => m[1].trim());
+  const labeled = text.match(/(?:group|קבוצ(?:ה|ות))\s*[:=]\s*([^,.\n]+)/i);
+  const names = [...quoted];
+  if (labeled?.[1]) names.push(labeled[1].trim());
+  return [...new Set(names)].slice(0, 10);
+}
+
+function extractExportPath(text) {
+  const labeled = text.match(
+    /(?:export(?:Path)?|ייצוא|נתיב)\s*[:=]\s*["']?([A-Za-z]:[^"'\n]+|\/[^"'\n]+)/i
+  );
+  if (labeled?.[1] && fs.existsSync(labeled[1].trim())) {
+    return path.resolve(labeled[1].trim());
+  }
+  return extractProjectPath(text);
+}
+
 function extractProjectPath(text) {
   const quoted = text.match(/["']([A-Za-z]:[^"']+|\/[^"']+)["']/);
   if (quoted?.[1] && fs.existsSync(quoted[1].trim())) {

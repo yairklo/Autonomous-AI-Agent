@@ -9,7 +9,7 @@ import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
-import { detectCodingDispatch } from './task-router.js';
+import { detectCodingDispatch, detectWhatsappJobScan } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
@@ -50,7 +50,9 @@ app.get('/api/health', (_req, res) => {
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
+    autoScanWhatsappJobs: config.autoScanWhatsappJobs,
     mcpTools: listMcpTools().map((t) => t.name),
+    whatsappExportsDir: config.whatsappExportsDir,
     time: new Date().toISOString(),
   });
 });
@@ -108,6 +110,20 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
+  // WhatsApp group job scan → scan_whatsapp_jobs MCP tool.
+  const waScan = config.autoScanWhatsappJobs ? detectWhatsappJobScan(text) : null;
+  if (waScan) {
+    try {
+      await streamWhatsappJobScanViaMcp(res, clientId, waScan, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] MCP scan_whatsapp_jobs error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP scan_whatsapp_jobs request finished');
+    return;
+  }
+
   let full = '';
   try {
     for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
@@ -159,6 +175,31 @@ app.post('/api/chat/sync', async (req, res) => {
         text: `Dispatched coding task via MCP tool dispatch_coding_task for ${dispatch.project}.`,
         dispatched: true,
         mcpTool: 'dispatch_coding_task',
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
+  const waScan = config.autoScanWhatsappJobs ? detectWhatsappJobScan(text) : null;
+  if (waScan) {
+    try {
+      const logs = [];
+      const mcpResult = await executeMcpTool('scan_whatsapp_jobs', waScan.mcpArgs, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const summary = formatWhatsappJobScanSummary(mcpResult);
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: summary,
+        mcpTool: 'scan_whatsapp_jobs',
+        jobCount: mcpResult.jobCount,
+        jobs: mcpResult.jobs,
         logs: logs.slice(-20),
       });
     } catch (err) {
@@ -407,10 +448,78 @@ async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
   });
 }
 
+function formatWhatsappJobScanSummary(mcpResult) {
+  const jobs = mcpResult.jobs || [];
+  const header =
+    `Scanned WhatsApp exports (${mcpResult.scannedFiles || 0} file(s), ` +
+    `${mcpResult.messagesScanned || 0} messages) via scan_whatsapp_jobs. ` +
+    `Found ${mcpResult.jobCount ?? jobs.length} job post(s)` +
+    (mcpResult.usedFixture ? ' (demo fixture).' : '.');
+
+  if (!jobs.length) {
+    return (
+      `${header} Drop WhatsApp "Export chat" .txt files into ` +
+      `${config.whatsappExportsDir} and ask again.`
+    );
+  }
+
+  const lines = jobs.slice(0, 8).map((j, i) => {
+    const when = j.timestamp ? ` @ ${j.timestamp}` : '';
+    return `${i + 1}. [${j.groupName}] ${j.author}${when}: ${j.snippet}`;
+  });
+  return `${header}\n${lines.join('\n')}`;
+}
+
+/**
+ * Orchestration path for WhatsApp job scanning via scan_whatsapp_jobs.
+ */
+async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
+  const toolName = waScan.mcpTool || 'scan_whatsapp_jobs';
+  const intro = `Scanning WhatsApp group exports via MCP tool ${toolName}… `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: waScan.mcpArgs,
+  });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  const mcpResult = await executeMcpTool(toolName, waScan.mcpArgs, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    jobCount: mcpResult.jobCount,
+    exportPath: mcpResult.exportPath,
+  });
+
+  const summary = `\n${formatWhatsappJobScanSummary(mcpResult)}`;
+  full += summary;
+  sendSse(res, 'token', { text: summary });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    mcpTool: toolName,
+    jobCount: mcpResult.jobCount,
+    jobs: mcpResult.jobs,
+  });
+}
+
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
+  console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
   console.log(
     `[voice-agent] mcpTools=${listMcpTools()
       .map((t) => t.name)

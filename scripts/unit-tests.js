@@ -7,10 +7,16 @@ import ClaudeSessionManager from '../server/claude-session.js';
 import { config } from '../server/config.js';
 import {
   detectCodingDispatch,
+  detectWhatsappJobScan,
   isShortDispatchConfirmation,
   wantsSkipGrillMe,
 } from '../server/task-router.js';
 import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
+import {
+  parseWhatsappExport,
+  scanWhatsappJobs,
+  scoreJobMessage,
+} from '../server/whatsapp-job-scanner.js';
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
   const sessionsFile = './test-sessions.json';
@@ -166,4 +172,88 @@ test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () =>
       /* ignore */
     }
   }
+});
+
+test('MCP tools - scan_whatsapp_jobs registration', () => {
+  const tools = listMcpTools();
+  assert.ok(tools.some((t) => t.name === 'scan_whatsapp_jobs'));
+  const tool = getMcpTool('scan_whatsapp_jobs');
+  assert.ok(tool);
+  assert.match(tool.description, /WhatsApp/i);
+  assert.ok(tool.inputSchema.properties.exportPath);
+  assert.ok(tool.inputSchema.properties.roles);
+});
+
+test('System prompt documents scan_whatsapp_jobs', () => {
+  assert.match(config.systemPrompt, /scan_whatsapp_jobs/);
+  assert.match(config.systemPrompt, /WhatsApp/i);
+});
+
+test('parseWhatsappExport + scoreJobMessage detect HE/EN jobs', () => {
+  const fixture = path.join(
+    config.root,
+    'fixtures',
+    'whatsapp',
+    'WhatsApp Chat with Jobs Israel.txt'
+  );
+  const raw = fs.readFileSync(fixture, 'utf8');
+  const messages = parseWhatsappExport(raw, { groupName: 'Jobs Israel' });
+  assert.ok(messages.length >= 5);
+  const scored = messages.map((m) => ({
+    ...m,
+    ...scoreJobMessage(m.body),
+  }));
+  const jobs = scored.filter((m) => m.isJob);
+  assert.ok(jobs.length >= 3, `expected >=3 jobs, got ${jobs.length}`);
+  assert.ok(jobs.some((j) => /Full Stack|דרוש/i.test(j.body)));
+  assert.ok(jobs.some((j) => /hiring|Backend/i.test(j.body)));
+});
+
+test('scanWhatsappJobs reads fixture export', () => {
+  const result = scanWhatsappJobs({
+    exportPath: config.whatsappFixturePath,
+    roles: ['Full Stack', 'DevOps'],
+    limit: 10,
+  });
+  assert.ok(result.ok);
+  assert.ok(result.jobCount >= 3);
+  assert.ok(result.jobs.every((j) => j.matchedSignals.length > 0));
+  assert.ok(result.jobs.some((j) => j.matchedSignals.some((s) => /role:/i.test(s))));
+});
+
+test('detectWhatsappJobScan matches Hebrew/English scan requests', () => {
+  const he = detectWhatsappJobScan('תסרוק משרות בקבוצות WhatsApp');
+  assert.ok(he);
+  assert.strictEqual(he.mcpTool, 'scan_whatsapp_jobs');
+
+  const en = detectWhatsappJobScan('Scan WhatsApp groups for jobs');
+  assert.ok(en);
+  assert.strictEqual(en.mcpTool, 'scan_whatsapp_jobs');
+});
+
+test('detectWhatsappJobScan ignores tool-implementation requests', () => {
+  assert.strictEqual(
+    detectWhatsappJobScan(
+      'אני רוצה להוסיף לסוכן שלנו כלי לסריקת משרות בקבוצות WhatsApp'
+    ),
+    null
+  );
+  assert.strictEqual(
+    detectWhatsappJobScan('Implement a WhatsApp jobs scanning MCP tool'),
+    null
+  );
+});
+
+test('executeMcpTool scan_whatsapp_jobs uses fixture when exports empty', async () => {
+  const logs = [];
+  const result = await executeMcpTool(
+    'scan_whatsapp_jobs',
+    { exportPath: config.whatsappExportsDir, limit: 10 },
+    { onLog: (line) => logs.push(line) }
+  );
+  assert.ok(result.ok);
+  assert.strictEqual(result.tool, 'scan_whatsapp_jobs');
+  assert.ok(result.jobCount >= 3);
+  assert.match(logs.join('\n'), /\[mcp\] tool=scan_whatsapp_jobs/);
+  assert.match(logs.join('\n'), /status=ok/);
 });

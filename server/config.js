@@ -25,6 +25,17 @@ const defaultSystemPrompt = [
   'That tool dispatches the work to Cursor Agent CLI in headless mode.',
   'External integrations (Google Drive, Calendar, etc.) are out of scope for now.',
   '',
+  '=== WHATSAPP JOB SCANNING ===',
+  'You can scan WhatsApp group job posts via the scan_whatsapp_jobs MCP tool.',
+  'v1 reads local WhatsApp "Export chat" .txt files only (no live WhatsApp / Baileys).',
+  'Default export directory:',
+  `"${path.join(root, 'data', 'whatsapp-exports').replace(/\\/g, '/')}"`,
+  '(or the bundled fixture when that folder is empty).',
+  'When the user asks to scan WhatsApp groups for jobs / משרות, call scan_whatsapp_jobs',
+  'with optional groupNames, roles, keywords, since, and exportPath.',
+  'Summarize matches briefly for voice; do not invent jobs that were not returned.',
+  'CV auto-submit is out of scope for this tool.',
+  '',
   '=== GRILL-ME MODE (default for interactive conversations) ===',
   'Unless the user explicitly says to "skip Grill-Me Mode" (or Hebrew equivalent "דלג על Grill-Me"),',
   'you MUST operate in Grill-Me Mode for any coding / project / dispatch request.',
@@ -58,10 +69,22 @@ export const config = {
   uploadsDir: path.join(root, 'uploads'),
   sessionsFile: path.join(root, 'sessions.json'),
   clientDir: path.join(root, 'client'),
+  whatsappExportsDir: env(
+    'WHATSAPP_EXPORTS_DIR',
+    path.join(root, 'data', 'whatsapp-exports')
+  ),
+  whatsappFixturePath: path.join(
+    root,
+    'fixtures',
+    'whatsapp',
+    'WhatsApp Chat with Jobs Israel.txt'
+  ),
   maxUploadBytes: 25 * 1024 * 1024,
   claudeTimeoutMs: Number(env('CLAUDE_TIMEOUT_MS', String(5 * 60 * 1000))),
   systemPrompt: env('VOICE_SYSTEM_PROMPT', defaultSystemPrompt),
   // When true, ONLY explicit skip-Grill-Me / dispatch utterances auto-invoke
   // dispatch_coding_task. Ordinary coding requests stay in Grill-Me Mode via Claude.
   autoDispatchCoding: env('AUTO_DISPATCH_CODING', '1') === '1',
+  // When true, WhatsApp job-scan utterances auto-invoke scan_whatsapp_jobs.
+  autoScanWhatsappJobs: env('AUTO_SCAN_WHATSAPP_JOBS', '1') === '1',
 };

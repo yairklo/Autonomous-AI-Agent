@@ -30,3 +30,9 @@
 **Decision:** Interactive conversations use Grill-Me Mode by default (system prompt). Server auto-dispatch via `dispatch_coding_task` runs only when the user explicitly skips Grill-Me or confirms dispatch (`skip Grill-Me Mode` / `דלג על Grill-Me` / `שגר ל-Cursor`). Ordinary coding utterances go to Claude for clarifying questions. Terminal UX: `npm run chat` (`scripts/interactive-chat.js`).  
 **Why:** Scope, requirements, profile structure, and approval workflows must be refined before headless Cursor work starts.  
 **Date:** 2026-07-26
+
+## D16 — WhatsApp job scan via local chat exports (MCP)
+**Decision:** Job scanning is exposed as MCP tool `scan_whatsapp_jobs` (`server/mcp-tools.js` + `server/whatsapp-job-scanner.js`). v1 reads WhatsApp **Export chat** `.txt` files from `data/whatsapp-exports` (or an explicit `exportPath`); no live WhatsApp Web/Baileys client. Hebrew/English keyword scoring finds posts; optional `roles` boost relevance. Chat orchestration auto-invokes the tool when the user asks to scan WhatsApp groups for jobs (`detectWhatsappJobScan`). Empty export dir falls back to `fixtures/whatsapp` for demos/tests. CV auto-submit is out of scope.  
+**Why:** Local exports keep privacy and avoid QR/session complexity while still giving the agent a real, testable scan tool.  
+**Env:** `WHATSAPP_EXPORTS_DIR`, `AUTO_SCAN_WHATSAPP_JOBS`  
+**Date:** 2026-07-26

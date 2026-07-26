@@ -47,6 +47,7 @@ npm run smoke
 | STT | Client Web Speech API (primary); optional Whisper via `WHISPER_BIN` |
 | TTS | Client `speechSynthesis` (primary); optional `POST /api/tts` |
 | Client | Installable PWA with Push-to-Talk |
+| MCP tools | `dispatch_coding_task`, `scan_whatsapp_jobs` (local WhatsApp export scan) |
 
 See [DECISIONS.md](./DECISIONS.md) for why.
 
@@ -93,6 +94,16 @@ Returns `audio/wav` when a local engine works (Windows SAPI / macOS `say` / espe
 | `WHISPER_MODEL` | — | Model path for whisper.cpp |
 | `VOICE_SYSTEM_PROMPT` | (built-in) | Override voice persona |
 | `CLAUDE_TIMEOUT_MS` | `300000` | Per-turn timeout |
+| `WHATSAPP_EXPORTS_DIR` | `data/whatsapp-exports` | WhatsApp `.txt` chat exports for `scan_whatsapp_jobs` |
+| `AUTO_SCAN_WHATSAPP_JOBS` | `1` | Auto-invoke `scan_whatsapp_jobs` on scan intent |
+
+### WhatsApp job scanning
+
+1. In WhatsApp, open a jobs group → **Export chat** → **Without media**.
+2. Place the `.txt` file in `data/whatsapp-exports/` (or pass `exportPath`).
+3. Ask the agent: `תסרוק משרות בקבוצות WhatsApp` / `Scan WhatsApp groups for jobs`.
+
+The MCP tool `scan_whatsapp_jobs` scores Hebrew/English hiring signals and returns matches. If the exports folder is empty, a bundled fixture is used for demos.
 
 Copy [.env.example](./.env.example) as a checklist (export vars in your shell; no dotenv required).
 
