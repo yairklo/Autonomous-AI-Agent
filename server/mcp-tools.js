@@ -222,6 +222,37 @@ export const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: 'redeploy_joinup_staging',
+    description:
+      'Redeploys the joinUp API staging service on Render (my-app-staging-ijyp) via Deploy Hook, then watches /api/health until healthy or timeout. Use when the user asks to restart/redeploy staging, or after server changes need a live staging refresh. Requires RENDER_STAGING_DEPLOY_HOOK_URL in .env. Does not touch production.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        force: {
+          type: 'boolean',
+          description:
+            'When true (default), trigger redeploy even if no local server/ git changes were detected.',
+        },
+        waitMs: {
+          type: 'number',
+          description: 'Max ms to wait for staging health (default from JOINUP_STAGING_WAIT_MS).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'submit_manual_job_link',
+    description: 'Submits a job application using Playwright given a direct URL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }
+      },
+      required: ['url']
+    }
+  }
 ];
 
 export function getMcpTool(name) {
@@ -269,10 +300,82 @@ export async function executeMcpTool(name, args = {}, { onLog, signal } = {}) {
   if (name === 'submit_whatsapp_job_cv') {
     return executeSubmitWhatsappJobCv(args, { onLog });
   }
+  if (name === 'submit_manual_job_link') {
+    return executeSubmitManualJobLink(args, { onLog });
+  }
+  if (name === 'redeploy_joinup_staging') {
+    return executeRedeployJoinupStaging(args, { onLog });
+  }
 
   const err = new Error(`MCP tool not implemented: ${name}`);
   err.code = 'MCP_NOT_IMPLEMENTED';
   throw err;
+}
+
+async function executeRedeployJoinupStaging(args = {}, { onLog } = {}) {
+  const { redeployAndWatchStaging, formatStagingTelegramLines } = await import(
+    './joinup-telegram/render-staging.js'
+  );
+  const { recordActivity } = await import('./activity-store.js');
+
+  const force = args.force !== false && args.force !== '0';
+  const waitMs = Number(args.waitMs || process.env.JOINUP_STAGING_WAIT_MS || 420000);
+  onLog?.(
+    `[mcp] tool=redeploy_joinup_staging force=${force} waitMs=${waitMs}`
+  );
+
+  recordActivity({
+    activityId: `staging-redeploy:${new Date().toISOString()}`,
+    kind: 'status',
+    source: 'mcp',
+    platform: 'cursor',
+    actorLabel: 'Voice agent MCP',
+    title: 'Redeploy joinUp staging',
+    text: `Starting Render staging redeploy (force=${force})`,
+    project: process.env.JOINUP_PROJECT_ROOT || '',
+  });
+
+  const staging = await redeployAndWatchStaging({
+    force,
+    onLog,
+    timeoutMs: Number.isFinite(waitMs) ? waitMs : 420000,
+  });
+
+  const lines = formatStagingTelegramLines(staging);
+  onLog?.(lines.join('\n'));
+
+  recordActivity({
+    activityId: `staging-redeploy:${staging.stagingUrl || 'staging'}`,
+    kind: staging.ok || staging.skipped ? 'run_end' : 'error',
+    source: 'mcp',
+    platform: 'cursor',
+    actorLabel: 'Voice agent MCP',
+    title: 'Redeploy joinUp staging',
+    text: lines.join('\n'),
+    project: process.env.JOINUP_PROJECT_ROOT || '',
+    meta: {
+      ok: staging.ok,
+      skipped: !!staging.skipped,
+      stagingUrl: staging.stagingUrl || '',
+    },
+  });
+
+  if (!staging.ok && !staging.skipped) {
+    return {
+      ok: false,
+      tool: 'redeploy_joinup_staging',
+      error: (staging.errors || []).join('; ') || 'Staging redeploy/health failed',
+      staging,
+      summary: lines.join('\n'),
+    };
+  }
+
+  return {
+    ok: true,
+    tool: 'redeploy_joinup_staging',
+    staging,
+    summary: lines.join('\n'),
+  };
 }
 
 async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
@@ -632,6 +735,52 @@ function executeSubmitWhatsappJobCv(args = {}, { onLog } = {}) {
     };
   } catch (err) {
     onLog?.(`[mcp] tool=submit_whatsapp_job_cv status=error ${err.message}`);
+    throw err;
+  }
+}
+
+import { randomUUID } from 'node:crypto';
+import { openJobDb } from './jobs/job-db.js';
+import { updateJobInTracker } from './jobs/tracker.js';
+
+async function executeSubmitManualJobLink(args = {}, { onLog } = {}) {
+  const url = String(args.url || '').trim();
+  if (!url) throw new Error('URL is required');
+
+  onLog?.(`[mcp] tool=submit_manual_job_link url=${url}`);
+  
+  const db = openJobDb(path.join(config.root, 'data', 'jobs-db.json'));
+  const jobId = `manual_${randomUUID().slice(0, 8)}`;
+  
+  const mockJob = {
+    id: jobId,
+    groupName: 'Manual URL Submission',
+    author: 'User',
+    body: `Manual submission to: ${url}`,
+    text: `Manual submission to: ${url}`,
+    timestamp: new Date().toISOString(),
+    status: 'approved',
+    approvalStatus: 'approved',
+    formUrl: url
+  };
+  
+  const { job: upsertedJob } = db.upsertJob(mockJob);
+  const actualJobId = upsertedJob.id;
+  
+  // Force approval status in case it was deduplicated from a previous pending attempt
+  db.update(actualJobId, { approvalStatus: 'approved' });
+  
+  onLog?.(`[mcp] injected/updated manual job id=${actualJobId} into tracker`);
+
+  try {
+    const result = await submitApprovedJob({
+      configPath: path.join(config.root, 'config.json'),
+      jobId: actualJobId,
+      onLog
+    });
+    return { ok: true, tool: 'submit_manual_job_link', url, result };
+  } catch (err) {
+    onLog?.(`[mcp] tool=submit_manual_job_link error: ${err.message}`);
     throw err;
   }
 }

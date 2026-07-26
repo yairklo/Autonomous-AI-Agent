@@ -12,6 +12,10 @@ import {
   telegramActivityId,
   telegramActorLabel,
 } from './activity-bridge.js';
+import {
+  formatStagingTelegramLines,
+  redeployAndWatchStaging,
+} from './render-staging.js';
 
 /**
  * Create the joinUp Telegram bot (Telegraf) with auth + product grilling workflow.
@@ -93,6 +97,7 @@ export function createJoinUpTelegramBot(config, deps = {}) {
         'joinUp Product Agent commands:',
         '/start — welcome + how this works',
         '/reset — clear our conversation and start over',
+        '/redeploy_staging — redeploy joinUp API staging on Render + health check',
         '/help — this message',
         '',
         'Otherwise just describe the joinUp change you want in plain language.',
@@ -107,6 +112,54 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       text: 'reset',
     });
     await ctx.reply(result.reply);
+  });
+
+  bot.command('redeploy_staging', async (ctx) => {
+    const userId = ctx.from.id;
+    await ctx.reply('מפעיל רידיפלוי ל-staging ב-Render ועוקב אחרי בריאות השרת…');
+    void bridgeActivity({
+      activityId: telegramActivityId(userId),
+      kind: 'status',
+      source: 'joinup-telegram',
+      platform: 'telegram',
+      actorId: String(userId),
+      actorLabel: telegramActorLabel(userId),
+      title: 'Redeploy staging (Telegram)',
+      text: '/redeploy_staging',
+      project: config.joinUpRoot,
+    });
+
+    const typing = setInterval(() => {
+      ctx.sendChatAction('typing').catch(() => {});
+    }, 4000);
+    try {
+      const staging = await redeployAndWatchStaging({
+        force: true,
+        onLog,
+        timeoutMs: Number(process.env.JOINUP_STAGING_WAIT_MS || 420000),
+      });
+      const lines = formatStagingTelegramLines(staging);
+      await ctx.reply(
+        ['רידיפלוי staging:', ...lines].join('\n').slice(0, 4000)
+      );
+      void bridgeActivity({
+        activityId: telegramActivityId(userId),
+        kind: staging.ok || staging.skipped ? 'run_end' : 'error',
+        source: 'joinup-telegram',
+        platform: 'telegram',
+        actorId: String(userId),
+        actorLabel: telegramActorLabel(userId),
+        title: 'Redeploy staging (Telegram)',
+        text: lines.join('\n'),
+        project: config.joinUpRoot,
+        meta: { ok: staging.ok, skipped: !!staging.skipped },
+      });
+    } catch (err) {
+      onLog(`[joinup-telegram] redeploy_staging error: ${err.message}`);
+      await ctx.reply(`רידיפלוי נכשל: ${err.message}`);
+    } finally {
+      clearInterval(typing);
+    }
   });
 
   bot.on('message', async (ctx) => {

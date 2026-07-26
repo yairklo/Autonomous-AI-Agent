@@ -80,6 +80,11 @@ const defaultSystemPrompt = [
   'treat requirements as confirmed and proceed toward dispatch immediately.',
   'After a coding dispatch runs, briefly confirm that the headless Cursor agent was started.',
   '',
+  '=== JOINUP STAGING REDEPLOY ===',
+  'When the user asks to restart/redeploy joinUp API staging (Render), call the MCP tool',
+  'redeploy_joinup_staging (force=true). That hits the Render Deploy Hook and waits for /api/health.',
+  'Staging URL: https://my-app-staging-ijyp.onrender.com — never redeploy production from this tool.',
+  '',
   `Default project path when unspecified: "${root.replace(/\\/g, '/')}".`,
   `Host: ${os.hostname()}. Date context: ${new Date().toISOString().slice(0, 10)}.`,
 ].join(' ');

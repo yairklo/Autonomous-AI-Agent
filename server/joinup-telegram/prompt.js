@@ -32,6 +32,8 @@ export const JOINUP_WELCOME_MESSAGE = [
   'I help non-technical collaborators describe features and improvements for joinUp.',
   'I will ask a few product/UX questions first, summarize the idea, and only build after you confirm.',
   '',
+  'Commands: /redeploy_staging — refresh the joinUp API staging server on Render.',
+  '',
   'Tell me what you would like to change or add in joinUp.',
 ].join('\n');
 
