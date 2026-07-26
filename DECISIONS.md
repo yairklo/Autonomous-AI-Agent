@@ -57,3 +57,9 @@
 **Why:** Completes scan→propose→approve→draft without requiring a live WA client or silent outbound messages.  
 **Env:** `CV_PROFILE_PATH`, `CV_APPLICATIONS_DIR`, `AUTO_SUBMIT_WHATSAPP_CV`  
 **Date:** 2026-07-26
+
+## D19 — WhatsApp jobs pipeline via local MCP (whatsapp-web.js + Telegram + Playwright)
+**Decision:** Full Grill-Me answers are implemented as local MCP tools in the agent (`server/mcp-tools.js` + `server/jobs/*`). Groups come only from root `config.json`. Realtime listen uses `whatsapp-web.js` (listen-only; sends hard-blocked). Matching targets Full Stack/Backend HE/EN with local JSON DB dedupe (`data/jobs-db.json`). Telegram Approve/Reject is mandatory before Playwright form submit (`submit_job_form`). No WhatsApp DMs/group replies. Profile: name, email, phone, linkedin, github, `assets/cv.pdf`. Cover letter LLM-adapted with template fallback; delay between submissions; Telegram alert on failure. Storage local only.  
+**Why:** Matches approved architecture option 4 (MCP Tool מקומי המשולב בסוכן) and safety constraints.  
+**Env:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`  
+**Date:** 2026-07-26

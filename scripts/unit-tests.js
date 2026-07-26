@@ -488,3 +488,267 @@ test('executeMcpTool submit_whatsapp_job_cv uses fixture profile', async () => {
     /* ignore */
   }
 });
+
+test('jobs config.json allow-lists WhatsApp groups only', async () => {
+  const { loadJobsConfig, isAllowedGroup } = await import('../server/jobs/jobs-config.js');
+  const cfg = loadJobsConfig(path.join(config.root, 'config.json'));
+  assert.ok(cfg.whatsapp.groups.includes('Jobs Israel'));
+  assert.ok(isAllowedGroup('Jobs Israel', cfg));
+  assert.strictEqual(isAllowedGroup('Random Spam Group', cfg), false);
+  assert.ok(cfg.safety.neverSendWhatsappGroupMessages);
+  assert.ok(cfg.safety.neverSubmitWithoutTelegramApproval);
+});
+
+test('matchFullStackOrBackend detects HE/EN roles', async () => {
+  const { matchFullStackOrBackend } = await import('../server/jobs/job-matcher.js');
+  const he = matchFullStackOrBackend('דרוש Full Stack Developer עם Node');
+  assert.ok(he.matches);
+  assert.ok(he.rolesMatched.length > 0);
+  const en = matchFullStackOrBackend("We're hiring a Backend Engineer");
+  assert.ok(en.matches);
+  const pm = matchFullStackOrBackend('משרה חדשה: Product Manager');
+  assert.strictEqual(pm.matches, false);
+});
+
+test('JobDb dedupes by fingerprint', async () => {
+  const { JobDb } = await import('../server/jobs/job-db.js');
+  const dbPath = path.join(os.tmpdir(), `jobs-db-${Date.now()}.json`);
+  try {
+    const db = new JobDb(dbPath);
+    const a = db.upsertJob({
+      text: 'Hiring Backend Engineer apply https://x.test/a',
+      groupName: 'Jobs Israel',
+      author: 'Mike',
+      contacts: { emails: [], phones: [], urls: ['https://x.test/a'] },
+    });
+    assert.ok(a.isNew);
+    const b = db.upsertJob({
+      text: 'Hiring Backend Engineer apply https://x.test/a',
+      groupName: 'Jobs Israel',
+      author: 'Mike',
+      contacts: { emails: [], phones: [], urls: ['https://x.test/a'] },
+    });
+    assert.strictEqual(b.isNew, false);
+    assert.strictEqual(b.job.id, a.job.id);
+  } finally {
+    try {
+      fs.unlinkSync(dbPath);
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('Telegram Approve/Reject callback parse + dry-run alert', async () => {
+  const { createTelegramClient } = await import('../server/jobs/telegram.js');
+  const tg = createTelegramClient({ botToken: '', chatId: '' });
+  assert.deepStrictEqual(tg.parseApprovalCallback('job_approve:abc123'), {
+    action: 'approve',
+    jobId: 'abc123',
+  });
+  assert.deepStrictEqual(tg.parseApprovalCallback('job_reject:abc123'), {
+    action: 'reject',
+    jobId: 'abc123',
+  });
+  const sent = await tg.sendJobApprovalRequest(
+    {
+      id: 'abc123',
+      groupName: 'Jobs Israel',
+      author: 'Dana',
+      rolesMatched: ['Full Stack'],
+      formUrl: 'https://jobs.example.com/apply',
+      snippet: 'דרוש Full Stack',
+    },
+    { dryRun: true }
+  );
+  assert.ok(sent.dryRun);
+  assert.ok(sent.replyMarkup.inline_keyboard[0].some((b) => b.text === 'Approve'));
+  assert.ok(sent.replyMarkup.inline_keyboard[0].some((b) => b.text === 'Reject'));
+});
+
+test('Playwright submit refuses without approval', async () => {
+  const { submitJobFormWithPlaywright } = await import(
+    '../server/jobs/playwright-submitter.js'
+  );
+  await assert.rejects(
+    () =>
+      submitJobFormWithPlaywright({
+        formUrl: 'https://jobs.example.com/apply',
+        profile: { name: 'Demo' },
+        cvPath: path.join(config.root, 'assets', 'cv.pdf'),
+        coverLetter: 'hi',
+        approved: false,
+        dryRun: true,
+      }),
+    /approval|Approve/i
+  );
+});
+
+test('pipeline scan → approve → playwright dry-run', async () => {
+  const {
+    scanAndEnqueueJobs,
+    resolveJobApproval,
+    submitApprovedJob,
+  } = await import('../server/jobs/pipeline.js');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jobs-pipe-'));
+  const dbPath = path.join(tmp, 'jobs-db.json');
+  const appsDir = path.join(tmp, 'apps');
+  const cfgPath = path.join(tmp, 'config.json');
+  const base = JSON.parse(
+    fs.readFileSync(path.join(config.root, 'config.json'), 'utf8')
+  );
+  base.storage.jobsDbPath = dbPath;
+  base.storage.applicationsDir = appsDir;
+  base.profile.path = config.cvFixtureProfilePath;
+  base.profile.cvPath = path.join(config.root, 'assets', 'cv.pdf');
+  fs.writeFileSync(cfgPath, JSON.stringify(base, null, 2), 'utf8');
+
+  try {
+    const scanned = await scanAndEnqueueJobs({
+      configPath: cfgPath,
+      exportPath: config.whatsappFixturePath,
+      notifyTelegram: true,
+      dryRunTelegram: true,
+      limit: 10,
+    });
+    assert.ok(scanned.enqueuedCount >= 1, 'expected Full Stack/Backend jobs');
+    assert.ok(scanned.jobs.every((j) => j.formUrl || j.contacts?.urls?.length));
+
+    const jobId = scanned.jobs[0].id;
+    const approved = resolveJobApproval({
+      configPath: cfgPath,
+      callbackData: `job_approve:${jobId}`,
+    });
+    assert.strictEqual(approved.job.approvalStatus, 'approved');
+
+    const submitted = await submitApprovedJob({
+      configPath: cfgPath,
+      jobId,
+      dryRun: true,
+      skipDelay: true,
+    });
+    assert.ok(submitted.ok);
+    assert.strictEqual(submitted.application.whatsappSend, false);
+    assert.strictEqual(submitted.application.channel, 'playwright_forms_only');
+    assert.ok(fs.existsSync(submitted.files.json));
+
+    await assert.rejects(
+      () =>
+        submitApprovedJob({
+          configPath: cfgPath,
+          jobId: scanned.jobs[1]?.id || 'missing',
+          dryRun: true,
+          skipDelay: true,
+        }),
+      (err) =>
+        err.code === 'SUBMIT_NOT_APPROVED' ||
+        err.code === 'JOB_NOT_FOUND' ||
+        /not Telegram-approved|not found/i.test(err.message)
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('MCP tools register Telegram + Playwright pipeline tools', () => {
+  const names = listMcpTools().map((t) => t.name);
+  for (const n of [
+    'start_whatsapp_job_watcher',
+    'request_job_telegram_approval',
+    'resolve_job_approval',
+    'submit_job_form',
+  ]) {
+    assert.ok(names.includes(n), `missing MCP tool ${n}`);
+  }
+});
+
+test('executeMcpTool scan_whatsapp_jobs pipeline=true', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jobs-mcp-'));
+  const cfgPath = path.join(tmp, 'config.json');
+  const base = JSON.parse(
+    fs.readFileSync(path.join(config.root, 'config.json'), 'utf8')
+  );
+  base.storage.jobsDbPath = path.join(tmp, 'db.json');
+  base.storage.applicationsDir = path.join(tmp, 'apps');
+  fs.writeFileSync(cfgPath, JSON.stringify(base, null, 2), 'utf8');
+  const logs = [];
+  try {
+    const result = await executeMcpTool(
+      'scan_whatsapp_jobs',
+      {
+        pipeline: true,
+        configPath: cfgPath,
+        exportPath: config.whatsappFixturePath,
+        limit: 5,
+      },
+      { onLog: (line) => logs.push(line) }
+    );
+    assert.ok(result.ok);
+    assert.strictEqual(result.pipeline, true);
+    assert.ok(result.enqueuedCount >= 1);
+    assert.match(logs.join('\n'), /pipeline=true/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('whatsapp live analyzer respects config groups and blocks sends', async () => {
+  const { analyzeRealtimeMessage, startWhatsappJobWatcher } = await import(
+    '../server/jobs/whatsapp-live.js'
+  );
+  const { loadJobsConfig } = await import('../server/jobs/jobs-config.js');
+  const cfg = loadJobsConfig(path.join(config.root, 'config.json'));
+  const ok = analyzeRealtimeMessage(
+    {
+      groupName: 'Jobs Israel',
+      body: 'דרוש Backend Engineer https://jobs.example.com/b',
+    },
+    cfg
+  );
+  assert.ok(ok.accepted);
+  const blocked = analyzeRealtimeMessage(
+    { groupName: 'Not Allowed', body: 'Hiring Backend https://x.test' },
+    cfg
+  );
+  assert.strictEqual(blocked.accepted, false);
+
+  const fake = {
+    on() {},
+    async initialize() {},
+    async destroy() {},
+    async sendMessage() {
+      return 'should-be-replaced';
+    },
+  };
+  await startWhatsappJobWatcher({
+    jobsConfig: cfg,
+    client: fake,
+    onJob: async () => {},
+  });
+  await assert.rejects(() => fake.sendMessage('x', 'hi'), /never send|Blocked/i);
+});
+
+test('System prompt documents Playwright + Telegram approval pipeline', () => {
+  assert.match(config.systemPrompt, /Playwright/i);
+  assert.match(config.systemPrompt, /Telegram/i);
+  assert.match(config.systemPrompt, /config\.json/);
+  assert.match(config.systemPrompt, /submit_job_form/);
+  assert.match(config.systemPrompt, /assets\/cv\.pdf/);
+});
+
+test('buildSpecMarkdown no longer all-TBD after approval', async () => {
+  const { buildSpecMarkdown, PACK_WHATSAPP_JOBS_CV } = await import(
+    '../server/grill-me-packs.js'
+  );
+  const spec = buildSpecMarkdown(PACK_WHATSAPP_JOBS_CV, { locale: 'he' });
+  // Pack builder still templates TBD placeholders; approved answers live in specs/*.md
+  assert.match(spec, /primary-goal/);
+  const approved = fs.readFileSync(
+    path.join(config.root, 'specs', 'whatsapp-jobs-cv-grill-me.md'),
+    'utf8'
+  );
+  assert.match(approved, /whatsapp-web\.js/);
+  assert.match(approved, /Playwright/);
+  assert.doesNotMatch(approved, /\*\*A:\*\* _TBD_/);
+});

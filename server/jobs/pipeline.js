@@ -1,0 +1,334 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { config as appConfig } from '../config.js';
+import { loadCvProfile } from '../cv-submitter.js';
+import { parseWhatsappExport, resolveExportFiles } from '../whatsapp-job-scanner.js';
+import { buildCoverLetter } from './cover-letter.js';
+import { JobDb, openJobDb } from './job-db.js';
+import { isAllowedGroup, loadJobsConfig } from './jobs-config.js';
+import { filterTargetJobs } from './job-matcher.js';
+import { submitJobFormWithPlaywright } from './playwright-submitter.js';
+import { createTelegramClient } from './telegram.js';
+import { analyzeRealtimeMessage } from './whatsapp-live.js';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Scan configured WhatsApp groups (export fallback or injected messages),
+ * dedupe in local DB, and optionally notify Telegram for approval.
+ */
+export async function scanAndEnqueueJobs({
+  configPath,
+  exportPath,
+  messages,
+  notifyTelegram = true,
+  dryRunTelegram = false,
+  limit = 50,
+  onLog,
+  telegramFetch,
+} = {}) {
+  const jobsConfig = loadJobsConfig(configPath);
+  const db = openJobDb(jobsConfig.storage.jobsDbPath);
+
+  let candidates = [];
+  if (Array.isArray(messages) && messages.length) {
+    for (const msg of messages) {
+      const analyzed = analyzeRealtimeMessage(msg, jobsConfig);
+      if (analyzed.accepted) candidates.push(...analyzed.jobs);
+    }
+  } else if (exportPath) {
+    const files = resolveExportFiles(exportPath);
+    for (const file of files) {
+      const groupName = path
+        .basename(file, path.extname(file))
+        .replace(/^WhatsApp Chat with\s+/i, '');
+      if (!isAllowedGroup(groupName, jobsConfig)) {
+        onLog?.(`[pipeline] skip export group not in config.json: ${groupName}`);
+        continue;
+      }
+      const raw = fs.readFileSync(file, 'utf8');
+      const parsed = parseWhatsappExport(raw, { groupName });
+      candidates.push(
+        ...filterTargetJobs(parsed, { roles: jobsConfig.roles })
+      );
+    }
+  } else {
+    const err = new Error('scanAndEnqueueJobs requires exportPath or messages');
+    err.code = 'PIPELINE_INVALID_ARGS';
+    throw err;
+  }
+
+  const telegram = createTelegramClient({
+    botToken: jobsConfig.telegram.botToken,
+    chatId: jobsConfig.telegram.chatId,
+    fetchImpl: telegramFetch,
+  });
+
+  const enqueued = [];
+  const duplicates = [];
+  const max = Math.max(1, Math.min(Number(limit) || 50, 200));
+
+  for (const c of candidates.slice(0, max * 3)) {
+    if (enqueued.length >= max) break;
+    const id = c.id || JobDb.fingerprint(c);
+    const { job, isNew, duplicateOf } = db.upsertJob({
+      ...c,
+      id,
+      status: 'detected',
+    });
+    if (!isNew) {
+      duplicates.push({ id: job.id, duplicateOf });
+      continue;
+    }
+
+    let telegramResult = null;
+    if (notifyTelegram && jobsConfig.telegram.enabled) {
+      const dry =
+        dryRunTelegram || !telegram.configured;
+      telegramResult = await telegram.sendJobApprovalRequest(job, {
+        dryRun: dry,
+      });
+      db.update(job.id, {
+        status: 'awaiting_approval',
+        telegramApprovalId: String(telegramResult.messageId),
+        approvalStatus: 'pending',
+      });
+    }
+
+    enqueued.push({
+      ...db.get(job.id),
+      telegram: telegramResult,
+    });
+    onLog?.(
+      `[pipeline] enqueued job=${job.id} group=${job.groupName} telegram=${telegramResult ? 'yes' : 'no'}`
+    );
+  }
+
+  return {
+    ok: true,
+    groupsAllowList: jobsConfig.whatsapp.groups,
+    scannedCandidates: candidates.length,
+    enqueuedCount: enqueued.length,
+    duplicateCount: duplicates.length,
+    jobs: enqueued,
+    duplicates,
+    dbPath: jobsConfig.storage.jobsDbPath,
+  };
+}
+
+/**
+ * Record Telegram Approve/Reject. Submit never runs here unless submitIfApproved.
+ */
+export function resolveJobApproval({
+  configPath,
+  jobId,
+  action,
+  callbackData,
+  onLog,
+} = {}) {
+  const jobsConfig = loadJobsConfig(configPath);
+  const db = openJobDb(jobsConfig.storage.jobsDbPath);
+  const telegram = createTelegramClient({
+    botToken: jobsConfig.telegram.botToken,
+    chatId: jobsConfig.telegram.chatId,
+  });
+
+  let resolved = { action, jobId };
+  if (callbackData) {
+    const parsed = telegram.parseApprovalCallback(callbackData);
+    if (!parsed) {
+      const err = new Error(`Invalid Telegram callback_data: ${callbackData}`);
+      err.code = 'TELEGRAM_CALLBACK_INVALID';
+      throw err;
+    }
+    resolved = parsed;
+  }
+
+  if (!resolved.jobId || !['approve', 'reject'].includes(resolved.action)) {
+    const err = new Error('resolveJobApproval requires jobId and approve|reject');
+    err.code = 'PIPELINE_INVALID_ARGS';
+    throw err;
+  }
+
+  const job = db.get(resolved.jobId);
+  if (!job) {
+    const err = new Error(`Job not found: ${resolved.jobId}`);
+    err.code = 'JOB_NOT_FOUND';
+    throw err;
+  }
+
+  const approvalStatus = resolved.action === 'approve' ? 'approved' : 'rejected';
+  const updated = db.update(resolved.jobId, {
+    approvalStatus,
+    status: approvalStatus === 'approved' ? 'approved' : 'rejected',
+  });
+  onLog?.(
+    `[pipeline] job=${resolved.jobId} approval=${approvalStatus}`
+  );
+  return { ok: true, job: updated, action: resolved.action };
+}
+
+/**
+ * Playwright form submit AFTER Telegram approval. Enforces delay + failure alert.
+ */
+export async function submitApprovedJob({
+  configPath,
+  jobId,
+  profilePath,
+  cvPath,
+  coverNote,
+  dryRun = false,
+  skipDelay = false,
+  llmGenerate,
+  browserFactory,
+  telegramFetch,
+  onLog,
+} = {}) {
+  const jobsConfig = loadJobsConfig(configPath);
+  const db = openJobDb(jobsConfig.storage.jobsDbPath);
+  const job = db.get(jobId);
+  if (!job) {
+    const err = new Error(`Job not found: ${jobId}`);
+    err.code = 'JOB_NOT_FOUND';
+    throw err;
+  }
+
+  if (
+    jobsConfig.safety.neverSubmitWithoutTelegramApproval &&
+    job.approvalStatus !== 'approved'
+  ) {
+    const err = new Error(
+      `Refusing submit: job ${jobId} is not Telegram-approved (status=${job.approvalStatus})`
+    );
+    err.code = 'SUBMIT_NOT_APPROVED';
+    throw err;
+  }
+
+  if (jobsConfig.submission.neverWhatsappDmOrReply === false) {
+    const err = new Error('Safety: WhatsApp DM/reply submit is forbidden');
+    err.code = 'WA_SUBMIT_FORBIDDEN';
+    throw err;
+  }
+
+  const formUrl = job.formUrl || job.contacts?.urls?.[0];
+  if (!formUrl) {
+    const err = new Error(
+      'No form URL on job — Playwright forms only (no WhatsApp DM/reply)'
+    );
+    err.code = 'SUBMIT_NO_FORM_URL';
+    throw err;
+  }
+
+  const profileCandidates = [
+    profilePath,
+    jobsConfig.profile.path,
+    appConfig.cvProfilePath,
+    appConfig.cvFixtureProfilePath,
+  ]
+    .map((p) => (p ? String(p).trim() : ''))
+    .filter(Boolean);
+  const resolvedProfilePath =
+    profileCandidates.find((p) => fs.existsSync(p)) || appConfig.cvFixtureProfilePath;
+  const profile = loadCvProfile(resolvedProfilePath);
+
+  const cvCandidates = [
+    cvPath,
+    jobsConfig.profile.cvPath,
+    path.join(appConfig.root, 'assets', 'cv.pdf'),
+    profile.cvPath
+      ? path.isAbsolute(profile.cvPath)
+        ? profile.cvPath
+        : path.join(profile._profileDir, profile.cvPath)
+      : null,
+  ]
+    .map((p) => (p ? path.resolve(String(p).trim()) : ''))
+    .filter(Boolean);
+  const cvFinal = cvCandidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
+  if (!cvFinal) {
+    const err = new Error('CV file not found (expected assets/cv.pdf)');
+    err.code = 'CV_NOT_FOUND';
+    throw err;
+  }
+
+  const cover = await buildCoverLetter({
+    profile,
+    jobText: job.text,
+    coverNote,
+    useLlm: jobsConfig.submission.llmCoverLetter,
+    llmGenerate,
+  });
+
+  if (
+    !skipDelay &&
+    jobsConfig.submission.delayBetweenSubmissionsMs > 0 &&
+    !dryRun
+  ) {
+    const delay = jobsConfig.submission.delayBetweenSubmissionsMs;
+    onLog?.(`[pipeline] delaying ${delay}ms before Playwright submit`);
+    await sleep(delay);
+  }
+
+  const telegram = createTelegramClient({
+    botToken: jobsConfig.telegram.botToken,
+    chatId: jobsConfig.telegram.chatId,
+    fetchImpl: telegramFetch,
+  });
+
+  try {
+    const result = await submitJobFormWithPlaywright({
+      formUrl,
+      profile,
+      cvPath: cvFinal,
+      coverLetter: cover.text,
+      approved: true,
+      dryRun,
+      browserFactory,
+    });
+
+    const applicationId = randomUUID();
+    const appDir = jobsConfig.storage.applicationsDir;
+    fs.mkdirSync(appDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const jsonPath = path.join(appDir, `${stamp}_${applicationId.slice(0, 8)}.json`);
+    const record = {
+      id: applicationId,
+      jobId: job.id,
+      status: dryRun ? 'dry_run_submitted' : 'submitted',
+      channel: 'playwright_forms_only',
+      coverSource: cover.source,
+      coverLetter: cover.text,
+      formUrl,
+      result,
+      createdAt: new Date().toISOString(),
+      whatsappSend: false,
+    };
+    fs.writeFileSync(jsonPath, JSON.stringify(record, null, 2), 'utf8');
+
+    const updated = db.update(job.id, {
+      status: record.status,
+      submittedAt: record.createdAt,
+      submitResult: { ok: true, applicationId, jsonPath },
+    });
+
+    onLog?.(`[pipeline] submitted job=${job.id} via Playwright form`);
+    return { ok: true, job: updated, application: record, files: { json: jsonPath } };
+  } catch (err) {
+    db.update(job.id, {
+      status: 'submit_failed',
+      submitResult: { ok: false, error: err.message, code: err.code },
+    });
+    if (jobsConfig.submission.notifyTelegramOnFailure) {
+      await telegram
+        .sendFailureAlert(job, err, {
+          dryRun: dryRun || !telegram.configured,
+        })
+        .catch((e) => onLog?.(`[pipeline] telegram failure alert error: ${e.message}`));
+    }
+    throw err;
+  }
+}
+
+export { loadJobsConfig, openJobDb };

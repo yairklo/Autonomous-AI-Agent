@@ -27,6 +27,10 @@
     "multer": "^2.2.0",
     "uuid": "^11.1.0"
   },
+  "optionalDependencies": {
+    "playwright": "^1.54.1",
+    "whatsapp-web.js": "^1.31.0"
+  },
   "devDependencies": {
     "cross-env": "^7.0.3"
   }

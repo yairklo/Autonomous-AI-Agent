@@ -1,0 +1,39 @@
+{
+  "whatsapp": {
+    "groups": [
+      "Jobs Israel",
+      "Full Stack Israel",
+      "Backend Jobs IL"
+    ],
+    "scanMode": "realtime",
+    "textOnly": true,
+    "neverSendMessages": true
+  },
+  "roles": ["Full Stack", "Backend", "פול סטאק", "בקאנד", "Backend Engineer", "Full-Stack"],
+  "telegram": {
+    "enabled": true,
+    "botTokenEnv": "TELEGRAM_BOT_TOKEN",
+    "chatIdEnv": "TELEGRAM_CHAT_ID",
+    "requireApproval": true
+  },
+  "submission": {
+    "channel": "playwright_forms_only",
+    "neverWhatsappDmOrReply": true,
+    "delayBetweenSubmissionsMs": 45000,
+    "llmCoverLetter": true,
+    "notifyTelegramOnFailure": true
+  },
+  "profile": {
+    "path": "data/cv-profile.json",
+    "cvPath": "assets/cv.pdf"
+  },
+  "storage": {
+    "localOnly": true,
+    "jobsDbPath": "data/jobs-db.json",
+    "applicationsDir": "data/cv-applications"
+  },
+  "safety": {
+    "neverSendWhatsappGroupMessages": true,
+    "neverSubmitWithoutTelegramApproval": true
+  }
+}

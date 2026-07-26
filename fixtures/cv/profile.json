@@ -2,12 +2,13 @@
   "name": "Demo Candidate",
   "email": "demo.candidate@example.com",
   "phone": "+972-50-000-0000",
+  "linkedin": "https://www.linkedin.com/in/demo-candidate",
+  "github": "https://github.com/demo-candidate",
   "targetRoles": [
     "Full Stack",
-    "Backend",
-    "DevOps"
+    "Backend"
   ],
-  "cvPath": "Demo-CV.txt",
+  "cvPath": "../../assets/cv.pdf",
   "coverTemplateHe": "שלום,\n\nראיתי את המשרה ומצורפים קורות החיים שלי.\nאשמח להמשיך.\n\n{name}",
   "coverTemplateEn": "Hello,\n\nI saw the role and am attaching my CV.\nHappy to continue.\n\n{name}"
 }

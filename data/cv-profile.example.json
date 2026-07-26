@@ -2,11 +2,13 @@
   "name": "Your Name",
   "email": "you@example.com",
   "phone": "+972-50-000-0000",
+  "linkedin": "https://www.linkedin.com/in/your-profile",
+  "github": "https://github.com/your-user",
   "targetRoles": [
     "Full Stack",
     "Backend"
   ],
-  "cvPath": "C:/path/to/your-cv.pdf",
+  "cvPath": "assets/cv.pdf",
   "coverTemplateHe": "שלום,\n\nראיתי את המשרה ומצורפים קורות החיים שלי.\nאשמח להמשיך.\n\n{name}",
   "coverTemplateEn": "Hello,\n\nI saw the role and am attaching my CV.\nHappy to continue.\n\n{name}"
 }
