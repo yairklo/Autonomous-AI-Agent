@@ -25,3 +25,25 @@
 **Decision:** `scripts/test-task-dispatch-e2e.js` refuses to start when port 8787 is already listening. Prefer `npm test` (unit tests, including MCP execute stub) when a live voice-agent is up.  
 **Why:** Nesting dispatch against a parent SSE chat kills the outer stream.  
 **Date:** 2026-07-24
+
+## D15 — Grill-Me Mode default for interactive chat
+**Decision:** Interactive conversations use Grill-Me Mode by default (system prompt). Server auto-dispatch via `dispatch_coding_task` runs only when the user explicitly skips Grill-Me or confirms dispatch (`skip Grill-Me Mode` / `דלג על Grill-Me` / `שגר ל-Cursor`). Ordinary coding utterances go to Claude for clarifying questions. Terminal UX: `npm run chat` (`scripts/interactive-chat.js`).  
+**Why:** Scope, requirements, profile structure, and approval workflows must be refined before headless Cursor work starts.  
+**Date:** 2026-07-26
+
+## D16 — Conversational Grill-Me never auto-fires MCP / Cursor
+**Decision:** Utterances like "שאל אותי", "Grill-Me Pack", or "ask me questions" are classified as interactive conversation (`isInteractiveConversationRequest`). They skip auto `dispatch_coding_task`, `scan_whatsapp_jobs`, and `submit_whatsapp_job_cv` so Claude interviews the user in-chat; Cursor/tools run only after explicit end-of-dialogue confirmation.  
+**Why:** Sending Grill-Me questioning to headless Cursor fails — Cursor cannot talk back to the user.  
+**Date:** 2026-07-26
+
+## D16 — WhatsApp job scan via local chat exports (MCP)
+**Decision:** Job scanning is exposed as MCP tool `scan_whatsapp_jobs` (`server/mcp-tools.js` + `server/whatsapp-job-scanner.js`). v1 reads WhatsApp **Export chat** `.txt` files from `data/whatsapp-exports` (or an explicit `exportPath`); no live WhatsApp Web/Baileys client. Hebrew/English keyword scoring finds posts; optional `roles` boost relevance. Chat orchestration auto-invokes the tool when the user asks to scan WhatsApp groups for jobs (`detectWhatsappJobScan`). Empty export dir falls back to `fixtures/whatsapp` for demos/tests. Job results include extracted `contacts` (email/phone/URL).  
+**Why:** Local exports keep privacy and avoid QR/session complexity while still giving the agent a real, testable scan tool.  
+**Env:** `WHATSAPP_EXPORTS_DIR`, `AUTO_SCAN_WHATSAPP_JOBS`  
+**Date:** 2026-07-26
+
+## D17 — CV submit drafts for WhatsApp jobs (MCP)
+**Decision:** CV applications are exposed as MCP tool `submit_whatsapp_job_cv` (`server/cv-submitter.js`). v1 writes local draft packages under `data/cv-applications` (JSON + cover note + CV copy) and a `mailto:` URI when an email is found. Live WhatsApp send is out of scope. Candidate data comes from `CV_PROFILE_PATH` (falls back to `fixtures/cv/profile.json`). Orchestration auto-invokes on submit intent (`detectWhatsappCvSubmit`); if no job text/email is given, it resolves the top scanned job with an email. `confirm=true` only marks `ready_to_send` after explicit user approval.  
+**Why:** Completes scan→propose→approve→draft without requiring a live WA client or silent outbound messages.  
+**Env:** `CV_PROFILE_PATH`, `CV_APPLICATIONS_DIR`, `AUTO_SUBMIT_WHATSAPP_CV`  
+**Date:** 2026-07-26

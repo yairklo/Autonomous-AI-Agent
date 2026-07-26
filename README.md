@@ -15,6 +15,14 @@ npm install
 npm start
 ```
 
+### Interactive terminal chat (Grill-Me Mode)
+
+```bash
+npm run chat
+```
+
+Line-by-line Claude Orchestrator in the terminal. Coding tasks stay in **Grill-Me Mode** (clarifying questions) until you confirm with e.g. `skip Grill-Me Mode and dispatch` / `שגר ל-Cursor`, which invokes `dispatch_coding_task`. Use `npm run chat:mock` without Claude auth. If the server is not already up, `chat` starts it for you.
+
 Open on your phone (same LAN or Tailscale):
 
 `http://<your-pc-ip>:8787`
@@ -39,6 +47,7 @@ npm run smoke
 | STT | Client Web Speech API (primary); optional Whisper via `WHISPER_BIN` |
 | TTS | Client `speechSynthesis` (primary); optional `POST /api/tts` |
 | Client | Installable PWA with Push-to-Talk |
+| MCP tools | `dispatch_coding_task`, `scan_whatsapp_jobs`, `submit_whatsapp_job_cv` |
 
 See [DECISIONS.md](./DECISIONS.md) for why.
 
@@ -85,6 +94,25 @@ Returns `audio/wav` when a local engine works (Windows SAPI / macOS `say` / espe
 | `WHISPER_MODEL` | — | Model path for whisper.cpp |
 | `VOICE_SYSTEM_PROMPT` | (built-in) | Override voice persona |
 | `CLAUDE_TIMEOUT_MS` | `300000` | Per-turn timeout |
+| `WHATSAPP_EXPORTS_DIR` | `data/whatsapp-exports` | WhatsApp `.txt` chat exports for `scan_whatsapp_jobs` |
+| `AUTO_SCAN_WHATSAPP_JOBS` | `1` | Auto-invoke `scan_whatsapp_jobs` on scan intent |
+| `CV_PROFILE_PATH` | `data/cv-profile.json` | Candidate profile JSON (falls back to `fixtures/cv`) |
+| `CV_APPLICATIONS_DIR` | `data/cv-applications` | Draft CV application packages |
+| `AUTO_SUBMIT_WHATSAPP_CV` | `1` | Auto-invoke `submit_whatsapp_job_cv` on apply intent |
+
+### WhatsApp job scanning
+
+1. In WhatsApp, open a jobs group → **Export chat** → **Without media**.
+2. Place the `.txt` file in `data/whatsapp-exports/` (or pass `exportPath`).
+3. Ask the agent: `תסרוק משרות בקבוצות WhatsApp` / `Scan WhatsApp groups for jobs`.
+
+The MCP tool `scan_whatsapp_jobs` scores Hebrew/English hiring signals and returns matches (with emails/phones/URLs when present). If the exports folder is empty, a bundled fixture is used for demos.
+
+### CV application drafts
+
+1. Copy `data/cv-profile.example.json` → `data/cv-profile.json` and set your name, email, and `cvPath`.
+2. After a scan (or with a quoted job / email), ask: `הגש קו״ח` / `Submit CV to jobs@example.com`.
+3. The MCP tool `submit_whatsapp_job_cv` writes a draft under `data/cv-applications/` and a `mailto:` link. It never sends live WhatsApp messages; say `אשר הגשה` / `confirm` to mark `ready_to_send`.
 
 Copy [.env.example](./.env.example) as a checklist (export vars in your shell; no dotenv required).
 

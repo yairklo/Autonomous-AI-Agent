@@ -9,10 +9,16 @@ import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
-import { detectCodingDispatch } from './task-router.js';
+import {
+  detectCodingDispatch,
+  detectWhatsappCvSubmit,
+  detectWhatsappJobScan,
+  isInteractiveConversationRequest,
+} from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
+fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
 
 const app = express();
 const claude = new ClaudeSessionManager();
@@ -50,7 +56,11 @@ app.get('/api/health', (_req, res) => {
     whisper: whisperConfigured(),
     serverTts: ttsAvailableHint(),
     autoDispatchCoding: config.autoDispatchCoding,
+    autoScanWhatsappJobs: config.autoScanWhatsappJobs,
+    autoSubmitWhatsappCv: config.autoSubmitWhatsappCv,
     mcpTools: listMcpTools().map((t) => t.name),
+    whatsappExportsDir: config.whatsappExportsDir,
+    cvApplicationsDir: config.cvApplicationsDir,
     time: new Date().toISOString(),
   });
 });
@@ -92,10 +102,21 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
-  // Claude orchestration layer: coding tasks → dispatch_coding_task MCP tool
-  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  // "שאל אותי" / Grill-Me Pack → Claude talks here; no Cursor / MCP auto-fire.
+  const conversational = isInteractiveConversationRequest(text);
+  if (conversational) {
+    console.log(
+      '[API CHAT] interactive Grill-Me conversation — skipping auto MCP (Claude must talk to the user)'
+    );
+  }
+
+  // Explicit skip-Grill-Me / dispatch confirm → dispatch_coding_task MCP tool.
+  // Ordinary coding requests fall through to Claude (Grill-Me Mode).
+  const dispatch =
+    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
+      await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
     } catch (err) {
       console.error('[API CHAT] MCP dispatch_coding_task error:', err);
@@ -103,6 +124,40 @@ app.post('/api/chat', async (req, res) => {
     }
     res.end();
     console.log('[API CHAT] MCP dispatch_coding_task request finished');
+    return;
+  }
+
+  // WhatsApp group job scan → scan_whatsapp_jobs MCP tool.
+  const waScan =
+    !conversational && config.autoScanWhatsappJobs
+      ? detectWhatsappJobScan(text)
+      : null;
+  if (waScan) {
+    try {
+      await streamWhatsappJobScanViaMcp(res, clientId, waScan, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] MCP scan_whatsapp_jobs error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP scan_whatsapp_jobs request finished');
+    return;
+  }
+
+  // CV application draft → submit_whatsapp_job_cv MCP tool.
+  const waCv =
+    !conversational && config.autoSubmitWhatsappCv
+      ? detectWhatsappCvSubmit(text)
+      : null;
+  if (waCv) {
+    try {
+      await streamWhatsappCvSubmitViaMcp(res, clientId, waCv, ac.signal);
+    } catch (err) {
+      console.error('[API CHAT] MCP submit_whatsapp_job_cv error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP submit_whatsapp_job_cv request finished');
     return;
   }
 
@@ -140,9 +195,13 @@ app.post('/api/chat/sync', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'text is required' });
 
-  const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+  const conversational = isInteractiveConversationRequest(text);
+
+  const dispatch =
+    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
   if (dispatch) {
     try {
+      await prepareDispatchTask(clientId, dispatch);
       const logs = [];
       await executeMcpTool('dispatch_coding_task', dispatch.mcpArgs, {
         onLog: (line) => {
@@ -156,6 +215,67 @@ app.post('/api/chat/sync', async (req, res) => {
         text: `Dispatched coding task via MCP tool dispatch_coding_task for ${dispatch.project}.`,
         dispatched: true,
         mcpTool: 'dispatch_coding_task',
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
+  const waScan =
+    !conversational && config.autoScanWhatsappJobs
+      ? detectWhatsappJobScan(text)
+      : null;
+  if (waScan) {
+    try {
+      const logs = [];
+      const mcpResult = await executeMcpTool('scan_whatsapp_jobs', waScan.mcpArgs, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const summary = formatWhatsappJobScanSummary(mcpResult);
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: summary,
+        mcpTool: 'scan_whatsapp_jobs',
+        jobCount: mcpResult.jobCount,
+        jobs: mcpResult.jobs,
+        logs: logs.slice(-20),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || String(err), clientId });
+    }
+  }
+
+  const waCv =
+    !conversational && config.autoSubmitWhatsappCv
+      ? detectWhatsappCvSubmit(text)
+      : null;
+  if (waCv) {
+    try {
+      const logs = [];
+      const mcpArgs = await resolveCvSubmitArgs(waCv, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const mcpResult = await executeMcpTool('submit_whatsapp_job_cv', mcpArgs, {
+        onLog: (line) => {
+          console.log(line);
+          logs.push(line);
+        },
+      });
+      const summary = formatWhatsappCvSubmitSummary(mcpResult);
+      return res.json({
+        clientId,
+        sessionId: null,
+        text: summary,
+        mcpTool: 'submit_whatsapp_job_cv',
+        application: mcpResult.application,
         logs: logs.slice(-20),
       });
     } catch (err) {
@@ -225,8 +345,13 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       if (!res.writableEnded) ac.abort();
     });
 
-    const dispatch = config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    const conversational = isInteractiveConversationRequest(text);
+    const dispatch =
+      !conversational && config.autoDispatchCoding
+        ? detectCodingDispatch(text)
+        : null;
     if (dispatch) {
+      await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
       return res.end();
     }
@@ -317,13 +442,49 @@ function sendSse(res, event, data) {
 }
 
 /**
+ * After Grill-Me confirmation, ask Claude for the refined final task prompt
+ * when the user's message is only a short "dispatch / skip Grill-Me" confirm.
+ */
+async function prepareDispatchTask(clientId, dispatch, signal) {
+  if (!dispatch?.shortConfirmation) return dispatch;
+  const session = claude.getSession(clientId);
+  if (!session?.sessionId) return dispatch;
+
+  const refinePrompt =
+    'The user confirmed dispatch after Grill-Me Mode. ' +
+    'Based on our refined requirements, output ONLY the final taskDescription ' +
+    'string to pass to dispatch_coding_task (complete, self-contained, ready for ' +
+    'Cursor Agent CLI). No preamble, no markdown fences, no questions.';
+
+  let refined = '';
+  for await (const event of claude.ask(clientId, refinePrompt, { signal })) {
+    if (event.type === 'text') refined += event.text;
+    if (event.type === 'done') refined = event.result || refined;
+    if (event.type === 'error') {
+      throw new Error(event.error || 'Failed to refine Grill-Me task for dispatch');
+    }
+  }
+
+  refined = String(refined || '').trim();
+  if (refined) {
+    dispatch.task = refined;
+    dispatch.mcpArgs = {
+      ...dispatch.mcpArgs,
+      taskDescription: refined,
+    };
+  }
+  return dispatch;
+}
+
+/**
  * Orchestration path: Claude has no file/shell tools for coding — coding work
  * goes solely through the dispatch_coding_task MCP tool → dispatch-task.js → Cursor CLI.
+ * Triggered only after skip-Grill-Me / explicit dispatch confirmation.
  */
 async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
   const toolName = dispatch.mcpTool || 'dispatch_coding_task';
   const intro =
-    `Got it — skipping Grill-Me and calling MCP tool ${toolName} ` +
+    `Got it — Grill-Me complete (or skipped). Calling MCP tool ${toolName} ` +
     `to dispatch this coding task to Cursor Agent CLI for ${dispatch.project}. `;
   sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
   sendSse(res, 'tool_call', {
@@ -367,15 +528,196 @@ async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
   });
 }
 
+function formatWhatsappJobScanSummary(mcpResult) {
+  const jobs = mcpResult.jobs || [];
+  const header =
+    `Scanned WhatsApp exports (${mcpResult.scannedFiles || 0} file(s), ` +
+    `${mcpResult.messagesScanned || 0} messages) via scan_whatsapp_jobs. ` +
+    `Found ${mcpResult.jobCount ?? jobs.length} job post(s)` +
+    (mcpResult.usedFixture ? ' (demo fixture).' : '.');
+
+  if (!jobs.length) {
+    return (
+      `${header} Drop WhatsApp "Export chat" .txt files into ` +
+      `${config.whatsappExportsDir} and ask again.`
+    );
+  }
+
+  const lines = jobs.slice(0, 8).map((j, i) => {
+    const when = j.timestamp ? ` @ ${j.timestamp}` : '';
+    const contact =
+      j.contacts?.emails?.[0] || j.contacts?.phones?.[0] || j.contacts?.urls?.[0];
+    const contactBit = contact ? ` → ${contact}` : '';
+    return `${i + 1}. [${j.groupName}] ${j.author}${when}${contactBit}: ${j.snippet}`;
+  });
+  return `${header}\n${lines.join('\n')}\nSay "הגש קו״ח" / "submit CV" to draft an application for a match.`;
+}
+
+async function resolveCvSubmitArgs(waCv, { onLog } = {}) {
+  const args = { ...(waCv.mcpArgs || {}) };
+  if (!waCv.resolveFromScan || args.jobText || args.recipientEmail) {
+    return args;
+  }
+
+  onLog?.('[mcp] submit_whatsapp_job_cv resolving job via scan_whatsapp_jobs…');
+  const scan = await executeMcpTool(
+    'scan_whatsapp_jobs',
+    { exportPath: config.whatsappExportsDir, limit: 20 },
+    { onLog }
+  );
+  const withEmail = (scan.jobs || []).find((j) => j.contacts?.emails?.length);
+  const pick = withEmail || (scan.jobs || [])[0];
+  if (!pick) {
+    const err = new Error(
+      'No WhatsApp jobs found to apply to. Scan exports first or pass jobText/recipientEmail.'
+    );
+    err.code = 'CV_NO_JOB';
+    throw err;
+  }
+  return {
+    ...args,
+    jobId: pick.id,
+    jobText: pick.text,
+    groupName: pick.groupName,
+    author: pick.author,
+    recipientEmail: args.recipientEmail || pick.contacts?.emails?.[0],
+  };
+}
+
+function formatWhatsappCvSubmitSummary(mcpResult) {
+  const app = mcpResult.application || {};
+  const lines = [
+    `Drafted CV application via submit_whatsapp_job_cv (${app.status || 'unknown'}).`,
+    app.job?.groupName ? `Group: ${app.job.groupName}` : null,
+    app.contacts?.emails?.[0]
+      ? `To: ${app.contacts.emails[0]}`
+      : 'To: (no email — needs contact)',
+    app.mailto ? 'mailto: ready' : null,
+    app.note || null,
+    mcpResult.files?.json ? `Saved: ${mcpResult.files.json}` : null,
+  ].filter(Boolean);
+  return lines.join(' ');
+}
+
+/**
+ * Orchestration path for CV drafts via submit_whatsapp_job_cv.
+ */
+async function streamWhatsappCvSubmitViaMcp(res, clientId, waCv, signal) {
+  const toolName = waCv.mcpTool || 'submit_whatsapp_job_cv';
+  const intro = `Preparing CV application draft via MCP tool ${toolName}… `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  const mcpArgs = await resolveCvSubmitArgs(waCv, {
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: {
+      ...mcpArgs,
+      jobText: mcpArgs.jobText
+        ? `${String(mcpArgs.jobText).slice(0, 120)}…`
+        : undefined,
+    },
+  });
+
+  const mcpResult = await executeMcpTool(toolName, mcpArgs, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    status: mcpResult.application?.status,
+    applicationId: mcpResult.application?.id,
+  });
+
+  const summary = `\n${formatWhatsappCvSubmitSummary(mcpResult)}`;
+  full += summary;
+  sendSse(res, 'token', { text: summary });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    mcpTool: toolName,
+    application: mcpResult.application,
+  });
+}
+
+/**
+ * Orchestration path for WhatsApp job scanning via scan_whatsapp_jobs.
+ */
+async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
+  const toolName = waScan.mcpTool || 'scan_whatsapp_jobs';
+  const intro = `Scanning WhatsApp group exports via MCP tool ${toolName}… `;
+  sendSse(res, 'status', { stage: 'mcp_tool', tool: toolName });
+  sendSse(res, 'tool_call', {
+    tool: toolName,
+    arguments: waScan.mcpArgs,
+  });
+  sendSse(res, 'token', { text: intro });
+
+  let full = intro;
+  const mcpResult = await executeMcpTool(toolName, waScan.mcpArgs, {
+    signal,
+    onLog: (line) => {
+      console.log(line);
+      if (/\[mcp\]/i.test(line)) {
+        const chunk = `${line}\n`;
+        full += chunk;
+        sendSse(res, 'token', { text: chunk });
+      }
+    },
+  });
+
+  sendSse(res, 'tool_result', {
+    tool: toolName,
+    ok: true,
+    jobCount: mcpResult.jobCount,
+    exportPath: mcpResult.exportPath,
+  });
+
+  const summary = `\n${formatWhatsappJobScanSummary(mcpResult)}`;
+  full += summary;
+  sendSse(res, 'token', { text: summary });
+  sendSse(res, 'done', {
+    result: full,
+    clientId,
+    mcpTool: toolName,
+    jobCount: mcpResult.jobCount,
+    jobs: mcpResult.jobs,
+  });
+}
+
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
+  console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
+  console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
   console.log(
     `[voice-agent] mcpTools=${listMcpTools()
       .map((t) => t.name)
       .join(',')}`
   );
+  console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
+  console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
 });
 
