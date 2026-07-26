@@ -22,6 +22,7 @@ import {
   detectWhatsappCvSubmit,
   detectWhatsappJobScan,
   isInteractiveConversationRequest,
+  wantsExplicitDispatch,
 } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 
@@ -68,6 +69,8 @@ app.get('/api/health', (_req, res) => {
     autoSubmitWhatsappCv: config.autoSubmitWhatsappCv,
     // Chat clients require this. Missing ⇒ stale server that still auto-dispatches "Grill-Me Pack".
     grillMeConversation: true,
+    // Interactive CLI sends interactiveChat:true — auto dispatch off unless explicit trigger.
+    interactiveChatSafe: true,
     grillMePacks: listGrillMePacks().map((p) => p.id),
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
@@ -128,13 +131,20 @@ app.post('/api/session/reset', (req, res) => {
 app.post('/api/chat', async (req, res) => {
   const clientId = String(req.body?.clientId || '').trim() || uuidv4();
   const text = String(req.body?.text || '').trim();
-  console.log(`[API CHAT] received request. clientId=${clientId} text="${text}"`);
+  // npm run chat always sets this — disables auto MCP except explicit dispatch triggers.
+  const interactiveChat =
+    req.body?.interactiveChat === true ||
+    req.body?.interactiveChat === '1' ||
+    String(clientId).startsWith('terminal-');
+  console.log(
+    `[API CHAT] received request. clientId=${clientId} interactiveChat=${interactiveChat} text="${text}"`
+  );
   if (!text) {
     return res.status(400).json({ error: 'text is required' });
   }
 
   initSse(res);
-  sendSse(res, 'meta', { clientId });
+  sendSse(res, 'meta', { clientId, interactiveChat });
 
   const ac = new AbortController();
   res.on('close', () => {
@@ -144,18 +154,20 @@ app.post('/api/chat', async (req, res) => {
     }
   });
 
-  // "שאל אותי" / Grill-Me Pack → Claude talks here; no Cursor / MCP auto-fire.
+  // "שאל אותי" / Grill-Me Pack → conversation here; no Cursor / MCP auto-fire.
   const conversational = isInteractiveConversationRequest(text);
-  if (conversational) {
+  const explicitDispatch = wantsExplicitDispatch(text);
+  if (conversational || (interactiveChat && !explicitDispatch)) {
     console.log(
-      '[API CHAT] interactive Grill-Me conversation — skipping auto MCP (Claude must talk to the user)'
+      '[API CHAT] Grill-Me / interactive chat — conversation only (no auto MCP)'
     );
   }
 
-  // Explicit skip-Grill-Me / dispatch confirm → dispatch_coding_task MCP tool.
-  // Ordinary coding requests fall through to Claude (Grill-Me Mode).
+  // dispatch_coding_task ONLY on explicit trigger phrases (never for plain conversation).
   const dispatch =
-    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    config.autoDispatchCoding && explicitDispatch && !conversational
+      ? detectCodingDispatch(text, { interactiveChat })
+      : null;
   if (dispatch) {
     try {
       await prepareDispatchTask(clientId, dispatch, ac.signal);
@@ -169,9 +181,11 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
-  // WhatsApp group job scan → scan_whatsapp_jobs MCP tool.
+  // Interactive CLI: never auto-scan / auto-CV — stay in conversation / Grill-Me pack.
   const waScan =
-    !conversational && config.autoScanWhatsappJobs
+    !interactiveChat &&
+    !conversational &&
+    config.autoScanWhatsappJobs
       ? detectWhatsappJobScan(text)
       : null;
   if (waScan) {
@@ -186,9 +200,10 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
-  // CV application draft → submit_whatsapp_job_cv MCP tool.
   const waCv =
-    !conversational && config.autoSubmitWhatsappCv
+    !interactiveChat &&
+    !conversational &&
+    config.autoSubmitWhatsappCv
       ? detectWhatsappCvSubmit(text)
       : null;
   if (waCv) {
@@ -200,6 +215,20 @@ app.post('/api/chat', async (req, res) => {
     }
     res.end();
     console.log('[API CHAT] MCP submit_whatsapp_job_cv request finished');
+    return;
+  }
+
+  // Grill-Me Pack request → serve the domain questionnaire here (not Cursor).
+  const packId = detectGrillMePack(text);
+  if (packId && (conversational || interactiveChat)) {
+    try {
+      await streamGrillMePack(res, clientId, text, packId);
+    } catch (err) {
+      console.error('[API CHAT] Grill-Me pack error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log(`[API CHAT] Grill-Me pack ${packId} served`);
     return;
   }
 
@@ -237,10 +266,17 @@ app.post('/api/chat/sync', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'text is required' });
 
+  const interactiveChat =
+    req.body?.interactiveChat === true ||
+    req.body?.interactiveChat === '1' ||
+    String(clientId).startsWith('terminal-');
   const conversational = isInteractiveConversationRequest(text);
+  const explicitDispatch = wantsExplicitDispatch(text);
 
   const dispatch =
-    !conversational && config.autoDispatchCoding ? detectCodingDispatch(text) : null;
+    config.autoDispatchCoding && explicitDispatch && !conversational
+      ? detectCodingDispatch(text, { interactiveChat })
+      : null;
   if (dispatch) {
     try {
       await prepareDispatchTask(clientId, dispatch);
@@ -325,6 +361,18 @@ app.post('/api/chat/sync', async (req, res) => {
     }
   }
 
+  const packId = conversational ? detectGrillMePack(text) : null;
+  if (packId) {
+    const locale = /[א-ת]/.test(text) ? 'he' : 'en';
+    const reply = formatGrillMeReply(packId, { locale, openingLimit: 5 });
+    return res.json({
+      clientId,
+      sessionId: null,
+      text: reply,
+      grillMePack: packId,
+    });
+  }
+
   let full = '';
   let sessionId = null;
   try {
@@ -395,6 +443,12 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
     if (dispatch) {
       await prepareDispatchTask(clientId, dispatch, ac.signal);
       await streamDispatchViaMcp(res, clientId, dispatch, ac.signal);
+      return res.end();
+    }
+
+    const packId = conversational ? detectGrillMePack(text) : null;
+    if (packId) {
+      await streamGrillMePack(res, clientId, text, packId);
       return res.end();
     }
 
@@ -516,6 +570,21 @@ async function prepareDispatchTask(clientId, dispatch, signal) {
     };
   }
   return dispatch;
+}
+
+/**
+ * Serve a domain Grill-Me Pack questionnaire in-chat (never dispatch to Cursor).
+ */
+async function streamGrillMePack(res, clientId, text, packId) {
+  const locale = /[א-ת]/.test(text) ? 'he' : 'en';
+  const reply = formatGrillMeReply(packId, { locale, openingLimit: 5 });
+  sendSse(res, 'status', { stage: 'grill_me_pack', packId });
+  sendSse(res, 'token', { text: reply });
+  sendSse(res, 'done', {
+    result: reply,
+    clientId,
+    grillMePack: packId,
+  });
 }
 
 /**

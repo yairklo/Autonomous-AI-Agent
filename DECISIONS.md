@@ -41,6 +41,11 @@
 **Why:** An old process on :8787 still matched bare "Grill-Me" and dispatched to Cursor while the updated client thought it was fine.  
 **Date:** 2026-07-26
 
+## D18 — WhatsApp jobs/CV Grill-Me pack (questionnaire bank)
+**Decision:** Domain clarifying questions for WhatsApp job-scan + CV-submit live in `server/grill-me-packs.js` (pack id `whatsapp-jobs-cv`). Interactive "שאל אותי / Grill-Me Pack" requests serve `formatGrillMeReply` via `/api/chat` (and mock Claude); `GET /api/grill-me/packs/:packId` exposes reply/spec/json. System prompt steers live Claude with the same domain themes.  
+**Why:** Deterministic questionnaire for scope, WA access, matching, profile, submit, approval, and privacy — without dispatching interview work to headless Cursor.  
+**Date:** 2026-07-26
+
 ## D16 — WhatsApp job scan via local chat exports (MCP)
 **Decision:** Job scanning is exposed as MCP tool `scan_whatsapp_jobs` (`server/mcp-tools.js` + `server/whatsapp-job-scanner.js`). v1 reads WhatsApp **Export chat** `.txt` files from `data/whatsapp-exports` (or an explicit `exportPath`); no live WhatsApp Web/Baileys client. Hebrew/English keyword scoring finds posts; optional `roles` boost relevance. Chat orchestration auto-invokes the tool when the user asks to scan WhatsApp groups for jobs (`detectWhatsappJobScan`). Empty export dir falls back to `fixtures/whatsapp` for demos/tests. Job results include extracted `contacts` (email/phone/URL).  
 **Why:** Local exports keep privacy and avoid QR/session complexity while still giving the agent a real, testable scan tool.  
@@ -51,4 +56,10 @@
 **Decision:** CV applications are exposed as MCP tool `submit_whatsapp_job_cv` (`server/cv-submitter.js`). v1 writes local draft packages under `data/cv-applications` (JSON + cover note + CV copy) and a `mailto:` URI when an email is found. Live WhatsApp send is out of scope. Candidate data comes from `CV_PROFILE_PATH` (falls back to `fixtures/cv/profile.json`). Orchestration auto-invokes on submit intent (`detectWhatsappCvSubmit`); if no job text/email is given, it resolves the top scanned job with an email. `confirm=true` only marks `ready_to_send` after explicit user approval.  
 **Why:** Completes scan→propose→approve→draft without requiring a live WA client or silent outbound messages.  
 **Env:** `CV_PROFILE_PATH`, `CV_APPLICATIONS_DIR`, `AUTO_SUBMIT_WHATSAPP_CV`  
+**Date:** 2026-07-26
+
+## D19 — WhatsApp jobs pipeline via local MCP (whatsapp-web.js + Telegram + Playwright)
+**Decision:** Full Grill-Me answers are implemented as local MCP tools in the agent (`server/mcp-tools.js` + `server/jobs/*`). Groups come only from root `config.json`. Realtime listen uses `whatsapp-web.js` (listen-only; sends hard-blocked). Matching targets Full Stack/Backend HE/EN with local JSON DB dedupe (`data/jobs-db.json`). Telegram Approve/Reject is mandatory before Playwright form submit (`submit_job_form`). No WhatsApp DMs/group replies. Profile: name, email, phone, linkedin, github, `assets/cv.pdf`. Cover letter LLM-adapted with template fallback; delay between submissions; Telegram alert on failure. Storage local only.  
+**Why:** Matches approved architecture option 4 (MCP Tool מקומי המשולב בסוכן) and safety constraints.  
+**Env:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`  
 **Date:** 2026-07-26

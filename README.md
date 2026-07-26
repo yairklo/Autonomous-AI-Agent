@@ -21,7 +21,7 @@ npm start
 npm run chat
 ```
 
-Line-by-line Claude Orchestrator in the terminal. Coding tasks stay in **Grill-Me Mode** (clarifying questions) until you confirm with e.g. `skip Grill-Me Mode and dispatch` / `שגר ל-Cursor`, which invokes `dispatch_coding_task`. Use `npm run chat:mock` without Claude auth. If the server is not already up, `chat` starts it for you.
+Line-by-line Claude Orchestrator in the terminal. Coding tasks stay in **Grill-Me Mode** (clarifying questions) until you confirm with e.g. `skip Grill-Me Mode and dispatch` / `שגר ל-Cursor`, which invokes `dispatch_coding_task`. Asking for the **WhatsApp + CV Grill-Me Pack** (`שאל אותי … Grill-Me Pack`) serves the domain questionnaire in-chat — it does not open Cursor. Use `npm run chat:mock` without Claude auth. If the server is not already up, `chat` starts it for you.
 
 Open on your phone (same LAN or Tailscale):
 
@@ -54,7 +54,13 @@ See [DECISIONS.md](./DECISIONS.md) for why.
 ## API
 
 ### `GET /api/health`
-LAN addresses, mock flag, Whisper availability.
+LAN addresses, mock flag, Whisper availability, Grill-Me pack ids.
+
+### `GET /api/grill-me/packs`
+Lists domain Grill-Me packs (e.g. `whatsapp-jobs-cv`).
+
+### `GET /api/grill-me/packs/:packId`
+Query: `locale=he|en`, `format=json|reply|spec`. Returns the pack JSON, a chat-ready questionnaire (`reply`), or an empty markdown scaffold (`spec`).
 
 ### `POST /api/chat` (SSE)
 ```json

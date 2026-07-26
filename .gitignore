@@ -13,3 +13,6 @@ sessions.json
 data/cv-profile.json
 data/cv-applications/*
 !data/cv-applications/README.md
+data/jobs-db.json
+.wwebjs_auth/
+.wwebjs_cache/

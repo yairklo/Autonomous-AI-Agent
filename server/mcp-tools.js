@@ -2,6 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { submitWhatsappJobCv } from './cv-submitter.js';
+import {
+  resolveJobApproval,
+  scanAndEnqueueJobs,
+  submitApprovedJob,
+} from './jobs/pipeline.js';
+import { startWhatsappJobWatcher } from './jobs/whatsapp-live.js';
+import { loadJobsConfig } from './jobs/jobs-config.js';
 import { resolveDispatchScript, runDispatchTask } from './task-router.js';
 import { scanWhatsappJobs } from './whatsapp-job-scanner.js';
 
@@ -9,8 +16,14 @@ import { scanWhatsappJobs } from './whatsapp-job-scanner.js';
  * Local MCP tool registry for the voice-agent orchestration layer.
  * Coding work is exposed only via dispatch_coding_task — Claude must not
  * edit files or run raw shell commands itself.
- * WhatsApp job scanning is exposed via scan_whatsapp_jobs (local chat exports).
- * CV drafts for matched jobs use submit_whatsapp_job_cv (local packages + mailto).
+ *
+ * WhatsApp jobs pipeline (architecture: local MCP tools in this agent):
+ * - scan_whatsapp_jobs — exports and/or config.json-scoped pipeline + dedupe
+ * - start_whatsapp_job_watcher — realtime whatsapp-web.js (listen-only)
+ * - request_job_telegram_approval — Telegram Approve/Reject
+ * - resolve_job_approval — record Approve/Reject
+ * - submit_job_form — Playwright forms only after approval
+ * - submit_whatsapp_job_cv — local draft package + mailto (legacy/helper)
  */
 
 export const MCP_TOOLS = [
@@ -36,7 +49,7 @@ export const MCP_TOOLS = [
   {
     name: 'scan_whatsapp_jobs',
     description:
-      'Scans local WhatsApp group chat export .txt files for job postings (Hebrew/English). Does not connect to live WhatsApp; use Export chat files.',
+      'Scans WhatsApp jobs (Full Stack/Backend HE/EN). Uses config.json group allow-list + local DB dedupe when pipeline=true; otherwise reads Export chat .txt files. Never sends WhatsApp messages.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -48,7 +61,7 @@ export const MCP_TOOLS = [
         groupNames: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional group name filters (substring match).',
+          description: 'Optional group name filters (substring match). Ignored when pipeline uses config.json allow-list.',
         },
         keywords: {
           type: 'array',
@@ -58,7 +71,7 @@ export const MCP_TOOLS = [
         roles: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Desired roles to boost relevance (e.g. Full Stack, DevOps).',
+          description: 'Desired roles to boost relevance (e.g. Full Stack, Backend).',
         },
         since: {
           type: 'string',
@@ -68,14 +81,103 @@ export const MCP_TOOLS = [
           type: 'number',
           description: 'Max job matches to return (default 50).',
         },
+        pipeline: {
+          type: 'boolean',
+          description:
+            'When true, filter to config.json groups, Full Stack/Backend, dedupe in local DB, and enqueue Telegram approval (dry-run if no bot token).',
+        },
+        notifyTelegram: {
+          type: 'boolean',
+          description: 'With pipeline=true, send Telegram Approve/Reject (default true).',
+        },
+        configPath: {
+          type: 'string',
+          description: 'Path to config.json (default: workspace root config.json).',
+        },
       },
       required: [],
     },
   },
   {
+    name: 'start_whatsapp_job_watcher',
+    description:
+      'Starts realtime whatsapp-web.js listen-only watcher for groups listed in config.json. Never sends WhatsApp messages. Text-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        configPath: {
+          type: 'string',
+          description: 'Path to config.json',
+        },
+        dryRun: {
+          type: 'boolean',
+          description: 'When true, validate config and return without connecting.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'request_job_telegram_approval',
+    description:
+      'Re-scan/enqueue or notify Telegram with Approve/Reject buttons for a job already in the local DB. Mandatory human approval before Playwright submit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        configPath: { type: 'string' },
+        exportPath: { type: 'string' },
+        limit: { type: 'number' },
+        dryRun: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'resolve_job_approval',
+    description:
+      'Records Telegram Approve or Reject for a job id (from callback_data job_approve:<id> / job_reject:<id>).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string' },
+        action: { type: 'string', description: 'approve | reject' },
+        callbackData: {
+          type: 'string',
+          description: 'Raw Telegram callback_data (alternative to jobId+action).',
+        },
+        configPath: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'submit_job_form',
+    description:
+      'Fills an external apply form with Playwright after Telegram Approve. Uses profile (name, email, phone, linkedin, github) + assets/cv.pdf + LLM/template cover letter. Never WhatsApp DM/reply. Alerts Telegram on failure.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Approved job id from local DB' },
+        configPath: { type: 'string' },
+        profilePath: { type: 'string' },
+        cvPath: { type: 'string' },
+        coverNote: { type: 'string' },
+        dryRun: {
+          type: 'boolean',
+          description: 'Validate + record dry run without launching browser',
+        },
+        skipDelay: {
+          type: 'boolean',
+          description: 'Skip configured delay between submissions (tests)',
+        },
+      },
+      required: ['jobId'],
+    },
+  },
+  {
     name: 'submit_whatsapp_job_cv',
     description:
-      'Drafts a CV application for a WhatsApp-discovered job (local package + mailto). Does not send live WhatsApp messages; set confirm=true only after user approval.',
+      'Drafts a CV application for a WhatsApp-discovered job (local package + mailto). Does not send live WhatsApp messages; set confirm=true only after user approval. Prefer submit_job_form after Telegram Approve for Playwright forms.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,6 +254,18 @@ export async function executeMcpTool(name, args = {}, { onLog, signal } = {}) {
   if (name === 'scan_whatsapp_jobs') {
     return executeScanWhatsappJobs(args, { onLog });
   }
+  if (name === 'start_whatsapp_job_watcher') {
+    return executeStartWhatsappWatcher(args, { onLog });
+  }
+  if (name === 'request_job_telegram_approval') {
+    return executeRequestTelegramApproval(args, { onLog });
+  }
+  if (name === 'resolve_job_approval') {
+    return executeResolveJobApproval(args, { onLog });
+  }
+  if (name === 'submit_job_form') {
+    return executeSubmitJobForm(args, { onLog });
+  }
   if (name === 'submit_whatsapp_job_cv') {
     return executeSubmitWhatsappJobCv(args, { onLog });
   }
@@ -208,7 +322,46 @@ async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
   };
 }
 
-function executeScanWhatsappJobs(args = {}, { onLog } = {}) {
+async function executeScanWhatsappJobs(args = {}, { onLog } = {}) {
+  if (args.pipeline) {
+    const exportPath =
+      String(args.exportPath || '').trim() || config.whatsappExportsDir;
+    let scanPath = exportPath;
+    if (
+      !fs.existsSync(scanPath) ||
+      (fs.statSync(scanPath).isDirectory() &&
+        resolveExportTxtCount(scanPath) === 0)
+    ) {
+      scanPath = config.whatsappFixturePath;
+      onLog?.(
+        `[mcp] tool=scan_whatsapp_jobs pipeline empty exports; using fixture ${scanPath}`
+      );
+    }
+    onLog?.(
+      `[mcp] tool=scan_whatsapp_jobs pipeline=true exportPath=${scanPath}`
+    );
+    const result = await scanAndEnqueueJobs({
+      configPath: args.configPath,
+      exportPath: scanPath,
+      notifyTelegram: args.notifyTelegram !== false,
+      dryRunTelegram: true,
+      limit: args.limit != null ? Number(args.limit) : 50,
+      onLog,
+    });
+    onLog?.(
+      `[mcp] tool=scan_whatsapp_jobs status=ok pipeline jobs=${result.enqueuedCount} dupes=${result.duplicateCount}`
+    );
+    return {
+      ok: true,
+      tool: 'scan_whatsapp_jobs',
+      pipeline: true,
+      exportPath: scanPath,
+      jobCount: result.enqueuedCount,
+      jobs: result.jobs,
+      ...result,
+    };
+  }
+
   const exportPath =
     String(args.exportPath || '').trim() || config.whatsappExportsDir;
 
@@ -231,7 +384,6 @@ function executeScanWhatsappJobs(args = {}, { onLog } = {}) {
     })}`
   );
 
-  // If default dir is empty, fall back to bundled fixture so demos/tests work.
   let scanPath = mcpArgs.exportPath;
   try {
     const result = scanWhatsappJobs({ ...mcpArgs, exportPath: scanPath });
@@ -288,6 +440,137 @@ function executeScanWhatsappJobs(args = {}, { onLog } = {}) {
       };
     }
     onLog?.(`[mcp] tool=scan_whatsapp_jobs status=error ${err.message}`);
+    throw err;
+  }
+}
+
+function resolveExportTxtCount(dir) {
+  try {
+    return fs.readdirSync(dir).filter((f) => /\.txt$/i.test(f)).length;
+  } catch {
+    return 0;
+  }
+}
+
+async function executeStartWhatsappWatcher(args = {}, { onLog } = {}) {
+  const jobsConfig = loadJobsConfig(args.configPath);
+  onLog?.(
+    `[mcp] tool=start_whatsapp_job_watcher groups=${jobsConfig.whatsapp.groups.join(', ')}`
+  );
+  // Default dryRun=true — avoids QR prompts unless explicitly dryRun=false.
+  if (args.dryRun !== false) {
+    onLog?.(
+      `[mcp] tool=start_whatsapp_job_watcher status=ok dryRun=true (listen-only; never send)`
+    );
+    return {
+      ok: true,
+      tool: 'start_whatsapp_job_watcher',
+      dryRun: true,
+      groups: jobsConfig.whatsapp.groups,
+      textOnly: jobsConfig.whatsapp.textOnly,
+      neverSendMessages: true,
+      note: 'Pass dryRun=false with whatsapp-web.js installed to connect (QR). Sends remain blocked.',
+    };
+  }
+
+  const watcher = await startWhatsappJobWatcher({
+    jobsConfig,
+    onLog,
+    onJob: async (job) => {
+      onLog?.(`[mcp] realtime job matched group=${job.groupName} score=${job.score}`);
+      await scanAndEnqueueJobs({
+        configPath: args.configPath,
+        messages: [job],
+        notifyTelegram: true,
+        dryRunTelegram: !jobsConfig.telegram.botToken,
+        onLog,
+      });
+    },
+  });
+
+  onLog?.(`[mcp] tool=start_whatsapp_job_watcher status=ok live=true`);
+  return {
+    ok: true,
+    tool: 'start_whatsapp_job_watcher',
+    dryRun: false,
+    groups: jobsConfig.whatsapp.groups,
+    stop: typeof watcher.stop === 'function' ? 'available' : null,
+  };
+}
+
+async function executeRequestTelegramApproval(args = {}, { onLog } = {}) {
+  const exportPath =
+    String(args.exportPath || '').trim() ||
+    (fs.existsSync(config.whatsappExportsDir) &&
+    resolveExportTxtCount(config.whatsappExportsDir) > 0
+      ? config.whatsappExportsDir
+      : config.whatsappFixturePath);
+
+  onLog?.(
+    `[mcp] tool=request_job_telegram_approval exportPath=${exportPath}`
+  );
+  const result = await scanAndEnqueueJobs({
+    configPath: args.configPath,
+    exportPath,
+    notifyTelegram: true,
+    dryRunTelegram: args.dryRun !== false,
+    limit: args.limit != null ? Number(args.limit) : 20,
+    onLog,
+  });
+  onLog?.(
+    `[mcp] tool=request_job_telegram_approval status=ok enqueued=${result.enqueuedCount}`
+  );
+  return { ok: true, tool: 'request_job_telegram_approval', ...result };
+}
+
+function executeResolveJobApproval(args = {}, { onLog } = {}) {
+  onLog?.(
+    `[mcp] tool=resolve_job_approval args=${JSON.stringify({
+      jobId: args.jobId,
+      action: args.action,
+      callbackData: args.callbackData,
+    })}`
+  );
+  const result = resolveJobApproval({
+    configPath: args.configPath,
+    jobId: args.jobId,
+    action: args.action,
+    callbackData: args.callbackData,
+    onLog,
+  });
+  onLog?.(
+    `[mcp] tool=resolve_job_approval status=ok action=${result.action} job=${result.job.id}`
+  );
+  return { ok: true, tool: 'resolve_job_approval', ...result };
+}
+
+async function executeSubmitJobForm(args = {}, { onLog } = {}) {
+  const jobId = String(args.jobId || '').trim();
+  if (!jobId) {
+    const err = new Error('submit_job_form requires jobId');
+    err.code = 'MCP_INVALID_ARGS';
+    throw err;
+  }
+  onLog?.(
+    `[mcp] tool=submit_job_form jobId=${jobId} dryRun=${Boolean(args.dryRun)}`
+  );
+  try {
+    const result = await submitApprovedJob({
+      configPath: args.configPath,
+      jobId,
+      profilePath: args.profilePath,
+      cvPath: args.cvPath,
+      coverNote: args.coverNote,
+      dryRun: Boolean(args.dryRun),
+      skipDelay: args.skipDelay !== false || Boolean(args.dryRun),
+      onLog,
+    });
+    onLog?.(
+      `[mcp] tool=submit_job_form status=ok application=${result.application?.id}`
+    );
+    return { ok: true, tool: 'submit_job_form', ...result };
+  } catch (err) {
+    onLog?.(`[mcp] tool=submit_job_form status=error ${err.message}`);
     throw err;
   }
 }
