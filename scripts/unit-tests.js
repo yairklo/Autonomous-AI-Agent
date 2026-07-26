@@ -21,6 +21,23 @@ import {
   scanWhatsappJobs,
   scoreJobMessage,
 } from '../server/whatsapp-job-scanner.js';
+import { containsHebrew, formatBidi } from './format-bidi.js';
+
+test('formatBidi leaves English and code untouched; reorders Hebrew for CLI', () => {
+  assert.strictEqual(formatBidi('Hello agent'), 'Hello agent');
+  assert.strictEqual(containsHebrew('Hello agent'), false);
+
+  const he = 'שלום עולם';
+  assert.ok(containsHebrew(he));
+  const visual = formatBidi(he);
+  assert.notStrictEqual(visual, he, 'Hebrew should be visually reordered for LTR terminals');
+  assert.strictEqual([...visual].sort().join(''), [...he].sort().join(''));
+
+  const fenced = 'intro\n```js\nconst x = 1;\n```\nסוף';
+  const out = formatBidi(fenced);
+  assert.ok(out.includes('```js\nconst x = 1;\n```'), 'code fence must stay intact');
+  assert.ok(out.startsWith('intro\n'));
+});
 
 test('ClaudeSessionManager - parseStreamLine', async (t) => {
   const sessionsFile = './test-sessions.json';

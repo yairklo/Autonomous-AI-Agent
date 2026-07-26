@@ -19,6 +19,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { formatBidi as formatBidiUtil } from './format-bidi.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -32,6 +33,26 @@ const baseUrl = (
 
 const clientId = `terminal-${randomUUID().slice(0, 8)}`;
 let childServer = null;
+
+/**
+ * Chat-interface wrapper: visually reorder Hebrew for LTR terminals.
+ * English / code without Hebrew passes through unchanged.
+ */
+function formatBidi(text) {
+  return formatBidiUtil(text);
+}
+
+function writeOut(text) {
+  process.stdout.write(formatBidi(text));
+}
+
+function logOut(...parts) {
+  console.log(...parts.map((p) => (typeof p === 'string' ? formatBidi(p) : p)));
+}
+
+function logErr(...parts) {
+  console.error(...parts.map((p) => (typeof p === 'string' ? formatBidi(p) : p)));
+}
 
 function parseUrl(u) {
   const parsed = new URL(u);
@@ -65,11 +86,11 @@ async function waitForHealth(timeoutMs = 20000) {
 
 async function ensureServer() {
   if (await healthOk()) {
-    console.log(`[chat] Connected to ${baseUrl}`);
+    logOut(`[chat] Connected to ${baseUrl}`);
     return;
   }
 
-  console.log(`[chat] No server at ${baseUrl} — starting local voice-agent...`);
+  logOut(`[chat] No server at ${baseUrl} — starting local voice-agent...`);
   const env = {
     ...process.env,
     HOST: process.env.HOST || '127.0.0.1',
@@ -86,25 +107,56 @@ async function ensureServer() {
 
   childServer.stdout.on('data', (chunk) => {
     const text = chunk.toString().trim();
-    if (text) console.log(`[server] ${text}`);
+    if (text) logOut(`[server] ${text}`);
   });
   childServer.stderr.on('data', (chunk) => {
     const text = chunk.toString().trim();
-    if (text) console.error(`[server] ${text}`);
+    if (text) logErr(`[server] ${text}`);
   });
   childServer.on('exit', (code) => {
     if (code && code !== 0) {
-      console.error(`[chat] Server exited with code ${code}`);
+      logErr(`[chat] Server exited with code ${code}`);
     }
     childServer = null;
   });
 
   const ok = await waitForHealth();
   if (!ok) {
-    console.error('[chat] Server failed to become healthy. Try: npm start');
+    logErr('[chat] Server failed to become healthy. Try: npm start');
     process.exit(1);
   }
-  console.log(`[chat] Server ready at ${baseUrl} (mock=${mock ? '1' : '0'})`);
+  logOut(`[chat] Server ready at ${baseUrl} (mock=${mock ? '1' : '0'})`);
+}
+
+/**
+ * Buffer streamed tokens and flush complete lines through formatBidi.
+ * Partial Hebrew fragments must not be reordered mid-token.
+ */
+function createBidiStdoutWriter() {
+  let buffer = '';
+  let wrote = false;
+
+  return {
+    write(chunk) {
+      buffer += String(chunk ?? '');
+      wrote = true;
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx + 1);
+        buffer = buffer.slice(idx + 1);
+        writeOut(line);
+      }
+    },
+    flush() {
+      if (buffer) {
+        writeOut(buffer);
+        buffer = '';
+      }
+    },
+    get wrote() {
+      return wrote;
+    },
+  };
 }
 
 function postChatSse(text) {
@@ -136,8 +188,8 @@ function postChatSse(text) {
 
         res.setEncoding('utf8');
         let buffer = '';
-        let wrote = false;
         let errorMsg = null;
+        const out = createBidiStdoutWriter();
 
         res.on('data', (chunk) => {
           buffer += chunk;
@@ -162,28 +214,24 @@ function postChatSse(text) {
             }
 
             if (event === 'token' && parsed.text) {
-              process.stdout.write(parsed.text);
-              wrote = true;
+              out.write(parsed.text);
             } else if (event === 'status' && parsed.stage) {
               const extra = parsed.tool ? ` tool=${parsed.tool}` : '';
-              process.stdout.write(`\n[status] ${parsed.stage}${extra}\n`);
+              writeOut(`\n[status] ${parsed.stage}${extra}\n`);
             } else if (event === 'tool_call') {
-              process.stdout.write(
-                `\n[tool_call] ${parsed.tool || 'dispatch_coding_task'}\n`
-              );
+              writeOut(`\n[tool_call] ${parsed.tool || 'dispatch_coding_task'}\n`);
             } else if (event === 'tool_result') {
-              process.stdout.write(
-                `\n[tool_result] ${parsed.tool || ''} ok=${parsed.ok}\n`
-              );
+              writeOut(`\n[tool_result] ${parsed.tool || ''} ok=${parsed.ok}\n`);
             } else if (event === 'error') {
               errorMsg = parsed.error || 'unknown error';
-              console.error(`\n[error] ${errorMsg}`);
+              logErr(`\n[error] ${errorMsg}`);
             }
           }
         });
 
         res.on('end', () => {
-          if (wrote) process.stdout.write('\n');
+          out.flush();
+          if (out.wrote) process.stdout.write('\n');
           if (errorMsg) reject(new Error(errorMsg));
           else resolve();
         });
@@ -203,11 +251,11 @@ async function resetSession() {
     body: JSON.stringify({ clientId }),
   });
   if (!res.ok) throw new Error(`reset failed: ${res.status}`);
-  console.log('[chat] Session reset. Grill-Me Mode starts fresh on the next coding request.');
+  logOut('[chat] Session reset. Grill-Me Mode starts fresh on the next coding request.');
 }
 
 function printHelp() {
-  console.log(`
+  logOut(`
 Commands:
   /help              Show this help
   /reset             Reset Claude conversation session
@@ -237,19 +285,19 @@ function shutdown() {
 async function main() {
   process.on('exit', shutdown);
   process.on('SIGINT', () => {
-    console.log('\n[chat] bye');
+    logOut('\n[chat] bye');
     shutdown();
     process.exit(0);
   });
 
   await ensureServer();
 
-  console.log('');
-  console.log('=== Claude Orchestrator (interactive) ===');
-  console.log(`clientId: ${clientId}`);
-  console.log('Grill-Me Mode is ON by default for coding tasks.');
-  console.log('Type /help for commands. Empty line is ignored.');
-  console.log('');
+  logOut('');
+  logOut('=== Claude Orchestrator (interactive) ===');
+  logOut(`clientId: ${clientId}`);
+  logOut('Grill-Me Mode is ON by default for coding tasks.');
+  logOut('Type /help for commands. Empty line is ignored.');
+  logOut('');
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -257,54 +305,55 @@ async function main() {
     terminal: true,
   });
 
-  const prompt = () => rl.question('you> ', async (line) => {
-    const text = String(line || '').trim();
-    if (!text) {
-      prompt();
-      return;
-    }
-
-    if (text === '/quit' || text === '/exit') {
-      rl.close();
-      console.log('[chat] bye');
-      shutdown();
-      process.exit(0);
-    }
-    if (text === '/help') {
-      printHelp();
-      prompt();
-      return;
-    }
-    if (text === '/id') {
-      console.log(clientId);
-      prompt();
-      return;
-    }
-    if (text === '/reset') {
-      try {
-        await resetSession();
-      } catch (err) {
-        console.error('[chat]', err.message || err);
+  const prompt = () =>
+    rl.question('you> ', async (line) => {
+      const text = String(line || '').trim();
+      if (!text) {
+        prompt();
+        return;
       }
-      prompt();
-      return;
-    }
 
-    process.stdout.write('agent> ');
-    try {
-      await postChatSse(text);
-    } catch (err) {
-      console.error(`\n[chat] ${err.message || err}`);
-    }
-    console.log('');
-    prompt();
-  });
+      if (text === '/quit' || text === '/exit') {
+        rl.close();
+        logOut('[chat] bye');
+        shutdown();
+        process.exit(0);
+      }
+      if (text === '/help') {
+        printHelp();
+        prompt();
+        return;
+      }
+      if (text === '/id') {
+        logOut(clientId);
+        prompt();
+        return;
+      }
+      if (text === '/reset') {
+        try {
+          await resetSession();
+        } catch (err) {
+          logErr('[chat]', err.message || err);
+        }
+        prompt();
+        return;
+      }
+
+      process.stdout.write('agent> ');
+      try {
+        await postChatSse(text);
+      } catch (err) {
+        logErr(`\n[chat] ${err.message || err}`);
+      }
+      logOut('');
+      prompt();
+    });
 
   prompt();
 }
 
 main().catch((err) => {
-  console.error('[chat] fatal:', err.message || err);
+  logErr('[chat] fatal:', err.message || err);
   shutdown();
   process.exit(1);
 });
