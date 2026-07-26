@@ -5,9 +5,12 @@
  * Usage:
  *   npm run chat
  *   npm run chat -- --mock
+ *   npm run chat -- --restart
  *   npm run chat -- --url http://127.0.0.1:8787
  *
  * Starts a local server if none is listening, then reads line-by-line from stdin.
+ * If an outdated server is already on the port (missing grillMeConversation), chat
+ * frees the port and starts a fresh local server so Grill-Me stays in-chat.
  * Type /help for commands. Ordinary coding requests enter Grill-Me Mode;
  * say "skip Grill-Me Mode and dispatch ..." (or "שגר ל-Cursor") to invoke
  * dispatch_coding_task after requirements are confirmed.
@@ -26,6 +29,8 @@ const root = path.resolve(__dirname, '..');
 
 const args = process.argv.slice(2);
 const mock = args.includes('--mock') || process.env.VOICE_AGENT_MOCK === '1';
+const forceRestart =
+  args.includes('--restart') || process.env.CHAT_RESTART === '1';
 const urlIdx = args.indexOf('--url');
 const baseUrl = (
   urlIdx >= 0 ? args[urlIdx + 1] : process.env.VOICE_AGENT_URL || 'http://127.0.0.1:8787'
@@ -62,35 +67,80 @@ function parseUrl(u) {
   };
 }
 
-async function healthOk() {
+async function fetchHealth() {
   try {
     const res = await fetch(`${baseUrl}/api/health`, {
       signal: AbortSignal.timeout(1500),
     });
-    if (!res.ok) return false;
-    const data = await res.json();
-    return data?.ok === true;
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
-    return false;
+    return null;
   }
 }
 
-async function waitForHealth(timeoutMs = 20000) {
+function supportsGrillMeConversation(health) {
+  return health?.ok === true && health?.grillMeConversation === true;
+}
+
+async function waitForHealth(timeoutMs = 20000, { requireGrillMe = true } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (await healthOk()) return true;
+    const health = await fetchHealth();
+    if (health?.ok && (!requireGrillMe || supportsGrillMeConversation(health))) {
+      return health;
+    }
     await new Promise((r) => setTimeout(r, 300));
   }
-  return false;
+  return null;
 }
 
-async function ensureServer() {
-  if (await healthOk()) {
-    logOut(`[chat] Connected to ${baseUrl}`);
-    return;
+async function freeListenPort(port) {
+  logOut(`[chat] Freeing port ${port} (stopping stale voice-agent)...`);
+  if (process.platform === 'win32') {
+    const ps = `
+      $conns = Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue
+      foreach ($c in @($conns)) {
+        if ($c.OwningProcess) {
+          Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+      }
+    `;
+    await new Promise((resolve) => {
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+        { windowsHide: true, stdio: 'ignore' }
+      );
+      child.on('close', () => resolve());
+      child.on('error', () => resolve());
+    });
+  } else {
+    await new Promise((resolve) => {
+      const child = spawn(
+        'bash',
+        [
+          '-lc',
+          `pids=$(lsof -ti tcp:${Number(port)} -sTCP:LISTEN 2>/dev/null); ` +
+            `if [ -n "$pids" ]; then kill -TERM $pids 2>/dev/null || true; sleep 0.4; ` +
+            `kill -KILL $pids 2>/dev/null || true; fi`,
+        ],
+        { stdio: 'ignore' }
+      );
+      child.on('close', () => resolve());
+      child.on('error', () => resolve());
+    });
   }
+  // Wait until health fails (port actually free / old process gone).
+  const start = Date.now();
+  while (Date.now() - start < 8000) {
+    const health = await fetchHealth();
+    if (!health) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
 
-  logOut(`[chat] No server at ${baseUrl} — starting local voice-agent...`);
+function spawnLocalServer() {
   const env = {
     ...process.env,
     HOST: process.env.HOST || '127.0.0.1',
@@ -119,13 +169,45 @@ async function ensureServer() {
     }
     childServer = null;
   });
+}
 
-  const ok = await waitForHealth();
-  if (!ok) {
-    logErr('[chat] Server failed to become healthy. Try: npm start');
+async function ensureServer() {
+  const port = parseUrl(baseUrl).port || 8787;
+  let health = await fetchHealth();
+
+  if (health && supportsGrillMeConversation(health) && !forceRestart) {
+    logOut(`[chat] Connected to ${baseUrl} (Grill-Me conversation enabled)`);
+    return;
+  }
+
+  if (health && !supportsGrillMeConversation(health)) {
+    logOut(
+      '[chat] Stale voice-agent detected on this port (missing grillMeConversation).'
+    );
+    logOut(
+      '[chat] That old server still auto-dispatches "Grill-Me Pack" to Cursor — replacing it.'
+    );
+    await freeListenPort(port);
+  } else if (forceRestart && health) {
+    logOut('[chat] --restart: stopping existing server and starting a fresh one...');
+    await freeListenPort(port);
+  } else if (!health) {
+    logOut(`[chat] No server at ${baseUrl} — starting local voice-agent...`);
+  }
+
+  spawnLocalServer();
+
+  health = await waitForHealth(20000, { requireGrillMe: true });
+  if (!health) {
+    logErr(
+      '[chat] Server failed to become healthy with Grill-Me conversation support.'
+    );
+    logErr('[chat] Stop any old process on the port, then run: npm run chat -- --restart');
     process.exit(1);
   }
-  logOut(`[chat] Server ready at ${baseUrl} (mock=${mock ? '1' : '0'})`);
+  logOut(
+    `[chat] Server ready at ${baseUrl} (mock=${mock ? '1' : '0'}, grillMeConversation=true)`
+  );
 }
 
 /**
@@ -268,6 +350,9 @@ Grill-Me Mode (default):
     skip Grill-Me Mode and dispatch this to Cursor
     שגר ל-Cursor
   That invokes MCP tool dispatch_coding_task → Cursor Agent CLI.
+
+If Cursor opens immediately again, the old server was still running. Use:
+  npm run chat:restart
 `);
 }
 
