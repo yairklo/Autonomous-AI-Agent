@@ -14,8 +14,16 @@
     "chat:restart": "node scripts/interactive-chat.js --restart",
     "smoke": "node scripts/smoke-test.js",
     "test": "node scripts/unit-tests.js",
+    "test:ats": "node scripts/test-ats-submitter.js",
+    "test:ats:workday": "cross-env RUN_WORKDAY_LIVE=1 HEADLESS_BROWSER=true node scripts/test-ats-submitter.js",
     "dispatch": "node scripts/dispatch-task.js",
-    "test:dispatch": "node scripts/test-task-dispatch-e2e.js"
+    "test:dispatch": "node scripts/test-task-dispatch-e2e.js",
+    "joinup:telegram": "node scripts/joinup-telegram-bot.js",
+    "test:joinup-telegram": "node scripts/test-joinup-telegram.js",
+    "test:quality-gates": "node scripts/test-dispatch-quality-gates.js",
+    "joinup:notify-vercel": "node scripts/notify-joinup-vercel.js",
+    "test:joinup-vercel": "node scripts/test-joinup-vercel.js",
+    "test:run-events": "node scripts/test-cursor-log-parser.js"
   },
   "engines": {
     "node": ">=18"
@@ -23,8 +31,11 @@
   "dependencies": {
     "bidi-js": "^1.0.3",
     "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "multer": "^2.2.0",
+    "qrcode-terminal": "^0.12.0",
+    "telegraf": "^4.16.3",
     "uuid": "^11.1.0"
   },
   "optionalDependencies": {

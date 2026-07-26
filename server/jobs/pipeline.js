@@ -11,6 +11,7 @@ import { filterTargetJobs } from './job-matcher.js';
 import { submitJobFormWithPlaywright } from './playwright-submitter.js';
 import { createTelegramClient } from './telegram.js';
 import { analyzeRealtimeMessage } from './whatsapp-live.js';
+import { updateJobInTracker } from './tracker.js';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,6 +103,10 @@ export async function scanAndEnqueueJobs({
       ...db.get(job.id),
       telegram: telegramResult,
     });
+    
+    // Update tracker
+    updateJobInTracker(db.get(job.id)).catch(() => {});
+
     onLog?.(
       `[pipeline] enqueued job=${job.id} group=${job.groupName} telegram=${telegramResult ? 'yes' : 'no'}`
     );
@@ -165,6 +170,10 @@ export function resolveJobApproval({
     approvalStatus,
     status: approvalStatus === 'approved' ? 'approved' : 'rejected',
   });
+  
+  // Update tracker
+  updateJobInTracker(updated).catch(() => {});
+
   onLog?.(
     `[pipeline] job=${resolved.jobId} approval=${approvalStatus}`
   );
@@ -246,6 +255,12 @@ export async function submitApprovedJob({
   ]
     .map((p) => (p ? path.resolve(String(p).trim()) : ''))
     .filter(Boolean);
+    
+  onLog?.(`[pipeline] cvCandidates = ${JSON.stringify(cvCandidates)}`);
+  for (const p of cvCandidates) {
+    onLog?.(`[pipeline] check ${p}: exists=${fs.existsSync(p)} isFile=${fs.existsSync(p) && fs.statSync(p).isFile()}`);
+  }
+
   const cvFinal = cvCandidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
   if (!cvFinal) {
     const err = new Error('CV file not found (expected assets/cv.pdf)');
@@ -285,7 +300,9 @@ export async function submitApprovedJob({
       coverLetter: cover.text,
       approved: true,
       dryRun,
+      jobId: job.id,
       browserFactory,
+      onLog,
     });
 
     const applicationId = randomUUID();
@@ -293,10 +310,85 @@ export async function submitApprovedJob({
     fs.mkdirSync(appDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const jsonPath = path.join(appDir, `${stamp}_${applicationId.slice(0, 8)}.json`);
+
+    // Dry-run never claims a live submission
+    if (dryRun) {
+      const record = {
+        id: applicationId,
+        jobId: job.id,
+        status: 'dry_run_submitted',
+        channel: 'playwright_forms_only',
+        coverSource: cover.source,
+        coverLetter: cover.text,
+        formUrl,
+        result,
+        createdAt: new Date().toISOString(),
+        whatsappSend: false,
+      };
+      fs.writeFileSync(jsonPath, JSON.stringify(record, null, 2), 'utf8');
+      const updated = db.update(job.id, {
+        status: record.status,
+        submittedAt: record.createdAt,
+        submitResult: { ok: true, dryRun: true, applicationId, jsonPath, ats: result.ats },
+      });
+      updateJobInTracker(updated).catch(() => {});
+      return { ok: true, job: updated, application: record, files: { json: jsonPath } };
+    }
+
+    const confirmed =
+      result?.confirmationVerified === true &&
+      (result?.status === 'Submitted' || result?.ok === true);
+
+    if (confirmed) {
+      const record = {
+        id: applicationId,
+        jobId: job.id,
+        status: 'submitted',
+        channel: 'playwright_forms_only',
+        coverSource: cover.source,
+        coverLetter: cover.text,
+        formUrl,
+        result,
+        createdAt: new Date().toISOString(),
+        whatsappSend: false,
+      };
+      fs.writeFileSync(jsonPath, JSON.stringify(record, null, 2), 'utf8');
+
+      const updated = db.update(job.id, {
+        status: 'submitted',
+        submittedAt: record.createdAt,
+        submitResult: {
+          ok: true,
+          applicationId,
+          jsonPath,
+          ats: result.ats,
+          confirmationVerified: true,
+          formUrl,
+          coverLetter: cover.text,
+        },
+      });
+      updateJobInTracker(updated).catch(() => {});
+      onLog?.(`[pipeline] submitted job=${job.id} via Playwright form (confirmed)`);
+      return { ok: true, job: updated, application: record, files: { json: jsonPath } };
+    }
+
+    // Human intervention / unverified — never mark Submitted
+    const needsHuman =
+      result?.code === 'HUMAN_INTERVENTION_REQUIRED' ||
+      result?.code === 'CAPTCHA_OR_AUTH_BLOCK' ||
+      result?.code === 'UNMAPPED_REQUIRED_FIELD' ||
+      result?.status === 'Requires Manual Action';
+
+    const dbStatus = needsHuman ? 'requires_manual_action' : 'submit_failed';
+    const displayStatus = needsHuman
+      ? 'Requires Manual Action'
+      : 'Submission Failed';
+
     const record = {
       id: applicationId,
       jobId: job.id,
-      status: dryRun ? 'dry_run_submitted' : 'submitted',
+      status: dbStatus,
+      displayStatus,
       channel: 'playwright_forms_only',
       coverSource: cover.source,
       coverLetter: cover.text,
@@ -308,18 +400,57 @@ export async function submitApprovedJob({
     fs.writeFileSync(jsonPath, JSON.stringify(record, null, 2), 'utf8');
 
     const updated = db.update(job.id, {
-      status: record.status,
-      submittedAt: record.createdAt,
-      submitResult: { ok: true, applicationId, jsonPath },
+      status: dbStatus,
+      submitResult: {
+        ok: false,
+        applicationId,
+        jsonPath,
+        error: result?.message || displayStatus,
+        code: result?.code,
+        ats: result?.ats,
+        step: result?.step,
+        screenshotPath: result?.screenshotPath || null,
+        manualUrl: result?.manualUrl || result?.finalUrl || formUrl,
+        formUrl,
+        coverLetter: cover.text,
+      },
     });
+    updateJobInTracker(updated).catch(() => {});
 
-    onLog?.(`[pipeline] submitted job=${job.id} via Playwright form`);
-    return { ok: true, job: updated, application: record, files: { json: jsonPath } };
+    if (jobsConfig.submission.notifyTelegramOnFailure) {
+      const alertFn = needsHuman
+        ? telegram.sendManualActionAlert(job, result, {
+            dryRun: !telegram.configured,
+          })
+        : telegram.sendFailureAlert(
+            job,
+            { message: result?.message || displayStatus },
+            { dryRun: !telegram.configured }
+          );
+      await alertFn.catch((e) =>
+        onLog?.(`[pipeline] telegram alert error: ${e.message}`)
+      );
+    }
+
+    onLog?.(
+      `[pipeline] job=${job.id} status=${dbStatus} step=${result?.step} ats=${result?.ats}`
+    );
+    return {
+      ok: false,
+      job: updated,
+      application: record,
+      files: { json: jsonPath, screenshot: result?.screenshotPath || null },
+      requiresManualAction: needsHuman,
+    };
   } catch (err) {
-    db.update(job.id, {
+    const failedJob = db.update(job.id, {
       status: 'submit_failed',
       submitResult: { ok: false, error: err.message, code: err.code },
     });
+    
+    // Update tracker
+    updateJobInTracker(failedJob).catch(() => {});
+
     if (jobsConfig.submission.notifyTelegramOnFailure) {
       await telegram
         .sendFailureAlert(job, err, {

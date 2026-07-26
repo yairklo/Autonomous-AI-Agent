@@ -120,6 +120,39 @@ export function createTelegramClient({
     },
 
     /**
+     * Immediate alert when ATS flow needs a human (login/CAPTCHA/unmapped field).
+     * Includes the exact step and a manual completion link.
+     */
+    async sendManualActionAlert(job, details = {}, { dryRun = false } = {}) {
+      const manualUrl =
+        details.manualUrl ||
+        details.finalUrl ||
+        job.formUrl ||
+        job.contacts?.urls?.[0] ||
+        'n/a';
+      const text = [
+        '🛑 Requires Manual Action',
+        `Job: ${job.id}`,
+        `ATS: ${details.ats || 'unknown'}`,
+        `Stopped at step: ${details.step || 'unknown'}`,
+        `Code: ${details.code || 'HUMAN_INTERVENTION_REQUIRED'}`,
+        `Detail: ${details.message || details.error || 'n/a'}`,
+        `Screenshot: ${details.screenshotPath || 'n/a'}`,
+        `Complete manually: ${manualUrl}`,
+      ].join('\n');
+
+      if (dryRun || !token || !chat) {
+        return { ok: true, dryRun: true, text };
+      }
+      const result = await api('sendMessage', {
+        chat_id: chat,
+        text,
+        disable_web_page_preview: true,
+      });
+      return { ok: true, dryRun: false, messageId: result.message_id, text };
+    },
+
+    /**
      * Parse Telegram callback_data into { action, jobId }.
      */
     parseApprovalCallback(callbackData) {

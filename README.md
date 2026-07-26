@@ -62,6 +62,11 @@ Lists domain Grill-Me packs (e.g. `whatsapp-jobs-cv`).
 ### `GET /api/grill-me/packs/:packId`
 Query: `locale=he|en`, `format=json|reply|spec`. Returns the pack JSON, a chat-ready questionnaire (`reply`), or an empty markdown scaffold (`spec`).
 
+### Cursor Live logs
+- Terminal: while Cursor runs, the server prints `[run:…]` lines (status / tool / git / errors).
+- GUI: open the PWA — **Cursor Live** panel streams `/api/runs/stream`.
+- joinUp Telegram bot forwards the same logs to the server via `/api/runs/events` (keep `npm start` running).
+
 ### `POST /api/chat` (SSE)
 ```json
 { "clientId": "device-uuid", "text": "What's on my calendar logic today?" }
@@ -105,6 +110,32 @@ Returns `audio/wav` when a local engine works (Windows SAPI / macOS `say` / espe
 | `CV_PROFILE_PATH` | `data/cv-profile.json` | Candidate profile JSON (falls back to `fixtures/cv`) |
 | `CV_APPLICATIONS_DIR` | `data/cv-applications` | Draft CV application packages |
 | `AUTO_SUBMIT_WHATSAPP_CV` | `1` | Auto-invoke `submit_whatsapp_job_cv` on apply intent |
+| `JOINUP_TELEGRAM_BOT_TOKEN` | — | Dedicated Telegram bot token for joinUp collaborators |
+| `ALLOWED_TELEGRAM_USER_IDS` | — | Comma-separated Telegram user IDs allow-list |
+| `JOINUP_PROJECT_ROOT` | `C:\JoinUpApp` | Absolute path to the joinUp repo (execution is pinned here) |
+| `JOINUP_TELEGRAM_MOCK` | `0` | `1` = mock product grilling (no Claude) |
+| `JOINUP_TELEGRAM_AUTOSTART` | `0` | `1` = start joinUp bot with `npm start` |
+
+### joinUp Telegram Product Bot
+
+Dedicated bot for **non-technical collaborators** to specify joinUp features. It grills for product/UX details, asks for explicit confirmation, then dispatches a Cursor Agent run **only** against `JOINUP_PROJECT_ROOT`.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Add to `.env` (see [.env.example](./.env.example)):
+
+```bash
+JOINUP_TELEGRAM_BOT_TOKEN=123456:ABC...
+ALLOWED_TELEGRAM_USER_IDS=11111111,22222222
+JOINUP_PROJECT_ROOT=C:\JoinUpApp
+```
+
+3. Run:
+
+```bash
+npm run joinup:telegram
+```
+
+Unauthorized Telegram users are rejected. Coding execution never leaves the joinUp project directory.
 
 ### WhatsApp job scanning
 
@@ -145,13 +176,15 @@ Use the returned `text` field with Speak Text / TTS.
 ## Project layout
 
 ```
-server/          Express + Claude session + STT/TTS helpers
-client/          PWA (HTML/CSS/JS, service worker)
-scripts/         smoke-test.js
-TODO.md          Task tracker
-DECISIONS.md     Architecture decisions
+server/                 Express + Claude session + STT/TTS helpers
+server/joinup-telegram/ Dedicated joinUp collaborator Telegram bot
+client/                 PWA (HTML/CSS/JS, service worker)
+scripts/                smoke-test.js, joinup-telegram-bot.js
+DECISIONS.md            Architecture decisions
 ```
 
 ## Security
 
-MVP assumes a **trusted LAN or Tailscale** network. There is no auth layer. Do not expose port 8787 to the public internet.
+MVP assumes a **trusted LAN or Tailscale** network. The voice HTTP API has no auth layer — do not expose port 8787 to the public internet.
+
+The joinUp Telegram bot is allow-list gated via `ALLOWED_TELEGRAM_USER_IDS` and pins Cursor Agent execution to `JOINUP_PROJECT_ROOT` only.

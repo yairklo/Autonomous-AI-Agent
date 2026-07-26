@@ -207,6 +207,28 @@ export function detectWhatsappCvSubmit(text) {
   };
 }
 
+/**
+ * Detect manual job URL submission.
+ */
+export function detectManualJobLink(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return null;
+
+  if (isInteractiveConversationRequest(cleaned)) return null;
+
+  const urlMatch = cleaned.match(/https?:\/\/[^\s"'״]+/i);
+  const mentionsSubmit = /הגש|תגיש|להגיש|שלח|submit|apply|קישור|link/i.test(cleaned);
+  const isJobBoard = /workday|greenhouse|lever|careers|comeet|apply|jobs/i.test(urlMatch?.[0] || '');
+
+  if (urlMatch && (mentionsSubmit || isJobBoard || cleaned.length < 200)) {
+    return {
+      mcpTool: 'submit_manual_job_link',
+      mcpArgs: { url: urlMatch[0] },
+    };
+  }
+  return null;
+}
+
 function extractRoles(text) {
   const roles = [];
   const patterns = [
@@ -271,12 +293,28 @@ function extractProjectPath(text) {
 /**
  * Run scripts/dispatch-task.js and stream stdout/stderr lines via onLog.
  * Invoked only via the dispatch_coding_task MCP tool — not as a raw shell from Claude.
+ * Also publishes structured live events for the GUI / terminal run console.
  */
-export function runDispatchTask({ project, task }, { onLog, signal } = {}) {
-  return new Promise((resolve, reject) => {
+export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}) {
+  return new Promise(async (resolve, reject) => {
+    const { startRun, endRun, createRunLogger } = await import('./run-events.js');
+    const activeRunId =
+      runId ||
+      startRun({
+        source: 'dispatch',
+        project,
+        title: String(task || '').slice(0, 120),
+      });
+    const log = createRunLogger({
+      runId: activeRunId,
+      source: 'dispatch',
+      project,
+      onLog,
+    });
+
     const script = resolveDispatchScript();
     const args = [script, '--project', project, '--task', task];
-    onLog?.(`[dispatch] node ${args.map(JSON.stringify).join(' ')}`);
+    log(`[dispatch] node ${args.map(JSON.stringify).join(' ')}`);
 
     const child = spawn(process.execPath, args, {
       cwd: config.root,
@@ -284,6 +322,7 @@ export function runDispatchTask({ project, task }, { onLog, signal } = {}) {
         ...process.env,
         // Prefer a reliable headless runner for automation; Claude/Cursor CLI still tried first in auto mode.
         DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'auto',
+        DISPATCH_RUN_ID: activeRunId,
       },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -306,18 +345,22 @@ export function runDispatchTask({ project, task }, { onLog, signal } = {}) {
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       stdout += text;
-      for (const line of text.split(/\r?\n/).filter(Boolean)) onLog?.(line);
+      for (const line of text.split(/\r?\n/).filter(Boolean)) log(line);
     });
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       stderr += text;
-      for (const line of text.split(/\r?\n/).filter(Boolean)) onLog?.(`[stderr] ${line}`);
+      for (const line of text.split(/\r?\n/).filter(Boolean)) log(`[stderr] ${line}`);
     });
-    child.on('error', reject);
+    child.on('error', (err) => {
+      endRun(activeRunId, { ok: false, text: err.message });
+      reject(err);
+    });
     child.on('close', (code) => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (code === 0) {
-        resolve({ ok: true, stdout, stderr, code });
+        endRun(activeRunId, { ok: true, text: 'Dispatch finished successfully' });
+        resolve({ ok: true, stdout, stderr, code, runId: activeRunId });
       } else {
         const err = new Error(
           `dispatch-task.js exited with code ${code}: ${(stderr || stdout).slice(-800)}`
@@ -325,6 +368,8 @@ export function runDispatchTask({ project, task }, { onLog, signal } = {}) {
         err.code = code;
         err.stdout = stdout;
         err.stderr = stderr;
+        err.runId = activeRunId;
+        endRun(activeRunId, { ok: false, text: err.message });
         reject(err);
       }
     });
