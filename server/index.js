@@ -58,6 +58,8 @@ app.get('/api/health', (_req, res) => {
     autoDispatchCoding: config.autoDispatchCoding,
     autoScanWhatsappJobs: config.autoScanWhatsappJobs,
     autoSubmitWhatsappCv: config.autoSubmitWhatsappCv,
+    // Chat clients require this. Missing ⇒ stale server that still auto-dispatches "Grill-Me Pack".
+    grillMeConversation: true,
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
     cvApplicationsDir: config.cvApplicationsDir,
