@@ -830,6 +830,21 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
   console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
+  console.log(`[voice-agent] joinUp Telegram bot: npm run joinup:telegram`);
+
+  // Optional: start joinUp collaborator bot alongside the voice agent.
+  if (process.env.JOINUP_TELEGRAM_AUTOSTART === '1') {
+    import('./joinup-telegram/index.js')
+      .then(({ startJoinUpTelegramService }) =>
+        startJoinUpTelegramService({
+          onLog: (line) => console.log(line),
+        })
+      )
+      .catch((err) => {
+        console.error('[joinup-telegram] autostart failed:', err.message);
+      });
+  }
+
 });
 
 server.on('error', (err) => {
