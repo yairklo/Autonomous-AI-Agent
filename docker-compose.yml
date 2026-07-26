@@ -8,7 +8,14 @@ services:
       - HOST=0.0.0.0
       - PORT=8787
       - HEADLESS_BROWSER=true
-      # Inject secrets via Coolify environment variables (or a local .env):
+      # Headless CLI: Claude uses -p + bypassPermissions; Cursor uses -p --force --trust
+      - CI=1
+      - CLAUDE_BIN=claude
+      - CURSOR_BIN=agent
+      - NO_OPEN_BROWSER=1
+      # Persist git identity via volume (named volumes cannot bind a single file)
+      - GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig
+      # Inject secrets via Coolify environment variables:
       # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, JOINUP_TELEGRAM_BOT_TOKEN, etc.
     volumes:
       # WhatsApp LocalAuth session (survives redeploys)
@@ -17,9 +24,20 @@ services:
       - app_data:/app/data
       # CV PDF and other application assets
       - app_assets:/app/assets
+      # Claude CLI subscription auth / session state
+      - claude_config:/root/.claude
+      # Cursor CLI subscription auth / session state
+      - cursor_config:/root/.cursor
+      # Git identity for automated commits (see GIT_CONFIG_GLOBAL)
+      - git_config:/root/.git-config-data
     restart: unless-stopped
+    # Interactive one-time login from Coolify terminal / SSH needs a TTY:
+    #   docker compose exec -it app npm run auth:cli
 
 volumes:
   wwebjs_auth:
   app_data:
   app_assets:
+  claude_config:
+  cursor_config:
+  git_config:

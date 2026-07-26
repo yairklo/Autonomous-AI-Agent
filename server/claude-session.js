@@ -70,6 +70,8 @@ export class ClaudeSessionManager extends EventEmitter {
     }
 
     const existing = this.getSession(clientId);
+    // Non-interactive / container-safe: -p (print), stream-json, bypassPermissions.
+    // Coolify sets CI=1 so Claude CLI skips interactive prompts.
     const args = [
       '-p',
       cleaned,
