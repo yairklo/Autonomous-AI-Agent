@@ -120,6 +120,32 @@ export function detectWhatsappJobScan(text) {
   };
 }
 
+export function detectWhatsappCvSubmit(text) {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return null;
+  if (
+    /(implement|refactor|dispatch_coding|skip\s+grill-?me|שגר\s*ל-?\s*cursor)/i.test(cleaned) ||
+    (/(add|create|build|הוסף|להוסיף|תיישם|לבנות)/i.test(cleaned) && /(tool|כלי|mcp)/i.test(cleaned))
+  ) {
+    return null;
+  }
+  const mentionsCv = /קו["״]?ח|קורות\s*חיים|\bcv\b|\bresume\b|curriculum\s+vitae/i.test(cleaned);
+  const mentionsSubmit = /הגש|להגיש|תגיש|שלח(?:י|ו)?|submit|apply|send\s+(my\s+)?(cv|resume)/i.test(cleaned);
+  if (!mentionsCv || !mentionsSubmit) return null;
+  const emailMatch = cleaned.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  const quoted = cleaned.match(/["«»„‟]([^"«»„‟]{20,2000})["«»„‟]/);
+  const confirm = /\bconfirm\b|אשר(?:י|ו)?(?:\s+הגשה)?|ready\s+to\s+send|סמן\s+לשליחה/i.test(cleaned);
+  return {
+    mcpTool: 'submit_whatsapp_job_cv',
+    mcpArgs: {
+      ...(emailMatch ? { recipientEmail: emailMatch[0] } : {}),
+      ...(quoted?.[1] ? { jobText: quoted[1].trim() } : {}),
+      ...(confirm ? { confirm: true } : {}),
+    },
+    resolveFromScan: !emailMatch && !quoted?.[1],
+  };
+}
+
 function extractRoles(text) {
   const roles = [];
   const patterns = [

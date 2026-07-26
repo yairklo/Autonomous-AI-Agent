@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { submitWhatsappJobCv } from './cv-submitter.js';
 import { resolveDispatchScript, runDispatchTask } from './task-router.js';
 import { scanWhatsappJobs } from './whatsapp-job-scanner.js';
 
@@ -69,6 +71,26 @@ export const MCP_TOOLS = [
       required: [],
     },
   },
+  {
+    name: 'submit_whatsapp_job_cv',
+    description:
+      'Drafts a CV application for a WhatsApp-discovered job (local package + mailto). Does not send live WhatsApp; set confirm=true only after user approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string' },
+        jobText: { type: 'string' },
+        groupName: { type: 'string' },
+        author: { type: 'string' },
+        recipientEmail: { type: 'string' },
+        coverNote: { type: 'string' },
+        profilePath: { type: 'string' },
+        cvPath: { type: 'string' },
+        confirm: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
 ];
 
 export function getMcpTool(name) {
@@ -100,6 +122,9 @@ export async function executeMcpTool(name, args = {}, { onLog, signal } = {}) {
   }
   if (name === 'scan_whatsapp_jobs') {
     return executeScanWhatsappJobs(args, { onLog });
+  }
+  if (name === 'submit_whatsapp_job_cv') {
+    return executeSubmitWhatsappJobCv(args, { onLog });
   }
 
   const err = new Error(`MCP tool not implemented: ${name}`);
@@ -234,6 +259,54 @@ function executeScanWhatsappJobs(args = {}, { onLog } = {}) {
       };
     }
     onLog?.(`[mcp] tool=scan_whatsapp_jobs status=error ${err.message}`);
+    throw err;
+  }
+}
+
+function resolveCvProfilePath(explicitPath) {
+  const requested = String(explicitPath || '').trim();
+  if (requested) {
+    if (!fs.existsSync(requested)) {
+      const err = new Error(`CV profile not found: ${requested}`);
+      err.code = 'CV_PROFILE_NOT_FOUND';
+      throw err;
+    }
+    return requested;
+  }
+  if (fs.existsSync(config.cvProfilePath)) return config.cvProfilePath;
+  return config.cvFixtureProfilePath;
+}
+
+function executeSubmitWhatsappJobCv(args = {}, { onLog } = {}) {
+  const profilePath = resolveCvProfilePath(args.profilePath);
+  const mcpArgs = {
+    jobId: args.jobId != null ? String(args.jobId) : undefined,
+    jobText: args.jobText != null ? String(args.jobText) : '',
+    groupName: args.groupName != null ? String(args.groupName) : '',
+    author: args.author != null ? String(args.author) : '',
+    recipientEmail: args.recipientEmail ? String(args.recipientEmail).trim() : undefined,
+    coverNote: args.coverNote != null ? String(args.coverNote) : undefined,
+    profilePath,
+    applicationsDir: config.cvApplicationsDir,
+    cvPath: args.cvPath ? String(args.cvPath).trim() : undefined,
+    confirm: Boolean(args.confirm),
+  };
+  onLog?.(`[mcp] tool=submit_whatsapp_job_cv args=${JSON.stringify({
+    jobId: mcpArgs.jobId, groupName: mcpArgs.groupName, author: mcpArgs.author,
+    recipientEmail: mcpArgs.recipientEmail, profilePath: mcpArgs.profilePath,
+    confirm: mcpArgs.confirm, jobTextLen: mcpArgs.jobText.length,
+  })}`);
+  try {
+    const result = submitWhatsappJobCv(mcpArgs);
+    onLog?.(`[mcp] tool=submit_whatsapp_job_cv status=ok application=${result.application.id} state=${result.application.status}`);
+    return {
+      ok: true,
+      tool: 'submit_whatsapp_job_cv',
+      usedFixtureProfile: path.resolve(profilePath) === path.resolve(config.cvFixtureProfilePath),
+      ...result,
+    };
+  } catch (err) {
+    onLog?.(`[mcp] tool=submit_whatsapp_job_cv status=error ${err.message}`);
     throw err;
   }
 }

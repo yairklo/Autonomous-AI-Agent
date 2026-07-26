@@ -157,7 +157,7 @@ export function scoreJobMessage(body, { keywords = DEFAULT_JOB_KEYWORDS, roles =
   }
 
   // Soft boost for contact / apply cues
-  if (/@[\w.-]+\.\w+|https?:\/\/|שלח(?:ו)?\s*קו"?ח|send\s+(cv|resume)|להגיש/i.test(text)) {
+  if (/@[\w.-]+\.\w+|https?:\/\/|שלח(?:ו)?\s*קו["״]?ח|send\s+(cv|resume)|להגיש/i.test(text)) {
     matchedSignals.push('contact-or-apply');
     score += 1;
   }
@@ -167,6 +167,16 @@ export function scoreJobMessage(body, { keywords = DEFAULT_JOB_KEYWORDS, roles =
     score,
     matchedSignals: [...new Set(matchedSignals)],
   };
+}
+
+export function extractApplyContacts(body) {
+  const text = String(body || '');
+  const emails = [...text.matchAll(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi)].map((m) => m[0].toLowerCase());
+  const phones = [...text.matchAll(/(?:\+?\d{1,3}[\s-]?)?(?:\(?0?\d{1,3}\)?[\s-]?)?\d{2,4}[\s-]?\d{3,4}[\s-]?\d{0,4}/g)]
+    .map((m) => m[0].trim())
+    .filter((p) => p.replace(/\D/g, '').length >= 9);
+  const urls = [...text.matchAll(/https?:\/\/[^\s<>"']+/gi)].map((m) => m[0].replace(/[),.;]+$/, ''));
+  return { emails: [...new Set(emails)], phones: [...new Set(phones)], urls: [...new Set(urls)] };
 }
 
 function groupNameFromFile(filePath) {
@@ -261,6 +271,7 @@ export function scanWhatsappJobs({
       const scored = scoreJobMessage(msg.body, { keywords: kw, roles: roleList });
       if (!scored.isJob) continue;
 
+      const contacts = extractApplyContacts(msg.body);
       jobs.push({
         id: `${groupName}:${msg.timestamp || 'na'}:${jobs.length}`,
         groupName: msg.groupName,
@@ -270,6 +281,7 @@ export function scanWhatsappJobs({
         snippet: msg.body.trim().slice(0, 280),
         score: scored.score,
         matchedSignals: scored.matchedSignals,
+        contacts,
         sourceFile: path.basename(file),
       });
     }

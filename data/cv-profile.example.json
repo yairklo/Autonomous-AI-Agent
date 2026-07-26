@@ -1,0 +1,10 @@
+{
+  "name": "Your Name",
+  "email": "you@example.com",
+  "phone": "+972-50-000-0000",
+  "targetRoles": [
+    "Full Stack",
+    "Backend"
+  ],
+  "cvPath": "C:/path/to/your-cv.pdf"
+}\n
