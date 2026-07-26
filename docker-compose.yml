@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8787:8787"
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=8787
+      - HEADLESS_BROWSER=true
+      # Inject secrets via Coolify environment variables (or a local .env):
+      # TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, JOINUP_TELEGRAM_BOT_TOKEN, etc.
+    volumes:
+      # WhatsApp LocalAuth session (survives redeploys)
+      - wwebjs_auth:/app/.wwebjs_auth
+      # Excel tracker, jobs DB, failure screenshots
+      - app_data:/app/data
+      # CV PDF and other application assets
+      - app_assets:/app/assets
+    restart: unless-stopped
+
+volumes:
+  wwebjs_auth:
+  app_data:
+  app_assets:
