@@ -44,5 +44,5 @@ export function telegramActivityId(userId) {
 
 export function telegramActorLabel(userId) {
   const id = String(userId || '');
-  return id ? `Telegram · …${id.slice(-4)}` : 'Telegram';
+  return id ? `Telegram ...${id.slice(-4)}` : 'Telegram';
 }

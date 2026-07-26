@@ -142,7 +142,7 @@ function defaultActorLabel(partial) {
     String(partial.source || '').includes('telegram')
   ) {
     const id = String(partial.actorId || '');
-    return id ? `Telegram · ${id.slice(-4)}` : 'Telegram';
+    return id ? `Telegram ...${id.slice(-4)}` : 'Telegram';
   }
   if (partial.platform === 'voice' || partial.source === 'voice') return 'Voice GUI';
   if (String(partial.source || '').includes('dispatch')) return 'Cursor dispatch';

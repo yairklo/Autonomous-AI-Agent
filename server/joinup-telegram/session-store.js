@@ -131,7 +131,7 @@ export function isExplicitConfirmation(text) {
 
   // Hebrew / mixed full-sentence approvals (common Telegram phrasing)
   if (
-    /(יש אישור|אפשר לבנות|תבנה את זה|כן,?\s*תבנה|שגר(\s*ל-?\s*cursor)?|תתחיל לבנות|תתחיל לעבוד|לבצע את המשימה|תבצע את המשימה|תנסה עכשיו|עכשיו לבצע|תריץ (את )?(זה|המשימה)|בצע (את )?המשימה|שלח (את זה )?לבנייה|תשלח לבנייה)/i.test(
+    /(יש אישור|אפשר לבנות|תבנה את זה|כן,?\s*תבנה|שגר(\s*ל-?\s*cursor)?|תתחיל לבנות|תתחיל לעבוד|לבצע את המשימה|תבצע את המשימה|תנסה עכשיו|עכשיו לבצע|תריץ (את )?(זה|המשימה)|בצע (את )?המשימה|שלח (את זה )?לבנייה|תשלח לבנייה|תעביר (את זה )?(לתיקון|לקרסר|לבנייה)|תתקן( את זה)?|לתיקון בבקשה)/i.test(
       t
     )
   ) {
@@ -139,6 +139,26 @@ export function isExplicitConfirmation(text) {
   }
 
   return false;
+}
+
+/**
+ * Detect when the product LLM claims it is already sending work to Cursor/build,
+ * even if it forgot the READY_TO_BUILD marker (common Hebrew phrasing).
+ * @param {string} text
+ */
+export function claimsSendingToBuild(text) {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  return (
+    /(שולח|מעביר|שולחת|מעבירה)\s+.{0,60}(לתיקון|לבני[יה]|לביצוע|לקרסר|ל-?\s*cursor|לסוכן)/i.test(
+      t
+    ) ||
+    /(sending|handing off|dispatching)\s+.{0,60}(to\s+)?(build|fix|cursor|the agent)/i.test(
+      t
+    ) ||
+    /(start(ing)?|began)\s+(the\s+)?(build|fix)/i.test(t) ||
+    /שולח את זה לתיקון/i.test(t)
+  );
 }
 
 /**

@@ -26,6 +26,7 @@ export {
   isExplicitConfirmation,
   isCancelOrReset,
   extractReadyToBuild,
+  claimsSendingToBuild,
 } from './session-store.js';
 export { JoinUpCursorExecutor, formatCompletionMessage, assertPinnedProjectPath } from './executor.js';
 export { JoinUpProductAgent } from './product-agent.js';
