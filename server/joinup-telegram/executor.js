@@ -6,6 +6,11 @@ import {
   formatVercelTelegramLines,
   resolveJoinUpVercelUrl,
 } from './vercel.js';
+import {
+  bridgeEndRun,
+  bridgeLogLine,
+  bridgeStartRun,
+} from './run-log-bridge.js';
 
 /**
  * Cursor Agent runner pinned exclusively to the joinUp repository root.
@@ -13,7 +18,12 @@ import {
  */
 export class JoinUpCursorExecutor {
   /**
-   * @param {{ joinUpRoot: string, runDispatch?: typeof runDispatchTask }} options
+   * @param {{
+   *   joinUpRoot: string,
+   *   runDispatch?: typeof runDispatchTask,
+   *   resolveVercelUrl?: typeof resolveJoinUpVercelUrl,
+   *   bridge?: boolean,
+   * }} options
    */
   constructor(options) {
     if (!options?.joinUpRoot) {
@@ -21,6 +31,8 @@ export class JoinUpCursorExecutor {
     }
     this.joinUpRoot = pinToJoinUpRoot(options.joinUpRoot);
     this.runDispatch = options.runDispatch || runDispatchTask;
+    this.resolveVercelUrl = options.resolveVercelUrl || resolveJoinUpVercelUrl;
+    this.bridge = options.bridge !== false;
   }
 
   /**
@@ -64,7 +76,20 @@ export class JoinUpCursorExecutor {
       task,
     ].join('\n');
 
-    opts.onLog?.(
+    const runId = this.bridge
+      ? await bridgeStartRun({
+          source: 'joinup-telegram',
+          project,
+          title: task.slice(0, 120),
+        })
+      : null;
+    const log = async (line) => {
+      opts.onLog?.(line);
+      if (this.bridge) await bridgeLogLine(runId, line, { project });
+      else console.log(line);
+    };
+
+    await log(
       `[joinup-telegram] dispatch pinned cwd=${project} taskChars=${wrappedTask.length}`
     );
 
@@ -81,8 +106,17 @@ export class JoinUpCursorExecutor {
     try {
       result = await this.runDispatch(
         { project, task: wrappedTask },
-        { onLog: opts.onLog, signal: opts.signal }
+        {
+          runId: runId || undefined,
+          onLog: (line) => {
+            void log(line);
+          },
+          signal: opts.signal,
+        }
       );
+    } catch (err) {
+      if (this.bridge) await bridgeEndRun(runId, { ok: false, text: err.message });
+      throw err;
     } finally {
       if (prevMerge === undefined) delete process.env.DISPATCH_MERGE_TARGET;
       else process.env.DISPATCH_MERGE_TARGET = prevMerge;
@@ -93,21 +127,30 @@ export class JoinUpCursorExecutor {
     }
 
     // Preview URL for the Dev branch build (PR-style), never production.
-    const vercel = await resolveJoinUpVercelUrl({
+    const vercel = await this.resolveVercelUrl({
       gitBranch: process.env.JOINUP_VERCEL_BRANCH || 'Dev',
       projectRoot: project,
-      onLog: opts.onLog,
+      onLog: (line) => {
+        void log(line);
+      },
       timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 300000),
       allowProductionFallback: false,
     });
-    opts.onLog?.(
+    await log(
       `[joinup-telegram] vercel preview=${vercel.url || '(none)'} state=${vercel.state} source=${vercel.source || ''}`
     );
+    if (this.bridge) {
+      await bridgeEndRun(runId, {
+        ok: true,
+        text: vercel.url ? `Done. Preview: ${vercel.url}` : 'Done.',
+      });
+    }
 
     return {
       ok: true,
       projectPath: project,
       vercel,
+      runId,
       ...result,
     };
   }

@@ -62,6 +62,11 @@ Lists domain Grill-Me packs (e.g. `whatsapp-jobs-cv`).
 ### `GET /api/grill-me/packs/:packId`
 Query: `locale=he|en`, `format=json|reply|spec`. Returns the pack JSON, a chat-ready questionnaire (`reply`), or an empty markdown scaffold (`spec`).
 
+### Cursor Live logs
+- Terminal: while Cursor runs, the server prints `[run:…]` lines (status / tool / git / errors).
+- GUI: open the PWA — **Cursor Live** panel streams `/api/runs/stream`.
+- joinUp Telegram bot forwards the same logs to the server via `/api/runs/events` (keep `npm start` running).
+
 ### `POST /api/chat` (SSE)
 ```json
 { "clientId": "device-uuid", "text": "What's on my calendar logic today?" }

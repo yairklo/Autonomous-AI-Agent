@@ -21,10 +21,12 @@ import {
   detectCodingDispatch,
   detectWhatsappCvSubmit,
   detectWhatsappJobScan,
+  detectManualJobLink,
   isInteractiveConversationRequest,
   wantsExplicitDispatch,
 } from './task-router.js';
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
+import { mountRunEventsRoutes } from './run-events-http.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
 fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
@@ -45,6 +47,7 @@ const upload = multer({
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+mountRunEventsRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -181,9 +184,7 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
 
-  // Interactive CLI: never auto-scan / auto-CV — stay in conversation / Grill-Me pack.
   const waScan =
-    !interactiveChat &&
     !conversational &&
     config.autoScanWhatsappJobs
       ? detectWhatsappJobScan(text)
@@ -201,11 +202,32 @@ app.post('/api/chat', async (req, res) => {
   }
 
   const waCv =
-    !interactiveChat &&
     !conversational &&
     config.autoSubmitWhatsappCv
       ? detectWhatsappCvSubmit(text)
       : null;
+
+  const manualLink =
+    !conversational
+      ? detectManualJobLink(text)
+      : null;
+
+  if (manualLink) {
+    try {
+      sendSse(res, 'mcp_call', { tool: manualLink.mcpTool, args: manualLink.mcpArgs });
+      const result = await executeMcpTool(manualLink.mcpTool, manualLink.mcpArgs, {
+        onLog: (line) => sendSse(res, 'mcp_log', { line }),
+      });
+      sendSse(res, 'mcp_result', { result });
+    } catch (err) {
+      console.error('[API CHAT] MCP submit_manual_job_link error:', err);
+      sendSse(res, 'error', { error: err.message || String(err) });
+    }
+    res.end();
+    console.log('[API CHAT] MCP submit_manual_job_link request finished');
+    return;
+  }
+
   if (waCv) {
     try {
       await streamWhatsappCvSubmitViaMcp(res, clientId, waCv, ac.signal);
@@ -608,16 +630,16 @@ async function streamDispatchViaMcp(res, clientId, dispatch, signal) {
   const mcpResult = await executeMcpTool(toolName, dispatch.mcpArgs, {
     signal,
     onLog: (line) => {
-      console.log(line);
-      if (
-        /^✓/.test(line) ||
-        /\[mcp\]/i.test(line) ||
-        /Headless agent|feature\/|commit|Written prompt|Written Cursor|cursor agent/i.test(line)
-      ) {
-        const chunk = `${line}\n`;
-        full += chunk;
-        sendSse(res, 'token', { text: chunk });
-      }
+      // Structured live events go to /api/runs/stream + terminal via run-events.
+      // Also keep chat transcript updated with every Cursor/dispatch line.
+      const chunk = `${line}\n`;
+      full += chunk;
+      sendSse(res, 'token', { text: chunk });
+      sendSse(res, 'run_event', {
+        type: 'log',
+        text: line,
+        source: 'dispatch',
+      });
     },
   });
 

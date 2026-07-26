@@ -79,8 +79,16 @@ export async function resolveJoinUpVercelUrl(opts = {}) {
   const githubRepo =
     opts.githubRepo || env('JOINUP_GITHUB_REPO') || 'yairklo/JoinUpApp';
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
-  const timeoutMs = Number(opts.timeoutMs || env('JOINUP_VERCEL_WAIT_MS') || 300000);
+  const rawTimeout =
+    opts.timeoutMs !== undefined && opts.timeoutMs !== null
+      ? opts.timeoutMs
+      : env('JOINUP_VERCEL_WAIT_MS', '300000');
+  const timeoutMs = Number(rawTimeout);
   const pollMs = Number(opts.pollMs || 8000);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    onLog('[vercel] wait skipped (timeoutMs<=0)');
+    return emptyResult(gitBranch, gitSha);
+  }
   const allowProductionFallback =
     opts.allowProductionFallback === true ||
     env('JOINUP_VERCEL_ALLOW_PRODUCTION_FALLBACK') === '1';

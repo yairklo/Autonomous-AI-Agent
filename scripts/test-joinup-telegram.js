@@ -94,6 +94,13 @@ test('JoinUpCursorExecutor always dispatches to pinned joinUp root', async () =>
   const calls = [];
   const executor = new JoinUpCursorExecutor({
     joinUpRoot: tmpRoot,
+    bridge: false,
+    resolveVercelUrl: async () => ({
+      ok: true,
+      url: 'https://join-up-app-git-dev-test.vercel.app',
+      state: 'READY',
+      source: 'test',
+    }),
     runDispatch: async ({ project, task }) => {
       calls.push({ project, task });
       return { ok: true, code: 0, stdout: '', stderr: '' };
@@ -129,6 +136,13 @@ test('mock product agent grills then dispatches only after confirm', async () =>
   const dispatches = [];
   const executor = new JoinUpCursorExecutor({
     joinUpRoot: tmpRoot,
+    bridge: false,
+    resolveVercelUrl: async () => ({
+      ok: true,
+      url: 'https://join-up-app-git-dev-test.vercel.app',
+      state: 'READY',
+      source: 'test',
+    }),
     runDispatch: async (args) => {
       dispatches.push(args);
       return { ok: true, code: 0, stdout: 'ok', stderr: '' };

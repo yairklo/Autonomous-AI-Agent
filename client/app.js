@@ -4,6 +4,10 @@ const CLIENT_KEY = 'voice-agent-client-id';
 const els = {
   status: document.getElementById('statusLine'),
   transcript: document.getElementById('transcript'),
+  liveRun: document.getElementById('liveRun'),
+  liveRunLog: document.getElementById('liveRunLog'),
+  liveRunStatus: document.getElementById('liveRunStatus'),
+  liveRunClear: document.getElementById('liveRunClear'),
   ptt: document.getElementById('ptt'),
   pttLabel: document.getElementById('pttLabel'),
   textForm: document.getElementById('textForm'),
@@ -43,6 +47,15 @@ els.settingsBtn.addEventListener('click', () => {
 
 els.settingsDialog.addEventListener('close', () => {
   saveSettingsFromForm();
+});
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (state.busy) return;
+    const text = btn.dataset.preset;
+    els.textInput.value = '';
+    await sendTurn(text);
+  });
 });
 
 els.checkHealth.addEventListener('click', async () => {
@@ -250,7 +263,7 @@ async function sendTurn(text) {
     const res = await fetch(api('/api/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: state.clientId, text }),
+      body: JSON.stringify({ clientId: state.clientId, text, interactiveChat: true }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -261,6 +274,17 @@ async function sendTurn(text) {
         full += t;
         assistantEl.textContent = full;
         scrollTranscript();
+      },
+      onToolCall: (payload) => {
+        addBubble('tool', `[Tool Call] ${payload.tool || 'dispatch_coding_task'}`);
+      },
+      onToolResult: (payload) => {
+        addBubble('tool', `[Tool Result] ${payload.tool || ''} ok=${payload.ok}`);
+      },
+      onStatus: (payload) => {
+        if (payload.stage !== 'stt' && payload.stage !== 'claude') {
+          addBubble('status-update', `[Status] ${payload.stage} ${payload.tool ? `tool=${payload.tool}` : ''}`);
+        }
       },
       onError: (msg) => {
         throw new Error(msg);
@@ -305,6 +329,17 @@ async function sendVoiceBlob(blob) {
         full += t;
         assistantEl.textContent = full;
         scrollTranscript();
+      },
+      onToolCall: (payload) => {
+        addBubble('tool', `[Tool Call] ${payload.tool || 'dispatch_coding_task'}`);
+      },
+      onToolResult: (payload) => {
+        addBubble('tool', `[Tool Result] ${payload.tool || ''} ok=${payload.ok}`);
+      },
+      onStatus: (payload) => {
+        if (payload.stage !== 'stt' && payload.stage !== 'claude') {
+          addBubble('status-update', `[Status] ${payload.stage} ${payload.tool ? `tool=${payload.tool}` : ''}`);
+        }
       },
       onError: (msg) => {
         throw new Error(msg);
@@ -354,10 +389,15 @@ async function readSse(res, handlers) {
       }
       if (event === 'token' && payload.text) handlers.onToken?.(payload.text);
       if (event === 'transcript' && payload.text) handlers.onTranscript?.(payload.text);
+      if (event === 'tool_call') handlers.onToolCall?.(payload);
+      if (event === 'tool_result') handlers.onToolResult?.(payload);
       if (event === 'done') handlers.onDone?.(payload);
       if (event === 'error') handlers.onError?.(payload.error || 'Unknown error');
-      if (event === 'status' && payload.stage) {
-        setStatus(payload.stage === 'stt' ? 'Transcribing…' : 'Thinking…');
+      if (event === 'status') {
+        handlers.onStatus?.(payload);
+        if (payload.stage) {
+          setStatus(payload.stage === 'stt' ? 'Transcribing…' : 'Thinking…');
+        }
       }
     }
   }
@@ -445,3 +485,71 @@ function saveSettingsFromForm() {
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+/* ---- Cursor Live Run console (SSE /api/runs/stream) ---- */
+function appendLiveRunEvent(event) {
+  if (!els.liveRunLog || !event) return;
+  const line = document.createElement('div');
+  line.className = 'live-run-line';
+  line.dataset.type = event.type || 'log';
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.textContent = event.type || 'log';
+  line.appendChild(tag);
+  line.appendChild(document.createTextNode(' ' + (event.text || '')));
+  els.liveRunLog.appendChild(line);
+  while (els.liveRunLog.childElementCount > 300) {
+    els.liveRunLog.removeChild(els.liveRunLog.firstChild);
+  }
+  els.liveRunLog.scrollTop = els.liveRunLog.scrollHeight;
+
+  if (event.type === 'run_start') {
+    els.liveRunStatus.textContent = 'running';
+  } else if (event.type === 'run_end') {
+    els.liveRunStatus.textContent = 'done';
+  } else if (event.type === 'error') {
+    els.liveRunStatus.textContent = 'error';
+  } else if (els.liveRunStatus.textContent === 'idle') {
+    els.liveRunStatus.textContent = 'live';
+  }
+}
+
+function connectLiveRunStream() {
+  if (!els.liveRunLog || typeof EventSource === 'undefined') return;
+  if (state._liveRunEs) {
+    try {
+      state._liveRunEs.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  const url = api('/api/runs/stream');
+  const es = new EventSource(url);
+  state._liveRunEs = es;
+  els.liveRunStatus.textContent = 'connecting';
+
+  es.addEventListener('hello', () => {
+    els.liveRunStatus.textContent = 'idle';
+  });
+  es.addEventListener('run_event', (msg) => {
+    try {
+      appendLiveRunEvent(JSON.parse(msg.data));
+    } catch {
+      /* ignore */
+    }
+  });
+  es.onerror = () => {
+    els.liveRunStatus.textContent = 'reconnecting';
+    es.close();
+    setTimeout(connectLiveRunStream, 2500);
+  };
+}
+
+if (els.liveRunClear) {
+  els.liveRunClear.addEventListener('click', () => {
+    if (els.liveRunLog) els.liveRunLog.innerHTML = '';
+    els.liveRunStatus.textContent = 'idle';
+  });
+}
+
+connectLiveRunStream();

@@ -344,3 +344,143 @@ dialog::backdrop {
     animation: none;
   }
 }
+
+/* Preset Actions */
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.preset-btn {
+  background: rgba(31, 111, 91, 0.4);
+  color: var(--sand);
+  border: 1px solid rgba(125, 206, 160, 0.3);
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.preset-btn:hover {
+  background: rgba(31, 111, 91, 0.7);
+  border-color: rgba(125, 206, 160, 0.6);
+}
+
+/* Cursor live run console */
+.live-run {
+  margin: 0.5rem 1rem 0.75rem;
+  border: 1px solid rgba(125, 206, 160, 0.28);
+  border-radius: 0.85rem;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.live-run-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid rgba(125, 206, 160, 0.18);
+}
+
+.live-run-head h2 {
+  margin: 0;
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--mint);
+}
+
+.live-run-status {
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sand);
+}
+
+.live-run-clear {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.live-run-log {
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.5rem 0.65rem 0.75rem;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.live-run-line {
+  margin: 0.15rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+
+.live-run-line[data-type='status'],
+.live-run-line[data-type='run_start'],
+.live-run-line[data-type='run_end'] {
+  color: var(--sand);
+}
+
+.live-run-line[data-type='tool'],
+.live-run-line[data-type='git'] {
+  color: var(--mint);
+}
+
+.live-run-line[data-type='thinking'],
+.live-run-line[data-type='plan'],
+.live-run-line[data-type='assistant'] {
+  color: #a8c7fa;
+}
+
+.live-run-line[data-type='error'] {
+  color: var(--danger);
+}
+
+.live-run-line .tag {
+  display: inline-block;
+  min-width: 4.5rem;
+  opacity: 0.75;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+/* Console Bubbles */
+.bubble.console {
+  font-family: monospace;
+  font-size: 0.85rem;
+  background: rgba(0, 0, 0, 0.4);
+  color: #a8c7fa;
+  border: 1px solid rgba(168, 199, 250, 0.2);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  white-space: pre-wrap;
+}
+
+.bubble.tool {
+  font-family: monospace;
+  font-size: 0.85rem;
+  background: rgba(125, 206, 160, 0.1);
+  color: var(--mint);
+  border: 1px solid rgba(125, 206, 160, 0.3);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  align-self: flex-start;
+}
+
+.bubble.status-update {
+  font-size: 0.85rem;
+  background: rgba(233, 196, 106, 0.1);
+  color: var(--sand);
+  border: 1px dashed rgba(233, 196, 106, 0.4);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  align-self: center;
+}
