@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 /**
- * After Dev deploy: resolve Vercel URL and notify the joinUp Telegram allow-list.
+ * After Dev deploy: resolve the Dev *preview* Vercel URL (not production)
+ * and notify the joinUp Telegram allow-list.
  *
- * Requires in .env:
+ * Requires:
  *   JOINUP_TELEGRAM_BOT_TOKEN
  *   ALLOWED_TELEGRAM_USER_IDS
- *   JOINUP_VERCEL_PRODUCTION_URL   (stable URL — always sent)
- * Optional:
- *   VERCEL_TOKEN + VERCEL_PROJECT_ID/NAME to wait for READY deploy
+ *   VERCEL_TOKEN + VERCEL_PROJECT_ID   (preferred)
+ *     or GITHUB_TOKEN                 (PR-style deployment / check URL)
  */
-import {
-  loadJoinUpTelegramConfig,
-} from '../server/joinup-telegram/config.js';
+import { loadJoinUpTelegramConfig } from '../server/joinup-telegram/config.js';
 import {
   formatVercelTelegramLines,
   resolveJoinUpVercelUrl,
@@ -24,17 +22,21 @@ if (!config.botToken || config.allowedUserIds.size === 0) {
 }
 
 const vercel = await resolveJoinUpVercelUrl({
-  gitBranch: 'Dev',
+  gitBranch: process.env.JOINUP_VERCEL_BRANCH || 'Dev',
+  projectRoot: config.joinUpRoot,
   onLog: (l) => console.log(l),
-  timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 240000),
+  timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 300000),
+  allowProductionFallback: false,
 });
 
 const text = [
-  'מוכן — תיקון הבילד של joinUp עלה ל-Dev.',
+  'מוכן — העדכון ל-joinUp עלה לענף Dev.',
   '',
   ...formatVercelTelegramLines(vercel),
   '',
-  'אפשר לפתוח ולבדוק שהגרסה באוויר עובדת.',
+  vercel.url
+    ? 'זה קישור ה-preview של הבילד (כמו ב-PR ב-GitHub) — לא האתר בפרודקשן.'
+    : 'כדי לקבל קישור preview אוטומטית, הוסיפו ל-.env: VERCEL_TOKEN ו-VERCEL_PROJECT_ID (או GITHUB_TOKEN).',
 ].join('\n');
 
 for (const chatId of config.allowedUserIds) {
@@ -43,16 +45,15 @@ for (const chatId of config.allowedUserIds) {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: false }),
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: false,
+      }),
     }
   );
   const data = await res.json();
   console.log(`notify chat=${chatId} ok=${data.ok}`);
 }
 
-if (!vercel.url) {
-  console.error(
-    'No Vercel URL. Set JOINUP_VERCEL_PRODUCTION_URL in .env (and optionally VERCEL_TOKEN).'
-  );
-  process.exit(2);
-}
+if (!vercel.url) process.exit(2);

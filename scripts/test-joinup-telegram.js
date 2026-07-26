@@ -171,18 +171,21 @@ test('mock product agent grills then dispatches only after confirm', async () =>
   assert.equal(dispatches[0].project, path.resolve(tmpRoot));
 });
 
-test('completion message always includes Vercel link when present', () => {
+test('completion message includes Dev preview Vercel link when present', () => {
+  const preview = 'https://join-up-app-git-dev-team.vercel.app';
   const lines = formatVercelTelegramLines({
-    url: 'https://joinup.vercel.app',
+    url: preview,
     state: 'READY',
+    sha: 'abc1234',
   });
-  assert.ok(lines.some((l) => /vercel\.app/i.test(l)));
+  assert.ok(lines.some((l) => l.includes(preview)));
+  assert.ok(lines.some((l) => /preview|Dev/i.test(l)));
   const msg = formatCompletionMessage({
     ok: true,
-    vercel: { url: 'https://joinup.vercel.app', state: 'READY' },
+    vercel: { url: preview, state: 'READY' },
   });
-  assert.match(msg, /https:\/\/joinup\.vercel\.app/);
-  assert.match(msg, /קישור לגרסה באוויר/);
+  assert.match(msg, /join-up-app-git-dev-team\.vercel\.app/);
+  assert.doesNotMatch(msg, /^https:\/\/join-up-app\.vercel\.app$/m);
 });
 
 console.log('joinUp Telegram bot tests: ok');

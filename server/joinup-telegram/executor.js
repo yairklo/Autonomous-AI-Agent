@@ -92,15 +92,16 @@ export class JoinUpCursorExecutor {
       else process.env.DISPATCH_MAX_FIX_LOOPS = prevLoops;
     }
 
-    // Always resolve a Vercel link after merge/push to Dev (best-effort wait for READY).
+    // Preview URL for the Dev branch build (PR-style), never production.
     const vercel = await resolveJoinUpVercelUrl({
       gitBranch: process.env.JOINUP_VERCEL_BRANCH || 'Dev',
+      projectRoot: project,
       onLog: opts.onLog,
-      // After dispatch we already waited a long time; keep poll modest unless configured.
-      timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 180000),
+      timeoutMs: Number(process.env.JOINUP_VERCEL_WAIT_MS || 300000),
+      allowProductionFallback: false,
     });
     opts.onLog?.(
-      `[joinup-telegram] vercel url=${vercel.url || '(none)'} state=${vercel.state}`
+      `[joinup-telegram] vercel preview=${vercel.url || '(none)'} state=${vercel.state} source=${vercel.source || ''}`
     );
 
     return {
