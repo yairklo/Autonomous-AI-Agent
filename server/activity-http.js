@@ -23,26 +23,12 @@ export function mountActivityRoutes(app) {
     });
   });
 
-  app.get('/api/history/:activityId', (req, res) => {
-    const activityId = String(req.params.activityId || '');
-    const activity = getActivity(activityId);
-    const events = getActivityEvents(activityId, {
-      limit: Number(req.query.limit || 400),
-    });
-    if (!activity && events.length === 0) {
-      return res.status(404).json({ error: 'activity not found' });
-    }
-    res.json({
-      ok: true,
-      activity: activity || { activityId, title: activityId },
-      events,
-    });
-  });
-
+  // Must be registered before /api/history/:activityId or "stream" is captured as an id → 404.
   app.get('/api/history/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
     res.write(
       `event: hello\ndata: ${JSON.stringify({ ok: true, activities: listActivities({ limit: 40 }).length })}\n\n`
@@ -58,6 +44,22 @@ export function mountActivityRoutes(app) {
     req.on('close', () => {
       clearInterval(heartbeat);
       unsub();
+    });
+  });
+
+  app.get('/api/history/:activityId', (req, res) => {
+    const activityId = String(req.params.activityId || '');
+    const activity = getActivity(activityId);
+    const events = getActivityEvents(activityId, {
+      limit: Number(req.query.limit || 400),
+    });
+    if (!activity && events.length === 0) {
+      return res.status(404).json({ error: 'activity not found' });
+    }
+    res.json({
+      ok: true,
+      activity: activity || { activityId, title: activityId },
+      events,
     });
   });
 
