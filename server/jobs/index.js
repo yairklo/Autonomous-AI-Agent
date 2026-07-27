@@ -1,4 +1,11 @@
-﻿export { loadJobsConfig, isAllowedGroup } from './jobs-config.js';
+﻿export {
+  loadJobsConfig,
+  isAllowedGroup,
+  saveWhatsappGroups,
+  normalizeGroupNames,
+  resolveWhatsappGroups,
+  WHATSAPP_GROUPS_OVERRIDE_PATH,
+} from './jobs-config.js';
 export { JobDb, openJobDb } from './job-db.js';
 export { matchFullStackOrBackend, filterTargetJobs } from './job-matcher.js';
 export { createTelegramClient } from './telegram.js';

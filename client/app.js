@@ -46,6 +46,10 @@ const els = {
   healthHint: document.getElementById('healthHint'),
   checkHealth: document.getElementById('checkHealth'),
   resetSession: document.getElementById('resetSession'),
+  waGroupsList: document.getElementById('waGroupsList'),
+  waGroupInput: document.getElementById('waGroupInput'),
+  waGroupAdd: document.getElementById('waGroupAdd'),
+  waGroupsHint: document.getElementById('waGroupsHint'),
 };
 
 const state = {
@@ -61,6 +65,7 @@ const state = {
   historyQuery: '',
   historySelectedId: '',
   historyItems: [],
+  waGroups: [],
 };
 
 localStorage.setItem(CLIENT_KEY, state.clientId);
@@ -73,6 +78,7 @@ if ('serviceWorker' in navigator) {
 els.settingsBtn.addEventListener('click', () => {
   applySettingsToForm();
   els.settingsDialog.showModal();
+  void loadWhatsappGroups();
 });
 
 els.settingsDialog.addEventListener('close', () => {
@@ -113,6 +119,106 @@ els.resetSession.addEventListener('click', async () => {
     addBubble('system', `Reset failed: ${err.message}`);
   }
 });
+
+if (els.waGroupAdd) {
+  els.waGroupAdd.addEventListener('click', () => void addWhatsappGroup());
+}
+if (els.waGroupInput) {
+  els.waGroupInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      void addWhatsappGroup();
+    }
+  });
+}
+
+async function loadWhatsappGroups() {
+  if (!els.waGroupsList || !els.waGroupsHint) return;
+  els.waGroupsHint.textContent = 'Loading groups…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'));
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    state.waGroups = Array.isArray(data.groups) ? data.groups : [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent =
+      `Source: ${data.source || 'config'}. ` +
+      'Connect on VPS: npm run whatsapp:connect';
+  } catch (err) {
+    els.waGroupsHint.textContent = `Could not load groups: ${err.message}`;
+  }
+}
+
+function renderWhatsappGroups() {
+  if (!els.waGroupsList) return;
+  els.waGroupsList.replaceChildren();
+  if (!state.waGroups.length) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No groups yet — add one below.';
+    els.waGroupsList.appendChild(empty);
+    return;
+  }
+  for (const name of state.waGroups) {
+    const li = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'wa-group-name';
+    label.textContent = name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'ghost danger';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => void removeWhatsappGroup(name));
+    li.append(label, remove);
+    els.waGroupsList.appendChild(li);
+  }
+}
+
+async function addWhatsappGroup() {
+  if (!els.waGroupInput || !els.waGroupsHint) return;
+  const name = els.waGroupInput.value.trim();
+  if (!name) return;
+  els.waGroupsHint.textContent = 'Saving…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: name }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    els.waGroupInput.value = '';
+    state.waGroups = data.groups || [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+  } catch (err) {
+    els.waGroupsHint.textContent = `Add failed: ${err.message}`;
+  }
+}
+
+async function removeWhatsappGroup(name) {
+  if (!els.waGroupsHint) return;
+  els.waGroupsHint.textContent = 'Removing…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: name }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    state.waGroups = data.groups || [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+  } catch (err) {
+    els.waGroupsHint.textContent = `Remove failed: ${err.message}`;
+  }
+}
 
 els.textForm.addEventListener('submit', async (e) => {
   e.preventDefault();
