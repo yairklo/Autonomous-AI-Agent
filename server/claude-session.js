@@ -9,6 +9,45 @@ import {
 } from './grill-me-packs.js';
 
 /**
+ * Env for non-interactive Claude CLI in Docker/Coolify (often runs as root).
+ *
+ * `--permission-mode bypassPermissions` is the supported flag (not
+ * `--dangerously-skip-permissions`). As root, Claude Code still rejects
+ * bypassPermissions unless `IS_SANDBOX=1` (or CLAUDE_CODE_BUBBLEWRAP=1).
+ * We also honor ALLOW_ROOT / IS_SANDBOXED aliases from Coolify env.
+ *
+ * @param {NodeJS.ProcessEnv} [base]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function buildClaudeCliEnv(base = process.env) {
+  const env = {
+    ...base,
+    CI: base.CI || '1',
+  };
+
+  const truthy = (v) =>
+    ['1', 'true', 'yes', 'on'].includes(String(v || '').trim().toLowerCase());
+
+  const isRoot =
+    process.platform !== 'win32' &&
+    typeof process.getuid === 'function' &&
+    process.getuid() === 0;
+  const inDocker = fs.existsSync('/.dockerenv');
+  const allowRoot =
+    truthy(base.IS_SANDBOX) ||
+    truthy(base.IS_SANDBOXED) ||
+    truthy(base.ALLOW_ROOT) ||
+    truthy(base.CLAUDE_CODE_BUBBLEWRAP);
+
+  if (isRoot || inDocker || allowRoot) {
+    // Official escape hatch for root + bypassPermissions inside containers
+    env.IS_SANDBOX = '1';
+  }
+
+  return env;
+}
+
+/**
  * Manages continuous Claude CLI conversations via print + resume.
  */
 export class ClaudeSessionManager extends EventEmitter {
@@ -70,8 +109,10 @@ export class ClaudeSessionManager extends EventEmitter {
     }
 
     const existing = this.getSession(clientId);
-    // Non-interactive / container-safe: -p (print), stream-json, bypassPermissions.
-    // Coolify sets CI=1 so Claude CLI skips interactive prompts.
+    // Non-interactive / container-safe flags:
+    // -p (print), stream-json, --permission-mode bypassPermissions
+    // Do NOT pass --dangerously-skip-permissions (rejected as root unless IS_SANDBOX=1;
+    // bypassPermissions + IS_SANDBOX is set in buildClaudeCliEnv).
     const args = [
       '-p',
       cleaned,
@@ -80,7 +121,7 @@ export class ClaudeSessionManager extends EventEmitter {
       '--verbose',
       '--system-prompt',
       this.systemPrompt,
-      // Voice agent should not hang on tool permissions
+      // Prefer bypassPermissions over --dangerously-skip-permissions
       '--permission-mode',
       'bypassPermissions',
     ];
@@ -276,19 +317,13 @@ export class ClaudeSessionManager extends EventEmitter {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             shell: true,
-            env: {
-              ...process.env,
-              CI: process.env.CI || '1',
-            },
+            env: buildClaudeCliEnv(process.env),
           });
         } else {
           child = spawn(binToSpawn, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
-            env: {
-              ...process.env,
-              CI: process.env.CI || '1',
-            },
+            env: buildClaudeCliEnv(process.env),
           });
         }
 

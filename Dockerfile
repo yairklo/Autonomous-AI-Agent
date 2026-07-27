@@ -55,7 +55,8 @@ ENV NODE_ENV=production \
     JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp \
     JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git \
     JOINUP_GITHUB_REPO=yairklo/JoinUpApp \
-    WORKSPACE_BOOTSTRAP_STRICT=1
+    WORKSPACE_BOOTSTRAP_STRICT=1 \
+    IS_SANDBOX=1
 
 EXPOSE 8787
 

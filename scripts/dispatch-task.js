@@ -565,6 +565,8 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
         // Prefer headless / non-interactive behavior inside Coolify containers
         CI: env.CI || '1',
         NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
+        // Claude Code rejects bypassPermissions as root unless IS_SANDBOX=1
+        IS_SANDBOX: env.IS_SANDBOX || '1',
       },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
