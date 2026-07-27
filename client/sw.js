@@ -1,4 +1,4 @@
-const CACHE = 'voice-agent-v1';
+const CACHE = 'voice-agent-v2';
 const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', (event) => {

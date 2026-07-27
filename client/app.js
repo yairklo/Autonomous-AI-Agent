@@ -1,6 +1,26 @@
 const STORAGE_KEY = 'voice-agent-settings-v1';
 const CLIENT_KEY = 'voice-agent-client-id';
 
+/** Secure-context only in some browsers; HTTP VPS IPs need a fallback. */
+function newClientId() {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* non-secure context */
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 const els = {
   status: document.getElementById('statusLine'),
   transcript: document.getElementById('transcript'),
@@ -36,7 +56,7 @@ const state = {
   chunks: [],
   partial: '',
   settings: loadSettings(),
-  clientId: localStorage.getItem(CLIENT_KEY) || crypto.randomUUID(),
+  clientId: localStorage.getItem(CLIENT_KEY) || newClientId(),
   historyPlatform: '',
   historyQuery: '',
   historySelectedId: '',
