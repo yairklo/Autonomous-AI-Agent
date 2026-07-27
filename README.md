@@ -114,7 +114,7 @@ Returns `audio/wav` when a local engine works (Windows SAPI / macOS `say` / espe
 | `ALLOWED_TELEGRAM_USER_IDS` | — | Comma-separated Telegram user IDs allow-list |
 | `JOINUP_PROJECT_ROOT` | `C:\JoinUpApp` | Absolute path to the joinUp repo (execution is pinned here) |
 | `JOINUP_TELEGRAM_MOCK` | `0` | `1` = mock product grilling (no Claude) |
-| `JOINUP_TELEGRAM_AUTOSTART` | `0` | `1` = start joinUp bot with `npm start` |
+| `JOINUP_TELEGRAM_AUTOSTART` | `0` | With `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1` only: embed bot in `npm start` (local). Coolify: leave both unset/`0`. |
 
 ### joinUp Telegram Product Bot
 

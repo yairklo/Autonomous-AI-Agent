@@ -898,10 +898,17 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
   console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
-  console.log(`[voice-agent] joinUp Telegram bot: npm run joinup:telegram`);
 
-  // Optional: start joinUp collaborator bot alongside the voice agent.
-  if (process.env.JOINUP_TELEGRAM_AUTOSTART === '1') {
+  // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).
+  // Coolify often still has JOINUP_TELEGRAM_AUTOSTART=1 from older deploys —
+  // that alone must NOT start the bot inside Dockerfile.app.
+  // Embedded mode requires BOTH flags (local combined process only).
+  const tgAutostart = process.env.JOINUP_TELEGRAM_AUTOSTART === '1';
+  const tgAllowEmbedded = process.env.JOINUP_TELEGRAM_ALLOW_EMBEDDED === '1';
+  if (tgAutostart && tgAllowEmbedded) {
+    console.log(
+      '[voice-agent] starting embedded joinUp Telegram (JOINUP_TELEGRAM_ALLOW_EMBEDDED=1)'
+    );
     import('./joinup-telegram/index.js')
       .then(({ startJoinUpTelegramService }) =>
         startJoinUpTelegramService({
@@ -911,6 +918,18 @@ const server = app.listen(config.port, config.host, () => {
       .catch((err) => {
         console.error('[joinup-telegram] autostart failed:', err.message);
       });
+  } else {
+    console.log(
+      '[voice-agent] joinUp Telegram NOT started in this process ' +
+        `(autostart=${tgAutostart ? '1' : '0'} allowEmbedded=${tgAllowEmbedded ? '1' : '0'}). ` +
+        'Use Coolify app Dockerfile.joinup-telegram, or npm run joinup:telegram.'
+    );
+    if (tgAutostart && !tgAllowEmbedded) {
+      console.warn(
+        '[voice-agent] JOINUP_TELEGRAM_AUTOSTART=1 ignored without JOINUP_TELEGRAM_ALLOW_EMBEDDED=1. ' +
+          'Remove AUTOSTART from Coolify env on the voice-agent app.'
+      );
+    }
   }
 
 });
