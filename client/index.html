@@ -130,6 +130,26 @@
           Prefer server TTS when available
         </label>
         <p class="hint" id="healthHint">Not checked yet.</p>
+
+        <h2>WhatsApp groups</h2>
+        <p class="hint">
+          Exact group names to watch. Saved on the server under
+          <code>data/whatsapp-groups.json</code>. Connect once with
+          <code>npm run whatsapp:connect</code> on the VPS and scan the QR.
+        </p>
+        <ul id="waGroupsList" class="wa-groups-list" aria-label="Watched WhatsApp groups"></ul>
+        <div class="wa-groups-add">
+          <input
+            id="waGroupInput"
+            type="text"
+            placeholder="Group name (exact)…"
+            aria-label="New WhatsApp group name"
+            autocomplete="off"
+          />
+          <button type="button" id="waGroupAdd" class="send">Add</button>
+        </div>
+        <p class="hint" id="waGroupsHint">Loading groups…</p>
+
         <div class="settings-actions">
           <button type="button" id="checkHealth" class="ghost">Check health</button>
           <button type="button" id="resetSession" class="ghost danger">Reset session</button>

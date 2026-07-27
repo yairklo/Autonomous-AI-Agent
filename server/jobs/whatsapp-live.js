@@ -2,11 +2,24 @@
  * Real-time WhatsApp group scanner via whatsapp-web.js.
  * SAFETY: listen-only — never send messages to groups (or anywhere).
  *
- * Groups must come from config.json allow-list only.
+ * Groups must come from config.json allow-list (or data/whatsapp-groups.json override).
  */
 
+import { createRequire } from 'node:module';
 import { isAllowedGroup } from './jobs-config.js';
 import { filterTargetJobs } from './job-matcher.js';
+
+const require = createRequire(import.meta.url);
+
+function printQrToTerminal(qr, onLog) {
+  onLog?.('[whatsapp] Scan this QR with WhatsApp → Linked devices:');
+  try {
+    const qrcode = require('qrcode-terminal');
+    qrcode.generate(qr, { small: true });
+  } catch {
+    onLog?.(`[whatsapp] QR (raw): ${qr}`);
+  }
+}
 
 /**
  * @param {object} opts
@@ -142,7 +155,7 @@ async function defaultCreateClient({ onLog } = {}) {
   }
   const { Client, LocalAuth } = wweb;
   onLog?.('[whatsapp] creating whatsapp-web.js Client (LocalAuth, local only)');
-  return new Client({
+  const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
     puppeteer: {
       headless: true,
@@ -150,6 +163,17 @@ async function defaultCreateClient({ onLog } = {}) {
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     },
   });
+  if (typeof client.on === 'function') {
+    client.on('qr', (qr) => printQrToTerminal(qr, onLog));
+    client.on('authenticated', () =>
+      onLog?.('[whatsapp] authenticated — session saved under .wwebjs_auth')
+    );
+    client.on('ready', () => onLog?.('[whatsapp] client ready (listen-only)'));
+    client.on('auth_failure', (msg) =>
+      onLog?.(`[whatsapp] auth failure: ${msg}`)
+    );
+  }
+  return client;
 }
 
 /**

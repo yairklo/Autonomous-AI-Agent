@@ -3,9 +3,83 @@ import path from 'node:path';
 import { config as appConfig } from '../config.js';
 
 const DEFAULT_CONFIG_PATH = path.join(appConfig.root, 'config.json');
+/** Persisted on the `data` volume so GUI edits survive Coolify redeploys. */
+export const WHATSAPP_GROUPS_OVERRIDE_PATH = path.join(
+  appConfig.root,
+  'data',
+  'whatsapp-groups.json'
+);
 
 /**
- * Load jobs pipeline config from config.json (groups allow-list lives here only).
+ * Normalize and dedupe group names (order preserved).
+ * @param {unknown} groups
+ * @returns {string[]}
+ */
+export function normalizeGroupNames(groups) {
+  const seen = new Set();
+  const out = [];
+  for (const g of Array.isArray(groups) ? groups : []) {
+    const name = String(g || '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Resolve allow-listed WhatsApp groups: data/whatsapp-groups.json overrides config.json.
+ * @param {object} raw - parsed config.json
+ * @param {string} [overridePath]
+ * @returns {{ groups: string[], source: 'override' | 'config' }}
+ */
+export function resolveWhatsappGroups(
+  raw,
+  overridePath = WHATSAPP_GROUPS_OVERRIDE_PATH
+) {
+  const fromConfig = normalizeGroupNames(raw?.whatsapp?.groups);
+  if (overridePath && fs.existsSync(overridePath)) {
+    try {
+      const override = JSON.parse(fs.readFileSync(overridePath, 'utf8'));
+      const groups = normalizeGroupNames(override?.groups);
+      if (groups.length) {
+        return { groups, source: 'override' };
+      }
+    } catch {
+      /* fall through to config.json */
+    }
+  }
+  return { groups: fromConfig, source: 'config' };
+}
+
+/**
+ * Persist WhatsApp group allow-list to data/whatsapp-groups.json (GUI / API).
+ * @param {string[]} groups
+ * @param {object} [opts]
+ * @param {string} [opts.overridePath]
+ * @returns {{ groups: string[], path: string }}
+ */
+export function saveWhatsappGroups(groups, { overridePath } = {}) {
+  const cleaned = normalizeGroupNames(groups);
+  if (!cleaned.length) {
+    const err = new Error('At least one WhatsApp group name is required');
+    err.code = 'JOBS_GROUPS_EMPTY';
+    throw err;
+  }
+  const target = path.resolve(overridePath || WHATSAPP_GROUPS_OVERRIDE_PATH);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const payload = {
+    groups: cleaned,
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return { groups: cleaned, path: target };
+}
+
+/**
+ * Load jobs pipeline config from config.json (groups allow-list; optional data override).
  * @param {string} [configPath]
  */
 export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
@@ -25,9 +99,20 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
     throw err;
   }
 
-  const groups = Array.isArray(raw.whatsapp?.groups)
-    ? raw.whatsapp.groups.map((g) => String(g).trim()).filter(Boolean)
-    : [];
+  const isDefaultConfig = resolved === path.resolve(DEFAULT_CONFIG_PATH);
+  const localOverridePath = isDefaultConfig
+    ? WHATSAPP_GROUPS_OVERRIDE_PATH
+    : path.join(path.dirname(resolved), 'data', 'whatsapp-groups.json');
+  // Only apply workspace data/whatsapp-groups.json for the default config so
+  // temp/test configs are not polluted by a live GUI override.
+  const groupsInfo = resolveWhatsappGroups(
+    raw,
+    isDefaultConfig || fs.existsSync(localOverridePath)
+      ? localOverridePath
+      : null
+  );
+
+  const groups = groupsInfo.groups;
   if (!groups.length) {
     const err = new Error('config.json whatsapp.groups must list at least one group');
     err.code = 'JOBS_CONFIG_INVALID';
@@ -36,6 +121,9 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
 
   return {
     path: resolved,
+    groupsSource: groupsInfo.source,
+    groupsOverridePath:
+      groupsInfo.source === 'override' ? localOverridePath : null,
     whatsapp: {
       groups,
       scanMode: raw.whatsapp?.scanMode || 'realtime',

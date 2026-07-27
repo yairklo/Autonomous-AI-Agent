@@ -471,6 +471,8 @@ test('executeMcpTool submit_whatsapp_job_cv uses fixture profile', async () => {
       jobText: 'דרוש Full Stack. שלחו קו"ח ל-jobs@example.com',
       groupName: 'Jobs Israel',
       author: 'Dana HR',
+      profilePath: config.cvFixtureProfilePath,
+      cvPath: path.join(config.root, 'assets', 'cv.pdf'),
     },
     { onLog: (line) => logs.push(line) }
   );
@@ -497,6 +499,55 @@ test('jobs config.json allow-lists WhatsApp groups only', async () => {
   assert.strictEqual(isAllowedGroup('Random Spam Group', cfg), false);
   assert.ok(cfg.safety.neverSendWhatsappGroupMessages);
   assert.ok(cfg.safety.neverSubmitWithoutTelegramApproval);
+});
+
+test('saveWhatsappGroups writes override used by loadJobsConfig', async () => {
+  const {
+    loadJobsConfig,
+    saveWhatsappGroups,
+    normalizeGroupNames,
+  } = await import('../server/jobs/jobs-config.js');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-groups-'));
+  const cfgPath = path.join(tmp, 'config.json');
+  const overridePath = path.join(tmp, 'data', 'whatsapp-groups.json');
+  try {
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        whatsapp: { groups: ['Jobs Israel'], textOnly: true, neverSendMessages: true },
+        roles: ['Backend'],
+        safety: {
+          neverSendWhatsappGroupMessages: true,
+          neverSubmitWithoutTelegramApproval: true,
+        },
+      }),
+      'utf8'
+    );
+    const saved = saveWhatsappGroups(['My Custom Jobs', '  My Custom Jobs  ', 'Backend IL'], {
+      overridePath,
+    });
+    assert.deepStrictEqual(saved.groups, ['My Custom Jobs', 'Backend IL']);
+    assert.ok(fs.existsSync(overridePath));
+
+    const cfg = loadJobsConfig(cfgPath);
+    assert.deepStrictEqual(cfg.whatsapp.groups, ['My Custom Jobs', 'Backend IL']);
+    assert.strictEqual(cfg.groupsSource, 'override');
+    assert.deepStrictEqual(
+      normalizeGroupNames(['a', 'A', '', 'b']),
+      ['a', 'b']
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('connect-whatsapp script exists and documents QR login', () => {
+  const script = path.join(config.root, 'scripts', 'connect-whatsapp.js');
+  assert.ok(fs.existsSync(script));
+  const src = fs.readFileSync(script, 'utf8');
+  assert.match(src, /qrcode-terminal/);
+  assert.match(src, /LocalAuth/);
+  assert.match(src, /\.wwebjs_auth/);
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {

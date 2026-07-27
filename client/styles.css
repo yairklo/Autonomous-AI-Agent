@@ -289,7 +289,9 @@ dialog {
   background: #10201c;
   color: var(--ink);
   padding: 0;
-  width: min(92vw, 380px);
+  width: min(92vw, 420px);
+  max-height: min(90dvh, 720px);
+  overflow: auto;
 }
 
 dialog::backdrop {
@@ -320,7 +322,8 @@ dialog::backdrop {
   gap: 0.55rem;
 }
 
-.settings input[type="url"] {
+.settings input[type="url"],
+.settings input[type="text"] {
   width: 100%;
   border-radius: 0.65rem;
   border: 1px solid rgba(231, 215, 177, 0.25);
@@ -330,10 +333,56 @@ dialog::backdrop {
   font: inherit;
 }
 
+.settings code {
+  font-size: 0.78em;
+  color: var(--mint);
+}
+
 .hint {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.wa-groups-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.wa-groups-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(125, 206, 160, 0.18);
+  font-size: 0.9rem;
+}
+
+.wa-groups-list .wa-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wa-groups-list .ghost.danger {
+  flex-shrink: 0;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.wa-groups-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+  align-items: center;
 }
 
 .settings-actions {
