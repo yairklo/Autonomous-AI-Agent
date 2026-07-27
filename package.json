@@ -7,6 +7,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node scripts/start-with-bootstrap.js",
+    "start:joinup-telegram": "node scripts/start-joinup-telegram.js",
     "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
@@ -22,6 +23,7 @@
     "joinup:telegram": "node scripts/joinup-telegram-bot.js",
     "test:joinup-telegram": "node scripts/test-joinup-telegram.js",
     "test:quality-gates": "node scripts/test-dispatch-quality-gates.js",
+    "test:docker-deploy": "node scripts/validate-docker-deploy.js",
     "joinup:notify-vercel": "node scripts/notify-joinup-vercel.js",
     "joinup:redeploy-staging": "node scripts/redeploy-joinup-staging.js",
     "test:redeploy-staging": "node scripts/test-redeploy-staging-mcp.js",

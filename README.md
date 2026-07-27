@@ -173,6 +173,19 @@ Body (JSON):
 
 Use the returned `text` field with Speak Text / TTS.
 
+## Deployment (Coolify)
+
+Deploy **two independent Docker applications** (separate CPU/RAM in Coolify UI):
+
+| App | Dockerfile | Entrypoint |
+|-----|------------|------------|
+| voice-agent | `Dockerfile.app` | `npm start` (:8787) |
+| joinup-telegram | `Dockerfile.joinup-telegram` | `npm run start:joinup-telegram` |
+
+Set `VOICE_AGENT_URL` on the Telegram app to the voice-agent public/private URL so Cursor Live logs bridge over HTTP. See [DEPLOY.md](./DEPLOY.md).
+
+`docker-compose.yaml` remains an optional local multi-service helper; prefer per-Dockerfile Coolify apps in production.
+
 ## Project layout
 
 ```
@@ -180,6 +193,9 @@ server/                 Express + Claude session + STT/TTS helpers
 server/joinup-telegram/ Dedicated joinUp collaborator Telegram bot
 client/                 PWA (HTML/CSS/JS, service worker)
 scripts/                smoke-test.js, joinup-telegram-bot.js
+Dockerfile.app          Coolify voice-agent image
+Dockerfile.joinup-telegram  Coolify joinUp Telegram image
+DEPLOY.md               Coolify multi-app env + networking
 DECISIONS.md            Architecture decisions
 ```
 

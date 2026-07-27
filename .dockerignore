@@ -28,6 +28,7 @@ agent-transcripts
 *.md
 !README.md
 !PROMPT.md
+!DEPLOY.md
 .cursorrules
 test-*.js
 scripts/test-*.js
