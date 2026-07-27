@@ -1,13 +1,14 @@
 /**
  * Forward joinUp Telegram / Cursor logs to the voice-agent live run console.
- * Uses HTTP so the bot can run as a separate process from `npm start`.
+ * Uses HTTP so the bot can run as a separate Coolify/Docker process from `npm start`.
  *
- * Requires a voice-agent server that exposes /api/runs/* (restart `npm start`
- * after pulling live-log changes). Stale servers return 404 and the GUI stays empty.
+ * Requires VOICE_AGENT_URL (or JOINUP_RUN_LOG_URL) pointing at a voice-agent
+ * that exposes /api/runs/*. Stale servers return 404 and the GUI stays empty.
  */
 import { loadDotEnv } from './load-env.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveVoiceAgentBaseUrl } from './voice-agent-url.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadDotEnv(path.resolve(__dirname, '..', '..', '.env'));
@@ -18,9 +19,7 @@ let lazyRunId = null;
 let lazyRunMeta = { source: 'joinup-telegram', project: '', title: '' };
 
 function agentBaseUrl() {
-  const port = process.env.PORT || '8787';
-  const host = process.env.JOINUP_RUN_LOG_HOST || '127.0.0.1';
-  return (process.env.JOINUP_RUN_LOG_URL || `http://${host}:${port}`).replace(/\/$/, '');
+  return resolveVoiceAgentBaseUrl();
 }
 
 function warnBridgeOnce(detail) {
@@ -28,7 +27,7 @@ function warnBridgeOnce(detail) {
   warnedBridgeDown = true;
   console.warn(
     `[run-log-bridge] Live logs NOT reaching GUI (${detail}). ` +
-      `Restart voice-agent: npm start  (need /api/runs on ${agentBaseUrl()})`
+      `Set VOICE_AGENT_URL to the Coolify voice-agent URL (need /api/runs on ${agentBaseUrl()})`
   );
 }
 

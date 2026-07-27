@@ -5,14 +5,13 @@
 import { loadDotEnv } from './load-env.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveVoiceAgentBaseUrl } from './voice-agent-url.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadDotEnv(path.resolve(__dirname, '..', '..', '.env'));
 
 function agentBaseUrl() {
-  const port = process.env.PORT || '8787';
-  const host = process.env.JOINUP_RUN_LOG_HOST || '127.0.0.1';
-  return (process.env.JOINUP_RUN_LOG_URL || `http://${host}:${port}`).replace(/\/$/, '');
+  return resolveVoiceAgentBaseUrl();
 }
 
 /**

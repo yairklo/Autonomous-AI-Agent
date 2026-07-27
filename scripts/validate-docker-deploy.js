@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+/**
+ * Validate Coolify multi-app Docker layout without requiring a running daemon.
+ */
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { resolveVoiceAgentBaseUrl } from '../server/joinup-telegram/voice-agent-url.js';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function read(rel) {
+  return fs.readFileSync(path.join(root, rel), 'utf8');
+}
+
+function mustExist(rel) {
+  assert.ok(fs.existsSync(path.join(root, rel)), `missing ${rel}`);
+}
+
+mustExist('Dockerfile');
+mustExist('Dockerfile.app');
+mustExist('Dockerfile.joinup-telegram');
+mustExist('docker-compose.yaml');
+mustExist('DEPLOY.md');
+
+const appDf = read('Dockerfile.app');
+assert.match(appDf, /CMD\s*\[\s*"npm",\s*"start"\s*\]/);
+assert.match(appDf, /JOINUP_TELEGRAM_AUTOSTART=0/);
+assert.match(appDf, /EXPOSE 8787/);
+
+const tgDf = read('Dockerfile.joinup-telegram');
+assert.match(tgDf, /CMD\s*\[\s*"npm",\s*"run",\s*"start:joinup-telegram"\s*\]/);
+assert.match(tgDf, /AGENT_ACTIVITY_PERSIST=0/);
+assert.doesNotMatch(tgDf, /EXPOSE /);
+
+const compose = read('docker-compose.yaml');
+assert.match(compose, /dockerfile:\s*Dockerfile\.app/);
+assert.match(compose, /dockerfile:\s*Dockerfile\.joinup-telegram/);
+assert.match(compose, /VOICE_AGENT_URL=http:\/\/app:8787/);
+assert.match(compose, /JOINUP_TELEGRAM_AUTOSTART=0/);
+
+const pkg = JSON.parse(read('package.json'));
+assert.equal(pkg.scripts['start:joinup-telegram'], 'node scripts/start-joinup-telegram.js');
+
+assert.equal(
+  resolveVoiceAgentBaseUrl({ VOICE_AGENT_URL: 'https://x.example/' }),
+  'https://x.example'
+);
+
+console.log('docker deploy layout validation: ok');

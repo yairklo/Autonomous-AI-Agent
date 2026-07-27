@@ -11,14 +11,18 @@
  *   JOINUP_PROJECT_ROOT=C:\JoinUpApp            # absolute path to joinUp repo
  *   JOINUP_TELEGRAM_MOCK=1                      # optional: mock LLM (no Claude)
  *
- * Run standalone:
+ * Run standalone (local or Coolify Dockerfile.joinup-telegram):
  *   npm run joinup:telegram
+ *   npm run start:joinup-telegram   # bootstrap workspace + bot (Coolify entry)
+ *
+ * Cross-service bridges POST to VOICE_AGENT_URL (or JOINUP_RUN_LOG_URL).
  *
  * Or auto-start with the voice-agent server when JOINUP_TELEGRAM_BOT_TOKEN is set
- * and JOINUP_TELEGRAM_AUTOSTART=1.
+ * and JOINUP_TELEGRAM_AUTOSTART=1 (not recommended on Coolify — use a separate app).
  */
 
 export { loadJoinUpTelegramConfig, parseAllowedUserIds, pinToJoinUpRoot, resolveJoinUpRoot } from './config.js';
+export { resolveVoiceAgentBaseUrl } from './voice-agent-url.js';
 export { isAllowedTelegramUser, createAuthMiddleware } from './auth.js';
 export { JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT, JOINUP_WELCOME_MESSAGE } from './prompt.js';
 export {

@@ -1,14 +1,11 @@
-# Backward-compatible default image for Coolify / local builds.
-# Canonical Coolify apps:
-#   - Dockerfile.app              → voice-agent (HTTP :8787 + GUI + WhatsApp/jobs)
-#   - Dockerfile.joinup-telegram  → joinUp Telegram product bot
-#
-# Prefer setting Coolify "Dockerfile Location" to Dockerfile.app explicitly.
+# Voice Agent (app) — Coolify standalone application
 # Playwright Node image includes Chromium OS dependencies for Linux containers.
+# Use a published MCR tag (v1.62.0-jammy does not exist; v1.61.1-jammy is latest stable jammy).
 FROM mcr.microsoft.com/playwright:v1.61.1-jammy
 
 USER root
 
+# Git / curl / compilers needed for Cursor agent repo edits and native npm builds
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     git \
@@ -20,13 +17,19 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Install dependencies first for better layer caching.
+# Use npm install (not npm ci) so Coolify builds tolerate lockfile
+# cross-platform variations. Force development during install so Coolify's
+# build-time NODE_ENV=production does not omit deps.
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
 RUN npm install
 ENV NODE_ENV=production
 
+# Claude Code CLI (subscription / browser login — not API-key based)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Cursor Agent CLI → ~/.local/bin/agent (subscription / browser login)
 ENV PATH="/root/.local/bin:${PATH}"
 RUN curl -fsSL https://cursor.com/install | bash \
   && ln -sf /root/.local/bin/agent /usr/local/bin/agent \
@@ -34,11 +37,15 @@ RUN curl -fsSL https://cursor.com/install | bash \
   && ln -sf /root/.local/bin/agent /usr/local/bin/cursor \
   && agent --version || /root/.local/bin/agent --version
 
+# Application source
 COPY . .
 
+# Ensure persistent dirs exist (workspaces mounted as named volume at runtime)
 RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin /workspaces \
   && mkdir -p /app/data /app/assets /app/.wwebjs_auth
 
+# Production / Coolify runtime defaults (subscription CLIs; no API keys required)
+# joinUp Telegram runs as a separate Coolify app (Dockerfile.joinup-telegram).
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8787 \

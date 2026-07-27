@@ -752,3 +752,33 @@ test('buildSpecMarkdown no longer all-TBD after approval', async () => {
   assert.match(approved, /Playwright/);
   assert.doesNotMatch(approved, /\*\*A:\*\* _TBD_/);
 });
+
+test('resolveVoiceAgentBaseUrl prefers VOICE_AGENT_URL over Compose-style defaults', async () => {
+  const { resolveVoiceAgentBaseUrl } = await import(
+    '../server/joinup-telegram/voice-agent-url.js'
+  );
+  assert.strictEqual(
+    resolveVoiceAgentBaseUrl({
+      VOICE_AGENT_URL: 'https://agent.example.com/',
+      JOINUP_RUN_LOG_URL: 'http://ignored:9',
+      PORT: '9999',
+    }),
+    'https://agent.example.com'
+  );
+  assert.strictEqual(
+    resolveVoiceAgentBaseUrl({
+      JOINUP_RUN_LOG_URL: 'http://app:8787/',
+      PORT: '9999',
+    }),
+    'http://app:8787'
+  );
+  assert.strictEqual(
+    resolveVoiceAgentBaseUrl({
+      JOINUP_RUN_LOG_HOST: 'voice-agent',
+      VOICE_AGENT_PORT: '8787',
+      PORT: '3000',
+    }),
+    'http://voice-agent:8787'
+  );
+  assert.strictEqual(resolveVoiceAgentBaseUrl({}), 'http://127.0.0.1:8787');
+});
