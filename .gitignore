@@ -18,5 +18,6 @@ data/whatsapp-groups.json
 data/joinup-telegram-sessions.json
 data/joinup-telegram-state.json
 data/agent-activity.jsonl
+data/cli-auth-queue.json
 .wwebjs_auth/
 .wwebjs_cache/

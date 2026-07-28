@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   classifyCursorProbeResult,
   checkCursorAuth,
@@ -8,8 +11,16 @@ import {
   extractAuthUrl,
   looksLikeAuthFailure,
 } from '../server/cli-auth/parse-auth-url.js';
-import { assertCliAuthReady } from '../server/cli-auth/gate.js';
+import { assertCliAuthReady, waitForCliAuth } from '../server/cli-auth/gate.js';
 import { buildCursorAgentEnv } from '../server/cli-auth/cursor-env.js';
+import {
+  parkTask,
+  listParked,
+  markAllResumeRequested,
+  removeParked,
+  expireParked,
+} from '../server/cli-auth/queue.js';
+import { notifyCliAuthRequired } from '../server/cli-auth/notify.js';
 
 test('extractAuthUrl prefers login-looking URLs', () => {
   const text =
@@ -92,10 +103,26 @@ test('checkCursorAuth returns auth_required from mocked status', async () => {
 });
 
 test('assertCliAuthReady throws CLI_AUTH_REQUIRED', async () => {
+  const queuePath = path.join(
+    os.tmpdir(),
+    `cli-auth-queue-test-${Date.now()}.json`
+  );
   await assert.rejects(
     () =>
       assertCliAuthReady('cursor', {
-        env: { ...process.env, CURSOR_API_KEY: '', CURSOR_BIN: 'agent' },
+        env: {
+          ...process.env,
+          CURSOR_API_KEY: '',
+          CURSOR_BIN: 'agent',
+          CLI_AUTH_WAIT_MS: '0',
+          CLI_AUTH_QUEUE_PATH: queuePath,
+          TELEGRAM_BOT_TOKEN: '',
+          TELEGRAM_CHAT_ID: '',
+        },
+        skipWait: true,
+        captureLoginUrl: async () => ({
+          authUrl: 'https://cursor.com/auth/cli?code=test',
+        }),
         runCommand: async () => ({
           code: 1,
           stdout: '',
@@ -106,9 +133,18 @@ test('assertCliAuthReady throws CLI_AUTH_REQUIRED', async () => {
     (err) => {
       assert.equal(err.code, 'CLI_AUTH_REQUIRED');
       assert.equal(err.tool, 'cursor');
+      assert.match(err.authUrl || '', /cursor\.com\/auth/);
+      assert.ok(err.queueId);
       return true;
     }
   );
+  const parked = listParked(queuePath);
+  assert.ok(parked.length >= 1);
+  try {
+    fs.unlinkSync(queuePath);
+  } catch {
+    /* ignore */
+  }
 });
 
 test('assertCliAuthReady passes when healthy', async () => {
@@ -122,6 +158,77 @@ test('assertCliAuthReady passes when healthy', async () => {
     }),
   });
   assert.equal(result.ok, true);
+});
+
+test('waitForCliAuth recovers on later healthy probe', async () => {
+  let n = 0;
+  const result = await waitForCliAuth({
+    env: { ...process.env, CURSOR_API_KEY: '' },
+    timeoutMs: 5000,
+    intervalMs: 10,
+    runCommand: async () => {
+      n += 1;
+      if (n < 3) {
+        return {
+          code: 1,
+          stdout: '',
+          stderr: 'Authentication required',
+          timedOut: false,
+        };
+      }
+      return {
+        code: 0,
+        stdout: 'Logged in as ok@example.com',
+        stderr: '',
+        timedOut: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.ok(n >= 3);
+});
+
+test('queue park / resume / expire', () => {
+  const queuePath = path.join(
+    os.tmpdir(),
+    `cli-auth-queue-expire-${Date.now()}.json`
+  );
+  const item = parkTask(
+    {
+      project: '/tmp/proj',
+      task: 'fix something',
+      runId: 'run-1',
+      authUrl: 'https://cursor.com/auth/x',
+      reason: 'auth_required',
+    },
+    {
+      filePath: queuePath,
+      env: { CLI_AUTH_WAIT_MS: '600000' },
+    }
+  );
+  assert.equal(item.status, 'awaiting_cli_auth');
+  assert.equal(listParked(queuePath).length, 1);
+  assert.equal(markAllResumeRequested(queuePath), 1);
+  expireParked({ filePath: queuePath, now: Date.now() + 700_000 });
+  assert.equal(listParked(queuePath).length, 0);
+  removeParked(item.id, queuePath);
+  try {
+    fs.unlinkSync(queuePath);
+  } catch {
+    /* ignore */
+  }
+});
+
+test('notifyCliAuthRequired dry-runs without telegram env', async () => {
+  const result = await notifyCliAuthRequired({
+    tool: 'cursor',
+    authUrl: 'https://cursor.com/auth/cli',
+    reason: 'test',
+    env: { TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '' },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.delivered, false);
+  assert.match(result.text, /CLI authentication required/);
 });
 
 console.log('cli-auth-health tests: ok');

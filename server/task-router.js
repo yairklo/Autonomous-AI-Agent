@@ -335,7 +335,14 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
       // Skip live CLI probe for dry-run dispatches (tests / dry pipelines).
       if (String(process.env.DISPATCH_DRY_RUN || '').trim() !== '1') {
         const { assertCliAuthReady } = await import('./cli-auth/gate.js');
-        await assertCliAuthReady('cursor', { onLog: log, env: process.env });
+        await assertCliAuthReady('cursor', {
+          onLog: log,
+          env: process.env,
+          project,
+          task,
+          runId: activeRunId,
+          signal,
+        });
       }
     } catch (err) {
       endRun(activeRunId, { ok: false, text: err.message });
