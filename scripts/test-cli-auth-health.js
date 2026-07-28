@@ -160,6 +160,47 @@ test('assertCliAuthReady passes when healthy', async () => {
   assert.equal(result.ok, true);
 });
 
+test('assertCliAuthReady throws CLI_AUTH_REQUIRED for claude', async () => {
+  const queuePath = path.join(
+    os.tmpdir(),
+    `cli-auth-queue-claude-${Date.now()}.json`
+  );
+  await assert.rejects(
+    () =>
+      assertCliAuthReady('claude', {
+        env: {
+          ...process.env,
+          CLAUDE_BIN: 'claude',
+          CLI_AUTH_CLAUDE_WAIT_MS: '0',
+          CLI_AUTH_QUEUE_PATH: queuePath,
+          TELEGRAM_BOT_TOKEN: '',
+          TELEGRAM_CHAT_ID: '',
+        },
+        skipWait: true,
+        captureLoginUrl: async () => ({
+          authUrl: 'https://claude.ai/oauth/authorize?code=test',
+        }),
+        runCommand: async () => ({
+          code: 1,
+          stdout: '',
+          stderr: 'Authentication required — please log in',
+          timedOut: false,
+        }),
+      }),
+    (err) => {
+      assert.equal(err.code, 'CLI_AUTH_REQUIRED');
+      assert.equal(err.tool, 'claude');
+      assert.match(err.authUrl || '', /claude\.ai/);
+      return true;
+    }
+  );
+  try {
+    fs.unlinkSync(queuePath);
+  } catch {
+    /* ignore */
+  }
+});
+
 test('waitForCliAuth recovers on later healthy probe', async () => {
   let n = 0;
   const result = await waitForCliAuth({

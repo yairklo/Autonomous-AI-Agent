@@ -80,6 +80,15 @@ export function mountJoinUpRoutes(app) {
       });
     } catch (err) {
       console.error('[joinup-http] chat error:', err);
+      if (err?.code === 'CLI_AUTH_REQUIRED' || err?.code === 'CLI_AUTH_TIMEOUT') {
+        return res.status(503).json({
+          error: err.message || String(err),
+          code: err.code,
+          tool: err.tool || 'claude',
+          authUrl: err.authUrl || '',
+          queueId: err.queueId || '',
+        });
+      }
       return res.status(500).json({ error: err.message || String(err) });
     }
   });

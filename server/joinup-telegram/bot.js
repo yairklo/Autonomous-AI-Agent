@@ -243,9 +243,23 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       });
     } catch (err) {
       onLog(`[joinup-telegram] handler error: ${err.message}`);
-      await ctx.reply(
-        'Sorry — I hit a temporary issue talking to the voice-agent. Please try again in a moment.'
-      );
+      if (err.code === 'CLI_AUTH_REQUIRED' || err.code === 'CLI_AUTH_TIMEOUT') {
+        const tool = err.tool || 'claude';
+        const url = err.authUrl || '';
+        const lines = [
+          `צריך להתחבר ל-${tool === 'cursor' ? 'Cursor' : 'Claude'} על השרת.`,
+          url
+            ? `פתח את הקישור הזה בדפדפן (טלפון/מחשב) ואשר התחברות:\n${url}`
+            : 'בשרת הרץ: npm run auth:claude   (או auth:cursor)',
+          '',
+          'אחרי האישור שלח שוב את ההודעה, או ממתין אוטומטית אם הסוכן עדיין מחכה.',
+        ];
+        await ctx.reply(lines.join('\n').slice(0, 4000));
+      } else {
+        await ctx.reply(
+          'Sorry — I hit a temporary issue talking to the voice-agent. Please try again in a moment.'
+        );
+      }
     } finally {
       clearInterval(typing);
     }

@@ -248,7 +248,11 @@ export class JoinUpProductAgent {
     for await (const event of this.claude.ask(clientId, userText, { signal })) {
       if (event.type === 'text' && event.text) full += event.text;
       if (event.type === 'error') {
-        throw new Error(event.error || 'Product agent error');
+        const err = new Error(event.error || 'Product agent error');
+        if (event.code) err.code = event.code;
+        if (event.authUrl) err.authUrl = event.authUrl;
+        if (event.tool) err.tool = event.tool;
+        throw err;
       }
     }
     return full.trim();
