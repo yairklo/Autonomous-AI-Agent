@@ -331,6 +331,18 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
       onLog,
     });
 
+    try {
+      // Skip live CLI probe for dry-run dispatches (tests / dry pipelines).
+      if (String(process.env.DISPATCH_DRY_RUN || '').trim() !== '1') {
+        const { assertCliAuthReady } = await import('./cli-auth/gate.js');
+        await assertCliAuthReady('cursor', { onLog: log, env: process.env });
+      }
+    } catch (err) {
+      endRun(activeRunId, { ok: false, text: err.message });
+      reject(err);
+      return;
+    }
+
     const script = resolveDispatchScript();
     const args = [script, '--project', project, '--task', task];
     log(`[dispatch] node ${args.map(JSON.stringify).join(' ')}`);

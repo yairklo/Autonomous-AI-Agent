@@ -415,10 +415,33 @@ async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
     })}`
   );
 
-  const result = await runDispatchTask(
-    { project: projectPath, task: taskDescription },
-    { onLog, signal }
-  );
+  let result;
+  try {
+    result = await runDispatchTask(
+      { project: projectPath, task: taskDescription },
+      { onLog, signal }
+    );
+  } catch (err) {
+    if (err?.code === 'CLI_AUTH_REQUIRED') {
+      onLog?.(
+        `[mcp] tool=dispatch_coding_task status=cli_auth_required tool=${err.tool || 'cursor'}`
+      );
+      return {
+        ok: false,
+        tool: 'dispatch_coding_task',
+        code: 'CLI_AUTH_REQUIRED',
+        projectPath,
+        taskDescription,
+        authTool: err.tool || 'cursor',
+        authUrl: err.authUrl || '',
+        error: err.message,
+        summary:
+          'Cursor/Claude CLI is not authenticated on this host. ' +
+          'Run `npm run auth:cli` (or open the auth URL) then retry dispatch.',
+      };
+    }
+    throw err;
+  }
 
   onLog?.(`[mcp] tool=dispatch_coding_task status=ok exit=${result.code ?? 0}`);
 
