@@ -1,6 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  formatWorkspacesForPrompt,
+  resolveCodingProjectRoot,
+} from './workspaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -9,6 +13,9 @@ function env(name, fallback) {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
 }
+
+const codingDefaultRoot = resolveCodingProjectRoot();
+const workspacesPromptBlock = formatWorkspacesForPrompt();
 
 const defaultSystemPrompt = [
   'You are a personal voice / terminal assistant (Claude Orchestrator) running on the user\'s local machine.',
@@ -85,7 +92,10 @@ const defaultSystemPrompt = [
   'redeploy_joinup_staging (force=true). That hits the Render Deploy Hook and waits for /api/health.',
   'Staging URL: https://my-app-staging-ijyp.onrender.com — never redeploy production from this tool.',
   '',
-  `Default project path when unspecified: "${root.replace(/\\/g, '/')}".`,
+  '=== CODING WORKSPACES ===',
+  workspacesPromptBlock,
+  'Never dispatch coding work to a Docker runtime path like /app that has no .git — use the registered clone paths above.',
+  `Default coding project path when unspecified: "${String(codingDefaultRoot).replace(/\\/g, '/')}".`,
   `Host: ${os.hostname()}. Date context: ${new Date().toISOString().slice(0, 10)}.`,
 ].join(' ');
 
@@ -129,4 +139,5 @@ export const config = {
   autoScanWhatsappJobs: env('AUTO_SCAN_WHATSAPP_JOBS', '1') === '1',
   // When true, CV-submit utterances auto-invoke submit_whatsapp_job_cv.
   autoSubmitWhatsappCv: env('AUTO_SUBMIT_WHATSAPP_CV', '1') === '1',
+  mongoUri: env('MONGO_URI', ''),
 };
