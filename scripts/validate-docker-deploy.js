@@ -36,6 +36,8 @@ assert.match(tgDf, /JOINUP_THIN_BOT=1/);
 assert.doesNotMatch(tgDf, /claude-code/);
 assert.doesNotMatch(tgDf, /cursor\.com\/install/);
 assert.doesNotMatch(tgDf, /EXPOSE /);
+assert.match(tgDf, /node:22-bookworm/);
+assert.doesNotMatch(tgDf, /^RUN apt-get/m);
 
 const compose = read('docker-compose.yaml');
 assert.match(compose, /dockerfile:\s*Dockerfile\.app/);
