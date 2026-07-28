@@ -37,6 +37,15 @@ export class JoinUpProductAgent {
       systemPrompt: options.systemPrompt || JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT,
       provider: options.provider,
     });
+    const info =
+      typeof this.claude.getProviderInfo === 'function'
+        ? this.claude.getProviderInfo()
+        : { provider: 'unknown', model: 'unknown' };
+    this.llmProvider = info.provider;
+    this.llmModel = info.model;
+    this.onLog(
+      `[joinup-telegram] product agent llm=${this.llmProvider}/${this.llmModel} mock=${this.mock}`
+    );
   }
 
   clientIdFor(userId) {
@@ -246,6 +255,9 @@ export class JoinUpProductAgent {
     }
 
     const clientId = this.clientIdFor(userId);
+    this.onLog(
+      `[joinup-telegram] ask user=${userId} llm=${this.llmProvider}/${this.llmModel}`
+    );
     let full = '';
     for await (const event of this.claude.ask(clientId, userText, { signal })) {
       if (event.type === 'text' && event.text) full += event.text;
