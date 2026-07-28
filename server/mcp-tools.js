@@ -422,22 +422,23 @@ async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
       { onLog, signal }
     );
   } catch (err) {
-    if (err?.code === 'CLI_AUTH_REQUIRED') {
+    if (err?.code === 'CLI_AUTH_REQUIRED' || err?.code === 'CLI_AUTH_TIMEOUT') {
       onLog?.(
-        `[mcp] tool=dispatch_coding_task status=cli_auth_required tool=${err.tool || 'cursor'}`
+        `[mcp] tool=dispatch_coding_task status=${err.code} tool=${err.tool || 'cursor'}`
       );
       return {
         ok: false,
         tool: 'dispatch_coding_task',
-        code: 'CLI_AUTH_REQUIRED',
+        code: err.code,
         projectPath,
         taskDescription,
         authTool: err.tool || 'cursor',
         authUrl: err.authUrl || '',
+        queueId: err.queueId || '',
         error: err.message,
         summary:
-          'Cursor/Claude CLI is not authenticated on this host. ' +
-          'Run `npm run auth:cli` (or open the auth URL) then retry dispatch.',
+          'Cursor CLI is not authenticated on this host. ' +
+          'Open the auth URL (or run `npm run auth:cursor`), then POST /api/cli-auth/retry.',
       };
     }
     throw err;

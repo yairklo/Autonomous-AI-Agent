@@ -30,6 +30,7 @@ import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 import { mountRunEventsRoutes } from './run-events-http.js';
 import { mountActivityRoutes } from './activity-http.js';
 import { mountJoinUpRoutes } from './joinup-http.js';
+import { mountCliAuthRoutes } from './cli-auth/cli-auth-http.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -60,6 +61,7 @@ app.use(express.json({ limit: '2mb' }));
 mountRunEventsRoutes(app);
 mountActivityRoutes(app);
 mountJoinUpRoutes(app);
+mountCliAuthRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();

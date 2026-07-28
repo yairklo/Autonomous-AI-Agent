@@ -15,6 +15,10 @@ import {
   findWorkspaceByRoot,
 } from '../server/workspaces.js';
 import { buildCursorAgentEnv } from '../server/cli-auth/cursor-env.js';
+import {
+  extractAuthUrl,
+  looksLikeAuthFailure,
+} from '../server/cli-auth/parse-auth-url.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -200,9 +204,18 @@ fs.writeFileSync(
 try {
   await runCursorAgent(cursorLaunch, resolvedPath, agentPrompt);
 } catch (err) {
-  // Soft-continue into quality gates: agent may have committed before timeout.
   console.error(`✗ Cursor agent reported failure: ${err.message}`);
   fs.appendFileSync(runLogPath, `agentError=${err.message}\n`, 'utf8');
+
+  // Never soft-continue past auth failures — that caused false success on stale commits.
+  if (err.code === 'CLI_AUTH_REQUIRED' || looksLikeAuthFailure(err.message)) {
+    console.error(
+      '[dispatch] Aborting: Cursor CLI authentication failure (no soft-continue).'
+    );
+    process.exit(1);
+  }
+
+  // Soft-continue into quality gates: agent may have committed before timeout.
   console.warn(
     '[dispatch] Continuing to local quality-gate / fix loop (agent may have already committed).'
   );
@@ -695,6 +708,7 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     });
     let stdout = '';
     let stderr = '';
+    let authAborted = false;
     const timer = setTimeout(() => {
       try {
         child.kill('SIGTERM');
@@ -703,15 +717,40 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
       }
       reject(new Error(`Timed out after ${timeoutMs}ms: ${launch.display}`));
     }, timeoutMs);
+
+    const maybeAbortAuth = (chunkText) => {
+      if (authAborted) return;
+      if (!looksLikeAuthFailure(chunkText) && !extractAuthUrl(chunkText)) return;
+      // Only abort when auth language is present (URL alone can appear in normal docs).
+      if (!looksLikeAuthFailure(`${stdout}\n${stderr}\n${chunkText}`)) return;
+      authAborted = true;
+      clearTimeout(timer);
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      const authUrl = extractAuthUrl(`${stdout}\n${stderr}\n${chunkText}`);
+      const err = new Error(
+        `Authentication required during Cursor run` +
+          (authUrl ? ` — open ${authUrl}` : '')
+      );
+      err.code = 'CLI_AUTH_REQUIRED';
+      err.authUrl = authUrl || '';
+      reject(err);
+    };
+
     child.stdout.on('data', (c) => {
       const t = c.toString();
       stdout += t;
       process.stdout.write(t);
+      maybeAbortAuth(t);
     });
     child.stderr.on('data', (c) => {
       const t = c.toString();
       stderr += t;
       process.stderr.write(t);
+      maybeAbortAuth(t);
     });
     child.on('error', (err) => {
       clearTimeout(timer);
@@ -719,8 +758,21 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (authAborted) return;
       if (code === 0) resolve({ stdout, stderr, code });
       else {
+        const combined = `${stderr || ''}\n${stdout || ''}`;
+        if (looksLikeAuthFailure(combined)) {
+          const authUrl = extractAuthUrl(combined);
+          const err = new Error(
+            `${launch.display} exited ${code}: Authentication required` +
+              (authUrl ? ` — open ${authUrl}` : '')
+          );
+          err.code = 'CLI_AUTH_REQUIRED';
+          err.authUrl = authUrl || '';
+          reject(err);
+          return;
+        }
         reject(
           new Error(`${launch.display} exited ${code}: ${(stderr || stdout).slice(-800)}`)
         );
