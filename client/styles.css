@@ -174,21 +174,27 @@ body {
 
 .text-row {
   display: flex;
+  align-items: flex-end;
   gap: 0.5rem;
 }
 
-.text-row input {
+.text-row textarea {
   flex: 1;
   border: 1px solid rgba(231, 215, 177, 0.22);
   background: rgba(7, 19, 16, 0.65);
   color: var(--ink);
-  border-radius: 999px;
+  border-radius: 1.2rem;
   padding: 0.75rem 1rem;
   font: inherit;
+  line-height: 1.45;
+  min-height: 10.5rem;
+  max-height: 10.5rem;
+  resize: none;
+  overflow-y: auto;
   outline: none;
 }
 
-.text-row input:focus {
+.text-row textarea:focus {
   border-color: rgba(125, 206, 160, 0.55);
 }
 

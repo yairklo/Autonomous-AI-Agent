@@ -228,6 +228,13 @@ els.textForm.addEventListener('submit', async (e) => {
   await sendTurn(text);
 });
 
+els.textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    els.textForm.requestSubmit();
+  }
+});
+
 bindPtt(els.ptt);
 
 function bindPtt(btn) {
