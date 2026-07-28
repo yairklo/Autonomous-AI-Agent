@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Ensure JOINUP_PROJECT_ROOT exists as a local git clone (Coolify / Docker).
+ * Ensure every registered coding workspace exists as a local git clone
+ * (Coolify / Docker). Sources: workspaces.json (+ env path overrides).
  *
  * - Creates /workspaces if needed
- * - Clones JOINUP_GIT_REPO (default: yairklo/JoinUpApp) when missing
+ * - Clones each workspace gitRepo when missing
  * - Configures non-interactive git push via GITHUB_TOKEN credential helper
  * - Sets local git user.name / user.email when absent
  *
@@ -12,19 +13,23 @@
  *   npm run bootstrap:workspace
  *
  * Env:
- *   JOINUP_PROJECT_ROOT   default /workspaces/JoinUpApp (Linux) or C:\JoinUpApp (Windows)
- *   JOINUP_GIT_REPO       https://github.com/yairklo/JoinUpApp.git
- *   JOINUP_GITHUB_REPO    yairklo/JoinUpApp  (alt to JOINUP_GIT_REPO)
+ *   AGENT_PROJECT_ROOT / JOINUP_PROJECT_ROOT / PORTFOLIO_PROJECT_ROOT / ECODRIVE_PROJECT_ROOT
  *   GITHUB_TOKEN          fine-grained or classic PAT with repo + contents:write
  *   GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL  (or GIT_USER_NAME / GIT_USER_EMAIL)
  *   WORKSPACE_BOOTSTRAP_SKIP=1   skip entirely
  *   WORKSPACE_BOOTSTRAP_STRICT=1 fail process if clone/auth cannot be ensured
+ *   WORKSPACES_FILE / WORKSPACES_JSON  optional registry override
  */
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  isGitRepo,
+  listWorkspaces,
+  resolveWorkspaceRoot,
+} from '../server/workspaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -39,14 +44,9 @@ const strict =
     String(process.env.WORKSPACE_BOOTSTRAP_STRICT || '').toLowerCase()
   ) ||
   (process.env.NODE_ENV === 'production' &&
-    String(process.env.JOINUP_PROJECT_ROOT || '').startsWith('/workspaces'));
+    (String(process.env.JOINUP_PROJECT_ROOT || '').startsWith('/workspaces') ||
+      String(process.env.AGENT_PROJECT_ROOT || '').startsWith('/workspaces')));
 
-const defaultRoot =
-  process.platform === 'win32' ? 'C:\\JoinUpApp' : '/workspaces/JoinUpApp';
-const projectRoot = path.resolve(
-  process.env.JOINUP_PROJECT_ROOT || defaultRoot
-);
-const gitRepo = resolveGitRepoUrl();
 const token = String(process.env.GITHUB_TOKEN || '').trim();
 
 function log(msg) {
@@ -87,29 +87,7 @@ function loadDotEnv(filePath) {
   }
 }
 
-function resolveGitRepoUrl() {
-  const explicit = String(process.env.JOINUP_GIT_REPO || '').trim();
-  if (explicit) return explicit;
-  const slug = String(
-    process.env.JOINUP_GITHUB_REPO || 'yairklo/JoinUpApp'
-  ).trim();
-  return `https://github.com/${slug.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '')}.git`;
-}
-
-function isGitRepo(dir) {
-  try {
-    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
-    execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], {
-      stdio: 'ignore',
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function gitGlobal(args) {
-  // Respect GIT_CONFIG_GLOBAL (Coolify git_config volume) when set.
   execFileSync('git', ['config', '--global', ...args], {
     stdio: 'ignore',
     env: process.env,
@@ -138,7 +116,6 @@ function ensureCredentialHelper() {
     return;
   }
 
-  // Node helper so Cursor/Claude `git push` never prompts for credentials.
   const helperJs = path
     .join(__dirname, 'git-credential-github-env.js')
     .replace(/\\/g, '/');
@@ -164,14 +141,12 @@ function ensureCredentialHelper() {
     warn(`Could not set credential.helper: ${err.message}`);
   }
 
-  // Ensure child git/Cursor/gh processes see the token
   process.env.GITHUB_TOKEN = token;
   process.env.GH_TOKEN = process.env.GH_TOKEN || token;
 }
 
 function authenticatedCloneUrl(url) {
   if (!token) return url;
-  // Prefer clean remote after clone; use token only for the clone command.
   if (url.startsWith('https://github.com/')) {
     return url.replace(
       'https://github.com/',
@@ -187,17 +162,41 @@ function authenticatedCloneUrl(url) {
   return url;
 }
 
-function ensureClone() {
+/**
+ * @param {{ id: string, label?: string, gitRepo: string, root: string }} ws
+ */
+function ensureGitWorkspace(ws) {
+  const projectRoot = ws.root;
+  const gitRepo = ws.gitRepo;
+  const label = ws.label || ws.id;
+
+  if (!projectRoot) {
+    fail(`Workspace ${ws.id} has no resolved root path`);
+  }
+
   if (isGitRepo(projectRoot)) {
-    log(`OK: git repo at ${projectRoot}`);
-    return;
+    log(`OK: ${label} git repo at ${projectRoot}`);
+    ensureGitIdentityFor(projectRoot);
+    verifyPushAuthHint(projectRoot);
+    return { id: ws.id, root: projectRoot, ok: true };
+  }
+
+  // Running agent checkout on Windows: already the autonomous-agent tree.
+  if (
+    ws.id === 'autonomous-agent' &&
+    path.resolve(projectRoot) === path.resolve(repoRoot) &&
+    isGitRepo(repoRoot)
+  ) {
+    log(`OK: autonomous-agent using running checkout ${repoRoot}`);
+    ensureGitIdentityFor(repoRoot);
+    return { id: ws.id, root: repoRoot, ok: true };
   }
 
   if (fs.existsSync(projectRoot)) {
     const entries = fs.readdirSync(projectRoot);
     if (entries.length > 0) {
       fail(
-        `${projectRoot} exists but is not a git repository (and is not empty). Move/remove it or set JOINUP_PROJECT_ROOT.`
+        `${projectRoot} exists but is not a git repository (and is not empty). Move/remove it or set the workspace rootEnv for ${ws.id}.`
       );
     }
   }
@@ -212,17 +211,16 @@ function ensureClone() {
   }
 
   const cloneUrl = authenticatedCloneUrl(gitRepo);
-  log(`Cloning ${gitRepo} → ${projectRoot}`);
+  log(`Cloning ${label}: ${gitRepo} → ${projectRoot}`);
   try {
     execFileSync('git', ['clone', '--', cloneUrl, projectRoot], {
       stdio: 'inherit',
       env: process.env,
     });
   } catch (err) {
-    fail(`git clone failed: ${err.message}`);
+    fail(`git clone failed for ${ws.id}: ${err.message}`);
   }
 
-  // Scrub token from stored remote URL if it leaked into origin
   try {
     execFileSync(
       'git',
@@ -233,9 +231,13 @@ function ensureClone() {
   } catch {
     /* ignore */
   }
+
+  ensureGitIdentityFor(projectRoot);
+  verifyPushAuthHint(projectRoot);
+  return { id: ws.id, root: projectRoot, ok: true };
 }
 
-function ensureGitIdentity() {
+function ensureGitIdentityFor(projectRoot) {
   const name =
     process.env.GIT_AUTHOR_NAME ||
     process.env.GIT_USER_NAME ||
@@ -247,7 +249,6 @@ function ensureGitIdentity() {
     process.env.GIT_EMAIL ||
     '';
 
-  // Global (persisted via GIT_CONFIG_GLOBAL volume when set)
   if (name) {
     try {
       gitGlobal(['user.name', name]);
@@ -271,12 +272,12 @@ function ensureGitIdentity() {
   if (!localName) {
     const fallback = name || 'Autonomous Agent';
     gitLocal(projectRoot, ['user.name', fallback]);
-    log(`Set local user.name=${fallback}`);
+    log(`Set local user.name=${fallback} (${projectRoot})`);
   }
   if (!localEmail) {
     const fallback = email || 'agent@localhost';
     gitLocal(projectRoot, ['user.email', fallback]);
-    log(`Set local user.email=${fallback}`);
+    log(`Set local user.email=${fallback} (${projectRoot})`);
   }
 
   try {
@@ -286,7 +287,7 @@ function ensureGitIdentity() {
   }
 }
 
-function verifyPushAuthHint() {
+function verifyPushAuthHint(projectRoot) {
   if (!isGitRepo(projectRoot)) return;
   try {
     const remote = execFileSync(
@@ -296,37 +297,80 @@ function verifyPushAuthHint() {
     ).trim();
     log(`origin=${remote}`);
   } catch {
-    warn('No git origin configured');
+    warn(`No git origin configured at ${projectRoot}`);
   }
   if (token) {
     log('GITHUB_TOKEN is set — HTTPS git push should be non-interactive');
   }
 }
 
+function collectWorkspaceTargets() {
+  const list = listWorkspaces({ forceReload: true });
+  if (!list.length) {
+    // Backward-compatible single JoinUp target
+    const root =
+      process.env.JOINUP_PROJECT_ROOT ||
+      (process.platform === 'win32' ? 'C:\\JoinUpApp' : '/workspaces/JoinUpApp');
+    const gitRepo =
+      process.env.JOINUP_GIT_REPO ||
+      `https://github.com/${String(process.env.JOINUP_GITHUB_REPO || 'yairklo/JoinUpApp').replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '')}.git`;
+    return [
+      {
+        id: 'joinup',
+        label: 'JoinUp',
+        gitRepo,
+        root: path.resolve(root),
+      },
+    ];
+  }
+
+  return list.map((ws) => ({
+    id: ws.id,
+    label: ws.label,
+    gitRepo: ws.gitRepo,
+    root: resolveWorkspaceRoot(ws),
+  }));
+}
+
 export async function bootstrapWorkspace() {
   if (skip) {
     log('WORKSPACE_BOOTSTRAP_SKIP=1 — skipping');
-    return { skipped: true, projectRoot };
+    return { skipped: true, results: [] };
   }
 
-  log(`JOINUP_PROJECT_ROOT=${projectRoot}`);
-  log(`JOINUP_GIT_REPO=${gitRepo}`);
+  const targets = collectWorkspaceTargets();
+  log(`Bootstrapping ${targets.length} workspace(s)`);
+  for (const t of targets) {
+    log(`  - ${t.id}: ${t.root} ← ${t.gitRepo}`);
+  }
 
   ensureCredentialHelper();
 
+  const results = [];
   try {
-    ensureClone();
-    ensureGitIdentity();
-    verifyPushAuthHint();
+    for (const t of targets) {
+      // Skip re-cloning the running agent tree into a nested path when roots match
+      if (
+        t.id === 'autonomous-agent' &&
+        process.platform === 'win32' &&
+        isGitRepo(repoRoot) &&
+        (!t.root || path.resolve(t.root) === path.resolve(repoRoot))
+      ) {
+        log(`OK: autonomous-agent = running checkout ${repoRoot}`);
+        ensureGitIdentityFor(repoRoot);
+        results.push({ id: t.id, root: repoRoot, ok: true, skippedClone: true });
+        continue;
+      }
+      results.push(ensureGitWorkspace(t));
+    }
   } catch (err) {
     if (strict) throw err;
-    // Local Windows / optional joinUp: don't block voice-agent start
     warn(`${err.message} (non-strict; continuing)`);
-    return { ok: false, projectRoot, error: err.message };
+    return { ok: false, results, error: err.message };
   }
 
   log('Workspace bootstrap complete');
-  return { ok: true, projectRoot };
+  return { ok: true, results };
 }
 
 const isMain =

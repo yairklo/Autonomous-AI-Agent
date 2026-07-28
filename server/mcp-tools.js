@@ -379,7 +379,13 @@ async function executeRedeployJoinupStaging(args = {}, { onLog } = {}) {
 }
 
 async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
-  const projectPath = String(args.projectPath || '').trim() || config.root;
+  const { remapCodingProjectPath, resolveCodingProjectRoot } = await import(
+    './workspaces.js'
+  );
+  const rawPath = String(args.projectPath || '').trim();
+  const projectPath = remapCodingProjectPath(
+    rawPath || resolveCodingProjectRoot({ text: String(args.taskDescription || '') })
+  );
   const taskDescription = String(args.taskDescription || '').trim();
   if (!taskDescription) {
     const err = new Error('dispatch_coding_task requires taskDescription');

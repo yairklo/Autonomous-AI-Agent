@@ -10,6 +10,10 @@ import {
   appendAgentLesson,
   ensureProjectAgentMemory,
 } from './ensure-project-agent-memory.js';
+import {
+  applyWorkspaceDispatchPolicy,
+  findWorkspaceByRoot,
+} from '../server/workspaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -36,15 +40,28 @@ if (!projectPath || !taskDescription) {
 }
 
 const resolvedPath = path.resolve(projectPath);
+
+if (!fs.existsSync(resolvedPath)) {
+  fs.mkdirSync(resolvedPath, { recursive: true });
+}
+
+if (!isGitWorkTree(resolvedPath)) {
+  console.error(
+    `✗ Not a git repository: ${resolvedPath}\n` +
+      '  Coding dispatch requires a git clone (see workspaces.json).\n' +
+      '  Set AGENT_PROJECT_ROOT / JOINUP_PROJECT_ROOT / PORTFOLIO_PROJECT_ROOT / ECODRIVE_PROJECT_ROOT\n' +
+      '  to a clone under /workspaces, or run: npm run bootstrap:workspace'
+  );
+  process.exit(1);
+}
+
+applyRegistryPolicyForPath(resolvedPath);
+
 const branchName = `feature/task-${Date.now()}`;
 const requestedMode = (process.env.DISPATCH_AGENT || 'cursor').toLowerCase();
 const agentTimeoutMs = Number(process.env.DISPATCH_AGENT_TIMEOUT_MS || 900000);
 const maxFixLoops = Number(process.env.DISPATCH_MAX_FIX_LOOPS || 5);
 const mergeTarget = resolveMergeTarget(resolvedPath);
-
-if (!fs.existsSync(resolvedPath)) {
-  fs.mkdirSync(resolvedPath, { recursive: true });
-}
 
 if (requestedMode === 'claude' || requestedMode === 'local' || requestedMode === 'local-fallback') {
   console.warn(
@@ -247,6 +264,39 @@ if (after.branch === before.branch && after.commit === before.commit) {
 }
 
 console.log('✓ Headless Cursor agent execution completed successfully!');
+
+function isGitWorkTree(cwd) {
+  try {
+    execSync('git rev-parse --is-inside-work-tree', {
+      cwd,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applyRegistryPolicyForPath(cwd) {
+  const ws = findWorkspaceByRoot(cwd);
+  if (!ws?.dispatch) return;
+  const next = applyWorkspaceDispatchPolicy(ws, {
+    env: process.env,
+    forcePolicy: true,
+  });
+  if (next.DISPATCH_MERGE_TARGET != null) {
+    process.env.DISPATCH_MERGE_TARGET = next.DISPATCH_MERGE_TARGET;
+  }
+  if (next.DISPATCH_MAX_FIX_LOOPS != null) {
+    process.env.DISPATCH_MAX_FIX_LOOPS = next.DISPATCH_MAX_FIX_LOOPS;
+  }
+  if (next.DISPATCH_AGENT_TIMEOUT_MS != null) {
+    process.env.DISPATCH_AGENT_TIMEOUT_MS = next.DISPATCH_AGENT_TIMEOUT_MS;
+  }
+  console.log(
+    `✓ Workspace policy: id=${ws.id} mergeTarget=${process.env.DISPATCH_MERGE_TARGET || '(unset)'} maxFixLoops=${process.env.DISPATCH_MAX_FIX_LOOPS || '(unset)'}`
+  );
+}
 
 function resolveCursorLaunch() {
   const override = process.env.CURSOR_BIN?.trim();

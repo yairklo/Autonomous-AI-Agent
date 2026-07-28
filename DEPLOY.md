@@ -21,8 +21,10 @@
 # |----------|-------|
 # | `HOST` / `PORT` | Default `0.0.0.0:8787` |
 # | `HEADLESS_BROWSER` | `true` in containers |
-# | `GITHUB_TOKEN` | Clone/push JoinUpApp |
-# | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Jobs approval bot (inside app) |
+# | `GITHUB_TOKEN` | Clone/push **all** workspaces in `workspaces.json` (agent, JoinUp, portfolio, EcoDrive) |
+# | `AGENT_PROJECT_ROOT` | Default `/workspaces/Autonomous-AI-Agent` (self-coding; not `/app`) |
+# | `PORTFOLIO_PROJECT_ROOT` | Default `/workspaces/portfolio` |
+# | `ECODRIVE_PROJECT_ROOT` | Default `/workspaces/EcoDrive` |
 # | `JOINUP_TELEGRAM_AUTOSTART` | Keep `0` — Telegram is a separate Coolify app |
 # | Volumes | `.wwebjs_auth`, `data`, `assets`, Claude/Cursor/git config, `/workspaces` |
 #
@@ -32,12 +34,19 @@
 # |----------|-------|
 # | `JOINUP_TELEGRAM_BOT_TOKEN` | Required |
 # | `ALLOWED_TELEGRAM_USER_IDS` | Required (comma-separated) |
-# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` |
+# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` (registry id `joinup`) |
 # | `VOICE_AGENT_URL` | **Required in Coolify** — full URL of the voice-agent app (e.g. `https://agent.example.com`). Live Cursor logs + activity history POST here. |
 # | `JOINUP_RUN_LOG_URL` | Legacy alias for `VOICE_AGENT_URL` |
 # | `GITHUB_TOKEN`, `VERCEL_*`, `RENDER_*` | Same as before for notify/redeploy |
-# | Volumes | `data`, Claude/Cursor/git config, `/workspaces` (JoinUpApp clone) |
+# | Volumes | `data`, Claude/Cursor/git config, `/workspaces` (all coding clones) |
 #
+# ## Coding workspaces (`workspaces.json`)
+#
+# Cursor dispatch never uses the Docker image tree `/app` (no `.git`). Bootstrap
+# clones each registry entry under `/workspaces`. Chat/GUI default =
+# `autonomous-agent`. JoinUp Telegram stays pinned to `joinup` with
+# `mergeTarget=Dev`. Add a repo later by appending an entry to `workspaces.json`
+# and ensuring `GITHUB_TOKEN` can read/write that repo.
 # ## Network communication
 #
 # Services talk **only** via configurable URLs/ports in env vars:
