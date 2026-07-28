@@ -14,6 +14,7 @@ import {
   applyWorkspaceDispatchPolicy,
   findWorkspaceByRoot,
 } from '../server/workspaces.js';
+import { buildCursorAgentEnv } from '../server/cli-auth/cursor-env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -728,29 +729,7 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
   });
 }
 
-function buildCursorAgentEnv(env = process.env) {
-  // Coolify / Docker: interactive `docker exec` shells often have HOME=/root
-  // (where `agent login` stores creds in the cursor_config volume), but the
-  // Node server process may inherit a different/empty HOME. Cursor then looks
-  // in the wrong place and reports "Authentication required".
-  const home =
-    String(env.HOME || env.USERPROFILE || '').trim() ||
-    (process.platform === 'win32'
-      ? env.USERPROFILE || process.env.USERPROFILE || ''
-      : '/root');
-
-  return {
-    ...env,
-    HOME: home,
-    ...(process.platform === 'win32' && home ? { USERPROFILE: home } : {}),
-    DISPATCH_NO_CLAUDE: '1',
-    // Prefer headless / non-interactive behavior inside Coolify containers
-    CI: env.CI || '1',
-    NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
-    // Claude Code rejects bypassPermissions as root unless IS_SANDBOX=1
-    IS_SANDBOX: env.IS_SANDBOX || '1',
-  };
-}
+// buildCursorAgentEnv lives in server/cli-auth/cursor-env.js (shared with health gate).
 
 function windowsQuote(arg) {
   const s = String(arg);
