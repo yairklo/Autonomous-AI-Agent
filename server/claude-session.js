@@ -108,6 +108,28 @@ export class ClaudeSessionManager extends EventEmitter {
       return;
     }
 
+    // Pre-chat Claude CLI auth gate (URL notify + optional wait). Skip in unit tests via CLI_AUTH_SKIP=1.
+    if (String(process.env.CLI_AUTH_SKIP || '').trim() !== '1') {
+      try {
+        const { assertCliAuthReady } = await import('./cli-auth/gate.js');
+        await assertCliAuthReady('claude', {
+          onLog: (line) => console.log(line),
+          env: process.env,
+          task: cleaned.slice(0, 240),
+          signal,
+        });
+      } catch (err) {
+        yield {
+          type: 'error',
+          error: err.message || String(err),
+          code: err.code || 'CLI_AUTH_REQUIRED',
+          authUrl: err.authUrl || '',
+          tool: err.tool || 'claude',
+        };
+        return;
+      }
+    }
+
     const existing = this.getSession(clientId);
     // Non-interactive / container-safe flags:
     // -p (print), stream-json, --permission-mode bypassPermissions

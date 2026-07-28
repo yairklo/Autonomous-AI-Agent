@@ -18,6 +18,29 @@ import {
   joinupReset,
 } from './voice-agent-client.js';
 import { resolveVoiceAgentBaseUrl } from './voice-agent-url.js';
+import {
+  extractAuthCode,
+  looksLikeAuthCodeMessage,
+} from '../cli-auth/parse-auth-url.js';
+
+/**
+ * Submit Claude browser login code to voice-agent.
+ */
+async function submitAuthCodeToVoiceAgent(code) {
+  const base = resolveVoiceAgentBaseUrl().replace(/\/$/, '');
+  const res = await fetch(`${base}/api/cli-auth/submit-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || data.message || `submit-code HTTP ${res.status}`);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
 
 /**
  * Thin joinUp Telegram bot: Telegram I/O + allow-list only.
@@ -82,6 +105,7 @@ export function createJoinUpTelegramBot(config, deps = {}) {
         '/start — welcome + how this works',
         '/reset — clear our conversation and start over',
         '/redeploy_staging — redeploy joinUp API staging on Render + health check',
+        '/authcode <code> — paste Claude browser login code to the VPS CLI',
         '/help — this message',
         '',
         'Otherwise just describe the joinUp change you want in plain language.',
@@ -90,6 +114,26 @@ export function createJoinUpTelegramBot(config, deps = {}) {
         `Brain: voice-agent at ${voiceUrl}`,
       ].join('\n')
     );
+  });
+
+  bot.command('authcode', async (ctx) => {
+    const raw = String(ctx.message?.text || '').replace(/^\/authcode\s*/i, '');
+    const code = extractAuthCode(raw) || raw.trim();
+    if (!code) {
+      await ctx.reply('שימוש: /authcode YOUR_CODE');
+      return;
+    }
+    try {
+      const result = await submitAuthCodeToVoiceAgent(code);
+      await ctx.reply(
+        result.ok || result.claude?.ok
+          ? 'קוד התקבל — Claude מחובר (או בתהליך סיום). נסה שוב את ההודעה הקודמת.'
+          : `נשלח לשרת: ${result.message || 'ממתין'} — אם צריך קוד נוסף, שלח שוב.`
+      );
+    } catch (err) {
+      onLog(`[joinup-telegram] authcode failed: ${err.message}`);
+      await ctx.reply(`שליחת הקוד נכשלה: ${err.message}`);
+    }
   });
 
   bot.command('reset', async (ctx) => {
@@ -157,6 +201,25 @@ export function createJoinUpTelegramBot(config, deps = {}) {
 
     const userId = ctx.from.id;
     const text = ctx.message.text;
+
+    // Claude browser login code → paste into waiting VPS `claude login` process.
+    if (looksLikeAuthCodeMessage(text)) {
+      const code =
+        extractAuthCode(text.replace(/^\/authcode\s*/i, '')) || text.trim();
+      onLog(`[joinup-telegram] auth code from=${userId}`);
+      try {
+        const result = await submitAuthCodeToVoiceAgent(code);
+        await ctx.reply(
+          result.ok || result.claude?.ok
+            ? 'קיבלתי את קוד ההתחברות ל-Claude. אפשר להמשיך — שלח שוב את הבקשה.'
+            : `${result.message || 'הקוד נשלח לשרת.'}\nאם עדיין לא מחובר, שלח קוד חדש מהדפדפן.`
+        );
+      } catch (err) {
+        await ctx.reply(`לא הצלחתי להעביר את הקוד לשרת: ${err.message}`);
+      }
+      return;
+    }
+
     onLog(`[joinup-telegram] message from=${userId} chars=${text.length}`);
 
     void bridgeActivity({
@@ -243,9 +306,33 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       });
     } catch (err) {
       onLog(`[joinup-telegram] handler error: ${err.message}`);
-      await ctx.reply(
-        'Sorry — I hit a temporary issue talking to the voice-agent. Please try again in a moment.'
-      );
+      if (err.code === 'CLI_AUTH_REQUIRED' || err.code === 'CLI_AUTH_TIMEOUT') {
+        const tool = err.tool || 'claude';
+        const url = err.authUrl || '';
+        const lines =
+          tool === 'cursor'
+            ? [
+                'צריך להתחבר ל-Cursor על השרת.',
+                url
+                  ? `פתח את הקישור (אותו קישור — לא לבקש חדש):\n${url}`
+                  : 'בשרת: npm run auth:cursor',
+                '',
+                'חשוב: תהליך ה-login על ה-VPS חייב להישאר פתוח. אחרי אישור בדפדפן חכה שהסוכן יזהה — אל תיצור קישור חדש.',
+              ]
+            : [
+                'צריך להתחבר ל-Claude על השרת.',
+                url
+                  ? `פתח את הקישור בדפדפן:\n${url}`
+                  : 'בשרת: npm run auth:claude',
+                '',
+                'אחרי ההתחברות בדפדפן יופיע קוד — העתק אותו ושלח אותו כאן כהודעה (או /authcode הקוד).',
+              ];
+        await ctx.reply(lines.join('\n').slice(0, 4000));
+      } else {
+        await ctx.reply(
+          'Sorry — I hit a temporary issue talking to the voice-agent. Please try again in a moment.'
+        );
+      }
     } finally {
       clearInterval(typing);
     }

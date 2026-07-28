@@ -41,6 +41,10 @@ async function joinupFetch(pathname, { method = 'GET', body, signal } = {}) {
     );
     err.status = res.status;
     err.data = data;
+    if (data?.code) err.code = data.code;
+    if (data?.authUrl) err.authUrl = data.authUrl;
+    if (data?.tool) err.tool = data.tool;
+    if (data?.queueId) err.queueId = data.queueId;
     throw err;
   }
   return data;
