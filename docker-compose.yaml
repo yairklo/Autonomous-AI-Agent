@@ -35,6 +35,8 @@ services:
       - WORKSPACE_BOOTSTRAP_STRICT=1
       # Keep Telegram as a separate process/container (Coolify metrics + isolation)
       - JOINUP_TELEGRAM_AUTOSTART=0
+      # Shared with joinup-telegram for /api/joinup/*
+      - JOINUP_BOT_SHARED_SECRET=dev-shared-secret-change-me
       # Inject secrets via Coolify / compose env file:
       # GITHUB_TOKEN (required for clone/push to all workspaces), TELEGRAM_*, JOINUP_TELEGRAM_*,
       # GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
@@ -71,15 +73,13 @@ services:
       # Explicit URL — do not rely on implicit Docker DNS alone in Coolify.
       # Local compose convenience value (override in Coolify with the public app URL):
       - VOICE_AGENT_URL=http://app:8787
+      - JOINUP_BOT_SHARED_SECRET=dev-shared-secret-change-me
+      - JOINUP_THIN_BOT=1
       # Required secrets (compose env / Coolify UI):
-      # JOINUP_TELEGRAM_BOT_TOKEN, ALLOWED_TELEGRAM_USER_IDS, GITHUB_TOKEN,
-      # optional VERCEL_*, RENDER_*
+      # JOINUP_TELEGRAM_BOT_TOKEN, ALLOWED_TELEGRAM_USER_IDS,
+      # (GITHUB_TOKEN / Cursor auth live on voice-agent only)
     volumes:
       - app_data:/app/data
-      - claude_config:/root/.claude
-      - cursor_config:/root/.cursor
-      - git_config:/root/.git-config-data
-      - app_workspaces:/workspaces
     depends_on:
       - app
     restart: unless-stopped

@@ -43,26 +43,32 @@ export class JoinUpProductAgent {
 
   /**
    * Handle one inbound Telegram text message for an authorized user.
-   * @param {{ userId: string|number, text: string, signal?: AbortSignal }} input
-   * @returns {Promise<{ reply: string, phase: string, dispatched?: boolean }>}
+   * @param {{ userId: string|number, text: string, signal?: AbortSignal, deferDispatch?: boolean }} input
+   * @returns {Promise<{ reply: string, phase: string, dispatched?: boolean, needsDispatch?: boolean, pendingBuild?: boolean }>}
    */
-  async handleMessage({ userId, text, signal }) {
+  async handleMessage({ userId, text, signal, deferDispatch = false }) {
     const cleaned = String(text || '').trim();
     if (!cleaned) {
       return {
         reply: 'Please send a short description of what you would like in joinUp.',
         phase: this.store.get(userId).phase,
+        pendingBuild: Boolean(this.store.get(userId).pendingTechnicalPrompt),
       };
     }
 
     if (isCancelOrReset(cleaned)) {
       this.claude.reset(this.clientIdFor(userId));
       this.store.reset(userId);
-      this.store.update(userId, { phase: 'idle' });
+      this.store.update(userId, {
+        phase: 'idle',
+        pendingTechnicalPrompt: '',
+        pendingSpecSummary: '',
+      });
       return {
         reply:
           'Okay — I cleared our conversation. Tell me a new joinUp idea whenever you are ready.',
         phase: 'idle',
+        pendingBuild: false,
       };
     }
 
@@ -72,6 +78,14 @@ export class JoinUpProductAgent {
     // If we already have a technical prompt and the user confirms / asks to run it, execute.
     if (hasPendingBuild && isExplicitConfirmation(cleaned)) {
       this.store.appendHistory(userId, 'user', cleaned);
+      if (deferDispatch) {
+        return {
+          reply: '',
+          phase: 'awaiting_confirmation',
+          needsDispatch: true,
+          pendingBuild: true,
+        };
+      }
       return this._executeConfirmed(userId, signal);
     }
 
@@ -109,6 +123,14 @@ export class JoinUpProductAgent {
       });
       // If the user already confirmed in this same message, build immediately.
       if (isExplicitConfirmation(cleaned)) {
+        if (deferDispatch) {
+          return {
+            reply: cleanReply || '',
+            phase: 'awaiting_confirmation',
+            needsDispatch: true,
+            pendingBuild: true,
+          };
+        }
         return this._executeConfirmed(userId, signal);
       }
       return {
@@ -116,17 +138,25 @@ export class JoinUpProductAgent {
           cleanReply ||
           'I have a clear plan for joinUp. Should I proceed with building this for joinUp?',
         phase: 'awaiting_confirmation',
+        pendingBuild: true,
       };
     }
 
     // Safety net: LLM claimed "sending to fix/build" but omitted READY_TO_BUILD.
-    // Example that previously failed: "שולח את זה לתיקון:" with no marker → no Cursor.
     if (claimsSendingToBuild(cleanReply)) {
       const synthesized = this._ensureTechnicalPrompt(userId, cleanReply);
       if (synthesized) {
         this.onLog(
           '[joinup-telegram] LLM claimed send-to-fix/build — dispatching (synthesized READY_TO_BUILD if needed)'
         );
+        if (deferDispatch) {
+          return {
+            reply: cleanReply,
+            phase: 'awaiting_confirmation',
+            needsDispatch: true,
+            pendingBuild: true,
+          };
+        }
         return this._executeConfirmed(userId, signal);
       }
     }
@@ -142,7 +172,32 @@ export class JoinUpProductAgent {
       lastAgentReply: cleanReply,
     });
 
-    return { reply: cleanReply, phase: this.store.get(userId).phase };
+    return {
+      reply: cleanReply,
+      phase: this.store.get(userId).phase,
+      pendingBuild: Boolean(this.store.get(userId).pendingTechnicalPrompt),
+    };
+  }
+
+  /**
+   * Clear Claude session + JoinUp store (including stuck pendingBuild).
+   */
+  resetUser(userId) {
+    this.claude.reset(this.clientIdFor(userId));
+    this.store.reset(userId);
+    this.store.update(userId, {
+      phase: 'idle',
+      pendingTechnicalPrompt: '',
+      pendingSpecSummary: '',
+      lastAgentReply: '',
+    });
+  }
+
+  /**
+   * Start Cursor build for a pending technical prompt (used by async /api/joinup/dispatch).
+   */
+  async executePending(userId, signal) {
+    return this._executeConfirmed(userId, signal);
   }
 
   /**

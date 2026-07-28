@@ -8,10 +8,19 @@
 #
 # | Coolify app name   | Dockerfile                    | Role |
 # |--------------------|-------------------------------|------|
-# | `voice-agent`      | `Dockerfile.app`              | HTTP API + PWA GUI + WhatsApp/jobs MCP (port 8787) |
-# | `joinup-telegram`  | `Dockerfile.joinup-telegram`  | joinUp product Telegram bot (no public HTTP port) |
+# | `voice-agent`      | `Dockerfile.app`              | HTTP API + PWA GUI + WhatsApp/jobs MCP + **joinUp brain** (`/api/joinup/*`) |
+# | `joinup-telegram`  | `Dockerfile.joinup-telegram`  | Thin Telegram I/O only (no Claude/Cursor in this container) |
 #
 # Legacy: root `Dockerfile` matches `Dockerfile.app` for older Coolify configs.
+#
+# ## Architecture (thin Telegram bot)
+#
+# Telegram → joinup-telegram (allow-list) → `VOICE_AGENT_URL` `/api/joinup/*`
+# voice-agent runs Grill-Me (Claude) + Cursor dispatch pinned to JoinUp.
+# `POST /api/joinup/dispatch` returns **202 + runId**; the bot polls
+# `GET /api/joinup/runs/:runId` until completed/failed (avoids HTTP 504).
+# Auth: shared `JOINUP_BOT_SHARED_SECRET` via header `X-JoinUp-Bot-Secret`
+# (compared with `crypto.timingSafeEqual`).
 #
 # ## Shared / required environment variables
 #
@@ -25,20 +34,20 @@
 # | `AGENT_PROJECT_ROOT` | Default `/workspaces/Autonomous-AI-Agent` (self-coding; not `/app`) |
 # | `PORTFOLIO_PROJECT_ROOT` | Default `/workspaces/portfolio` |
 # | `ECODRIVE_PROJECT_ROOT` | Default `/workspaces/EcoDrive` |
+# | `JOINUP_BOT_SHARED_SECRET` | **Required** — must match joinup-telegram |
+# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` (Cursor pin for joinUp) |
 # | `JOINUP_TELEGRAM_AUTOSTART` | Keep `0` — Telegram is a separate Coolify app |
 # | Volumes | `.wwebjs_auth`, `data`, `assets`, Claude/Cursor/git config, `/workspaces` |
 #
-# ### joinup-telegram (`Dockerfile.joinup-telegram`)
+# ### joinup-telegram (`Dockerfile.joinup-telegram`) — thin
 #
 # | Variable | Notes |
 # |----------|-------|
 # | `JOINUP_TELEGRAM_BOT_TOKEN` | Required |
 # | `ALLOWED_TELEGRAM_USER_IDS` | Required (comma-separated) |
-# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` (registry id `joinup`) |
-# | `VOICE_AGENT_URL` | **Required in Coolify** — full URL of the voice-agent app (e.g. `https://agent.example.com`). Live Cursor logs + activity history POST here. |
-# | `JOINUP_RUN_LOG_URL` | Legacy alias for `VOICE_AGENT_URL` |
-# | `GITHUB_TOKEN`, `VERCEL_*`, `RENDER_*` | Same as before for notify/redeploy |
-# | Volumes | `data`, Claude/Cursor/git config, `/workspaces` (all coding clones) |
+# | `VOICE_AGENT_URL` | **Required** — HTTPS URL of voice-agent |
+# | `JOINUP_BOT_SHARED_SECRET` | **Required** — same value as voice-agent |
+# | Volumes | `/app/data` only (no Claude/Cursor/`/workspaces` needed) |
 #
 # ## Coding workspaces (`workspaces.json`)
 #

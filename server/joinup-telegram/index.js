@@ -57,6 +57,7 @@ import { createJoinUpTelegramBot, launchJoinUpTelegramBot } from './bot.js';
 export async function startJoinUpTelegramService(options = {}) {
   // Persist activity via HTTP bridge to voice-agent only (host GUI history).
   process.env.AGENT_ACTIVITY_PERSIST = '0';
+  process.env.JOINUP_THIN_BOT = process.env.JOINUP_THIN_BOT || '1';
   const onLog = options.onLog || ((line) => console.log(line));
   const config = loadJoinUpTelegramConfig();
 
@@ -69,7 +70,9 @@ export async function startJoinUpTelegramService(options = {}) {
     return null;
   }
 
-  onLog(`[joinup-telegram] pinned project root: ${config.joinUpRoot}`);
+  onLog(
+    `[joinup-telegram] thin mode → voice-agent (JoinUp coding pinned server-side)`
+  );
   onLog(
     `[joinup-telegram] allow-list size: ${config.allowedUserIds.size} mock=${config.mock}`
   );
