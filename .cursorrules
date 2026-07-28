@@ -1,6 +1,6 @@
 # Cursor Agent Rules
 - You MUST read PROMPT.md, AGENTS.md, and .cursor/rules/ immediately.
-- Create and switch to a new git branch before editing code: `git checkout -b feature/task-1785232341271` (or as specified in PROMPT.md).
+- Create and switch to a new git branch before editing code: `git checkout -b feature/task-1785233979675` (or as specified in PROMPT.md).
 - Run in non-interactive/auto-approve mode to execute the task fully. Do NOT prompt for permission on file edits or terminal commands.
 - ALWAYS run local quality gates (especially `next_app` `npm run build` when present) and fix failures in a loop before finishing.
 - Commit and push the feature branch when done.

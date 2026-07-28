@@ -1,24 +1,25 @@
 # Cursor Task Execution Instruction
 
 ## Task Description
-Bug: Voice recording button in the Autonomous Agent GUI does nothing when clicked — no audio is recorded and no transcription appears. This worked correctly when running the app locally on a developer machine, but broke after deploying to the VPS. No error message is shown, and the browser does not even prompt for microphone permission when the button is clicked.
+Bug: In the autonomous agent's GUI, the voice recording button does nothing — clicking it records no audio and produces no transcription. This started after migrating the deployment from local/dev hosting to a VPS. Investigate and fix, and produce a clear final written report (no manual browser testing will be done on my end — I need your written conclusion to be authoritative and precise).
 
-Leading hypothesis: the recording feature uses the browser `navigator.mediaDevices.getUserMedia` API, which browsers only allow in a "secure context" — i.e. `https://` or `http://localhost`. If the VPS serves the GUI over plain HTTP (not HTTPS), `getUserMedia` will be `undefined` or silently blocked, so clicking the button triggers no permission prompt and no visible error (likely because the failure isn't caught/logged in the UI). This matches the reported symptoms exactly (works on localhost, breaks on VPS, no permission prompt, no error shown).
+Please determine and report:
 
-Tasks:
-1. Locate the voice recording component/button in the GUI codebase and confirm it uses `navigator.mediaDevices.getUserMedia` (or similar Web Audio/MediaRecorder API) to start recording.
-2. Confirm whether the failure is due to insecure context (HTTP instead of HTTPS) on the VPS — check how the GUI is served in production/VPS deployment (reverse proxy config, Docker/nginx setup, ports, whether TLS is configured).
-3. Add proper error handling/logging around the `getUserMedia` call and any recording/transcription pipeline so failures are surfaced clearly in the UI/console instead of failing silently, to make this class of bug diagnosable in the future.
-4. If the root cause is confirmed to be missing HTTPS on the VPS: implement a fix so the GUI is served over HTTPS (e.g. configure TLS termination via reverse proxy/nginx with a certificate, or document/apply the necessary deployment change), so the secure-context requirement is satisfied.
-5. If the root cause is something else (e.g. a regression in the recording/transcription code path itself, wrong API usage, a broken event handler, or an environment variable/config difference between local and VPS), find and fix that instead.
-6. After the fix, verify end-to-end: clicking the record button triggers a microphone permission prompt (first time), successfully records audio, and produces a text transcription displayed in the GUI.
-7. Do not break the existing local/dev workflow — the fix must work both when running locally and when deployed on the VPS.
+1. Root cause: Is this caused by the browser blocking navigator.mediaDevices.getUserMedia because the GUI is now served over plain HTTP instead of HTTPS (browsers require a secure context — HTTPS or localhost — for microphone access)? Or is it a different/additional issue — broken WebSocket or HTTP endpoint for audio upload, CORS misconfiguration, wrong env var/URL still pointing at a localhost transcription service, mixed-content blocking (page loaded over HTTPS but calling an HTTP API), ws:// used where wss:// is now required, a missing/changed port in nginx or reverse proxy config after the VPS move, etc. Check the frontend JS (recording button event handler, any window.isSecureContext or getUserMedia usage, hardcoded URLs/schemes), the network calls it makes, and the backend endpoint/service that receives audio and returns a transcript.
 
-Acceptance criteria: On the VPS deployment, clicking the record button prompts for microphone access (if not already granted), records audio, and displays the transcribed text in the GUI, matching the previously working local behavior.
+2. Explicitly state whether the fix requires ONLY an infrastructure/deployment change (e.g., serving the GUI over HTTPS with a valid TLS cert, or adjusting reverse proxy/nginx config), or whether it ALSO requires a code change (e.g., hardcoded http:// or ws:// URLs, incorrect CORS headers, env vars still pointing at old local addresses, missing protocol upgrade logic). Do not assume — verify against the actual code and config in this repo.
+
+3. If any code-level issue is found, fix it directly in the repo and describe exactly what changed and why.
+
+4. If HTTPS is required and not yet configured on the VPS, do NOT attempt to provision certificates yourself. Instead, first check this repo's actual existing deployment setup (docker-compose, nginx config, Caddyfile, systemd units, etc. — whatever is actually there) and then give a precise, numbered, copy-pasteable step-by-step guide tailored to that real setup for moving the GUI to HTTPS (e.g., nginx + certbot/Let's Encrypt, or Caddy's automatic HTTPS, whichever fits what's already deployed). Do not give generic boilerplate instructions — base it on what's actually in the codebase.
+
+5. Note explicitly if the recording code relies on window.isSecureContext or on a specific URL scheme, since that directly explains this symptom.
+
+Acceptance criteria: I will consider this task done based on your written explanation alone — I will not personally re-test the recording feature. Be thorough and unambiguous about (a) root cause, (b) whether infra-only or infra+code changes are needed, and (c) exact next steps for me if any manual VPS/infra action is required on my side.
 
 ## Strict Instructions for Cursor / Antigravity Agent
 1. **Branching:** Create and switch to a new feature branch before editing code:
-   `git checkout -b feature/task-1785232341271`
+   `git checkout -b feature/task-1785233979675`
 2. **Autonomy:** Run in non-interactive/auto-approve mode. Do NOT prompt for permission on file edits or terminal commands.
 3. **Verification & Completion:**
    - Execute local quality gates (build/tests) and fix failures in a loop until green.
