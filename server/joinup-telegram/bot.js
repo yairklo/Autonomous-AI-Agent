@@ -1,33 +1,30 @@
 import { Telegraf } from 'telegraf';
 import { createAuthMiddleware } from './auth.js';
-import { JoinUpCursorExecutor } from './executor.js';
-import { JoinUpProductAgent } from './product-agent.js';
 import {
   JOINUP_UNAUTHORIZED_MESSAGE,
   JOINUP_WELCOME_MESSAGE,
 } from './prompt.js';
-import { isExplicitConfirmation, JoinUpSessionStore } from './session-store.js';
 import {
   bridgeActivity,
   telegramActivityId,
   telegramActorLabel,
 } from './activity-bridge.js';
 import {
-  formatStagingTelegramLines,
-  redeployAndWatchStaging,
-} from './render-staging.js';
+  clientIdForTelegramUser,
+  joinupChat,
+  joinupDispatch,
+  joinupPollRun,
+  joinupRedeployStaging,
+  joinupReset,
+} from './voice-agent-client.js';
+import { resolveVoiceAgentBaseUrl } from './voice-agent-url.js';
 
 /**
- * Create the joinUp Telegram bot (Telegraf) with auth + product grilling workflow.
+ * Thin joinUp Telegram bot: Telegram I/O + allow-list only.
+ * Grill / Cursor / JoinUp dispatch run on voice-agent via /api/joinup/*.
  *
  * @param {object} config - from loadJoinUpTelegramConfig()
- * @param {{
- *   agent?: JoinUpProductAgent,
- *   executor?: JoinUpCursorExecutor,
- *   store?: JoinUpSessionStore,
- *   onLog?: (line: string) => void,
- *   telegrafOptions?: object,
- * }} [deps]
+ * @param {{ onLog?: (line: string) => void, telegrafOptions?: object }} [deps]
  */
 export function createJoinUpTelegramBot(config, deps = {}) {
   if (!config?.botToken) {
@@ -46,25 +43,9 @@ export function createJoinUpTelegramBot(config, deps = {}) {
   }
 
   const onLog = deps.onLog || ((line) => console.log(line));
-  const store =
-    deps.store ||
-    new JoinUpSessionStore({ stateFile: config.stateFile });
-  const executor =
-    deps.executor ||
-    new JoinUpCursorExecutor({ joinUpRoot: config.joinUpRoot });
-  const agent =
-    deps.agent ||
-    new JoinUpProductAgent({
-      store,
-      executor,
-      mock: config.mock,
-      sessionsFile: config.sessionsFile,
-      claudeBin: config.claudeBin,
-      onLog,
-    });
+  const voiceUrl = resolveVoiceAgentBaseUrl();
+  onLog(`[joinup-telegram] thin bot → voice-agent ${voiceUrl}`);
 
-  // Cursor builds take far longer than Telegraf's default 90s handlerTimeout
-  // (p-timeout kills the whole bot process on expiry — silent log loss).
   const handlerTimeout = Number(
     process.env.JOINUP_TELEGRAM_HANDLER_TIMEOUT_MS || 3_600_000
   );
@@ -73,7 +54,6 @@ export function createJoinUpTelegramBot(config, deps = {}) {
     ...(deps.telegrafOptions || {}),
   });
 
-  // Authorization: reject anyone not in ALLOWED_TELEGRAM_USER_IDS.
   bot.use(
     createAuthMiddleware(config.allowedUserIds, {
       replyUnauthorized: true,
@@ -87,7 +67,11 @@ export function createJoinUpTelegramBot(config, deps = {}) {
   );
 
   bot.start(async (ctx) => {
-    store.update(ctx.from.id, { phase: 'idle' });
+    try {
+      await joinupReset({ userId: ctx.from.id });
+    } catch (err) {
+      onLog(`[joinup-telegram] reset on /start failed: ${err.message}`);
+    }
     await ctx.reply(JOINUP_WELCOME_MESSAGE);
   });
 
@@ -102,16 +86,22 @@ export function createJoinUpTelegramBot(config, deps = {}) {
         '',
         'Otherwise just describe the joinUp change you want in plain language.',
         'I will ask product/UX questions, summarize, and build only after you confirm.',
+        '',
+        `Brain: voice-agent at ${voiceUrl}`,
       ].join('\n')
     );
   });
 
   bot.command('reset', async (ctx) => {
-    const result = await agent.handleMessage({
-      userId: ctx.from.id,
-      text: 'reset',
-    });
-    await ctx.reply(result.reply);
+    try {
+      await joinupReset({ userId: ctx.from.id });
+      await ctx.reply(
+        'Okay — I cleared our conversation. Tell me a new joinUp idea whenever you are ready.'
+      );
+    } catch (err) {
+      onLog(`[joinup-telegram] reset error: ${err.message}`);
+      await ctx.reply(`Reset failed: ${err.message}`);
+    }
   });
 
   bot.command('redeploy_staging', async (ctx) => {
@@ -126,33 +116,28 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       actorLabel: telegramActorLabel(userId),
       title: 'Redeploy staging (Telegram)',
       text: '/redeploy_staging',
-      project: config.joinUpRoot,
     });
 
     const typing = setInterval(() => {
       ctx.sendChatAction('typing').catch(() => {});
     }, 4000);
     try {
-      const staging = await redeployAndWatchStaging({
-        force: true,
-        onLog,
-        timeoutMs: Number(process.env.JOINUP_STAGING_WAIT_MS || 420000),
-      });
-      const lines = formatStagingTelegramLines(staging);
+      const result = await joinupRedeployStaging({ force: true });
       await ctx.reply(
-        ['רידיפלוי staging:', ...lines].join('\n').slice(0, 4000)
+        ['רידיפלוי staging:', result.text || JSON.stringify(result.staging || {})]
+          .join('\n')
+          .slice(0, 4000)
       );
       void bridgeActivity({
         activityId: telegramActivityId(userId),
-        kind: staging.ok || staging.skipped ? 'run_end' : 'error',
+        kind: result.ok ? 'run_end' : 'error',
         source: 'joinup-telegram',
         platform: 'telegram',
         actorId: String(userId),
         actorLabel: telegramActorLabel(userId),
         title: 'Redeploy staging (Telegram)',
-        text: lines.join('\n'),
-        project: config.joinUpRoot,
-        meta: { ok: staging.ok, skipped: !!staging.skipped },
+        text: result.text || '',
+        meta: { ok: result.ok },
       });
     } catch (err) {
       onLog(`[joinup-telegram] redeploy_staging error: ${err.message}`);
@@ -163,7 +148,6 @@ export function createJoinUpTelegramBot(config, deps = {}) {
   });
 
   bot.on('message', async (ctx) => {
-    // Commands (/start, /help, /reset) are handled above; skip if already consumed.
     if (ctx.message?.text?.startsWith('/')) return;
 
     if (!ctx.message?.text) {
@@ -175,10 +159,6 @@ export function createJoinUpTelegramBot(config, deps = {}) {
     const text = ctx.message.text;
     onLog(`[joinup-telegram] message from=${userId} chars=${text.length}`);
 
-    const session = store.get(userId);
-    const startingBuild =
-      Boolean(session?.pendingTechnicalPrompt) && isExplicitConfirmation(text);
-
     void bridgeActivity({
       activityId: telegramActivityId(userId),
       kind: 'chat_user',
@@ -188,12 +168,33 @@ export function createJoinUpTelegramBot(config, deps = {}) {
       actorLabel: telegramActorLabel(userId),
       title: 'joinUp Telegram',
       text,
-      project: config.joinUpRoot,
     });
 
-    // Acknowledge immediately so Telegraf isn't left hanging on a multi-hour Cursor run.
-    // Do NOT stream Cursor progress into Telegram — live logs are host-only (GUI).
-    if (startingBuild) {
+    const typing = setInterval(() => {
+      ctx.sendChatAction('typing').catch(() => {});
+    }, 4000);
+    ctx.sendChatAction('typing').catch(() => {});
+
+    try {
+      const chat = await joinupChat({ userId, text });
+      if (chat.reply) {
+        await ctx.reply(String(chat.reply).slice(0, 4000));
+        void bridgeActivity({
+          activityId: telegramActivityId(userId),
+          kind: 'chat_assistant',
+          source: 'joinup-telegram',
+          platform: 'telegram',
+          actorId: String(userId),
+          actorLabel: telegramActorLabel(userId),
+          title: 'joinUp Telegram',
+          text: String(chat.reply).slice(0, 2000),
+          meta: { phase: chat.phase, clientId: clientIdForTelegramUser(userId) },
+        });
+      }
+
+      if (!chat.needsDispatch) return;
+
+      // Async build: ack immediately, poll voice-agent until done.
       await ctx.reply(
         'מתחיל לבנות ב-joinUp. אעדכן כאן כשזה מוכן, עם קישור לבילד.'
       );
@@ -205,48 +206,52 @@ export function createJoinUpTelegramBot(config, deps = {}) {
         actorId: String(userId),
         actorLabel: telegramActorLabel(userId),
         title: 'joinUp build confirmed',
-        text: 'User confirmed — Cursor dispatch starting',
-        project: config.joinUpRoot,
+        text: 'User confirmed — Cursor dispatch starting on voice-agent',
       });
-    }
 
-    const typing = setInterval(() => {
-      ctx.sendChatAction('typing').catch(() => {});
-    }, 4000);
-    ctx.sendChatAction('typing').catch(() => {});
+      const started = await joinupDispatch({ userId });
+      const runId = started.runId;
+      onLog(`[joinup-telegram] dispatch accepted runId=${runId}`);
 
-    try {
-      const result = await agent.handleMessage({ userId, text });
-      if (result?.reply) {
-        await ctx.reply(result.reply.slice(0, 4000));
-        void bridgeActivity({
-          activityId: telegramActivityId(userId),
-          kind: result.dispatched ? 'run_end' : 'chat_assistant',
-          source: 'joinup-telegram',
-          platform: 'telegram',
-          actorId: String(userId),
-          actorLabel: telegramActorLabel(userId),
-          title: result.dispatched ? 'joinUp build finished' : 'joinUp Telegram',
-          text: result.reply.slice(0, 2000),
-          project: config.joinUpRoot,
-          meta: {
-            phase: result.phase,
-            vercelUrl: result.vercelUrl || '',
-            stagingUrl: result.stagingUrl || '',
-          },
-        });
-      }
+      const final = await joinupPollRun(runId, {
+        onTick: () => {
+          ctx.sendChatAction('typing').catch(() => {});
+        },
+      });
+
+      const completion =
+        final.result ||
+        (final.status === 'completed'
+          ? 'Build finished.'
+          : `Build failed: ${final.error || 'unknown error'}`);
+      await ctx.reply(String(completion).slice(0, 4000));
+      void bridgeActivity({
+        activityId: telegramActivityId(userId),
+        kind: final.status === 'completed' ? 'run_end' : 'error',
+        source: 'joinup-telegram',
+        platform: 'telegram',
+        actorId: String(userId),
+        actorLabel: telegramActorLabel(userId),
+        title: 'joinUp build finished',
+        text: String(completion).slice(0, 2000),
+        meta: {
+          runId,
+          status: final.status,
+          vercelUrl: final.vercelUrl || '',
+          stagingUrl: final.stagingUrl || '',
+        },
+      });
     } catch (err) {
       onLog(`[joinup-telegram] handler error: ${err.message}`);
       await ctx.reply(
-        'Sorry — I hit a temporary issue. Please try again in a moment.'
+        'Sorry — I hit a temporary issue talking to the voice-agent. Please try again in a moment.'
       );
     } finally {
       clearInterval(typing);
     }
   });
 
-  return { bot, agent, executor, store };
+  return { bot };
 }
 
 /**
@@ -264,8 +269,6 @@ export async function launchJoinUpTelegramBot(instance, options = {}) {
     );
   });
 
-  // Telegraf's launch() awaits the polling loop forever — do not await it or
-  // our service bootstrap (and "bot launched" logs) never complete.
   onLog('[joinup-telegram] connecting to Telegram…');
   bot.botInfo = await bot.telegram.getMe();
   onLog(`[joinup-telegram] authenticated as @${bot.botInfo.username}`);
@@ -276,7 +279,7 @@ export async function launchJoinUpTelegramBot(instance, options = {}) {
       onLog(`[joinup-telegram] launch error: ${err.message}`);
     });
 
-  onLog('[joinup-telegram] bot launched (long polling)');
+  onLog('[joinup-telegram] bot launched (long polling, thin → voice-agent)');
 
   const stop = (reason = 'stop') => {
     try {

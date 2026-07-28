@@ -836,6 +836,67 @@ test('resolveVoiceAgentBaseUrl prefers VOICE_AGENT_URL over Compose-style defaul
   assert.strictEqual(resolveVoiceAgentBaseUrl({}), 'http://127.0.0.1:8787');
 });
 
+test('joinUp bot shared secret uses timing-safe compare', async () => {
+  const { joinUpBotSecretOk } = await import('../server/joinup-http.js');
+  const prev = process.env.JOINUP_BOT_SHARED_SECRET;
+  process.env.JOINUP_BOT_SHARED_SECRET = 'test-secret-value-32chars-min!!';
+  try {
+    assert.strictEqual(joinUpBotSecretOk('test-secret-value-32chars-min!!'), true);
+    assert.strictEqual(joinUpBotSecretOk('wrong'), false);
+    assert.strictEqual(joinUpBotSecretOk(''), false);
+  } finally {
+    if (prev === undefined) delete process.env.JOINUP_BOT_SHARED_SECRET;
+    else process.env.JOINUP_BOT_SHARED_SECRET = prev;
+  }
+});
+
+test('JoinUpProductAgent deferDispatch does not execute Cursor', async () => {
+  const { JoinUpProductAgent } = await import(
+    '../server/joinup-telegram/product-agent.js'
+  );
+  const { JoinUpSessionStore } = await import(
+    '../server/joinup-telegram/session-store.js'
+  );
+  let executed = 0;
+  const store = new JoinUpSessionStore({});
+  const executor = {
+    async execute() {
+      executed += 1;
+      return { vercel: {}, staging: {} };
+    },
+  };
+  const agent = new JoinUpProductAgent({
+    store,
+    executor,
+    mock: true,
+  });
+  const userId = `defer-${Date.now()}`;
+  store.update(userId, {
+    phase: 'awaiting_confirmation',
+    pendingTechnicalPrompt: 'Implement joinUp button',
+  });
+  const result = await agent.handleMessage({
+    userId,
+    text: 'מאשר',
+    deferDispatch: true,
+  });
+  assert.strictEqual(result.needsDispatch, true);
+  assert.strictEqual(executed, 0);
+  assert.ok(store.get(userId).pendingTechnicalPrompt);
+});
+
+test('clientId helpers for thin joinup bot', async () => {
+  const {
+    clientIdForTelegramUser,
+  } = await import('../server/joinup-telegram/voice-agent-client.js');
+  const { userIdFromClientId, clientIdForUser } = await import(
+    '../server/joinup-service.js'
+  );
+  assert.strictEqual(clientIdForTelegramUser(42), 'joinup-tg:42');
+  assert.strictEqual(userIdFromClientId('joinup-tg:99'), '99');
+  assert.strictEqual(clientIdForUser('7'), 'joinup-tg:7');
+});
+
 test('workspaces registry loads agent/joinup/portfolio/ecodrive', async () => {
   const {
     clearWorkspacesCache,

@@ -49,7 +49,10 @@ export function publishRunEvent(partial = {}) {
     run.lastType = event.type;
     run.lastText = event.text;
     if (event.type === 'run_end' || event.type === 'error') {
-      run.status = event.type === 'error' ? 'error' : 'done';
+      run.status = event.type === 'error' ? 'failed' : 'completed';
+      if (event.type === 'run_end') run.ok = true;
+      if (event.type === 'error') run.ok = false;
+      if (event.text) run.result = event.text;
     }
   }
 
@@ -105,11 +108,24 @@ export function startRun({ source = 'dispatch', project = '', title = '' } = {})
 }
 
 export function endRun(runId, { ok = true, text = '' } = {}) {
+  const run = activeRuns.get(runId);
+  if (run) {
+    run.status = ok ? 'completed' : 'failed';
+    run.ok = ok;
+    run.result = String(text || '');
+    run.updatedAt = new Date().toISOString();
+  }
   publishRunEvent({
     runId,
     type: ok ? 'run_end' : 'error',
     text: text || (ok ? 'Cursor run finished' : 'Cursor run failed'),
   });
+}
+
+export function getRun(runId) {
+  const id = String(runId || '').trim();
+  if (!id) return null;
+  return activeRuns.get(id) || null;
 }
 
 export function listActiveRuns() {
