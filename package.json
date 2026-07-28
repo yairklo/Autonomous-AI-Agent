@@ -31,6 +31,8 @@
     "test:joinup-staging": "node scripts/test-joinup-render-staging.js",
     "test:activity": "node scripts/test-activity-store.js",
     "test:run-events": "node scripts/test-cursor-log-parser.js",
+    "metrics:tokens": "node scripts/metrics-tokens.js",
+    "test:metrics-tokens": "node scripts/test-token-logger.js",
     "auth:cli": "node scripts/auth-cli.js",
     "auth:claude": "node scripts/auth-cli.js claude",
     "auth:cursor": "node scripts/auth-cli.js cursor",
