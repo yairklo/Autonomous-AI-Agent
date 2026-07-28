@@ -55,6 +55,11 @@ export class GeminiSessionManager extends EventEmitter {
     this._load();
   }
 
+  /** @returns {{ provider: 'gemini', model: string }} */
+  getProviderInfo() {
+    return { provider: 'gemini', model: this.model };
+  }
+
   _load() {
     try {
       if (fs.existsSync(this.sessionsFile)) {
@@ -117,6 +122,10 @@ export class GeminiSessionManager extends EventEmitter {
       yield* this._mockAsk(clientId, cleaned);
       return;
     }
+
+    console.log(
+      `[gemini] ask clientId=${clientId} model=${this.model} historyTurns=${this.getSession(clientId)?.history?.length || 0}`
+    );
 
     let session = this.getSession(clientId);
     if (!session?.sessionId) {

@@ -62,6 +62,11 @@ export class ClaudeSessionManager extends EventEmitter {
     this._load();
   }
 
+  /** @returns {{ provider: 'claude', model: string }} */
+  getProviderInfo() {
+    return { provider: 'claude', model: 'claude-cli' };
+  }
+
   _load() {
     try {
       if (fs.existsSync(this.sessionsFile)) {

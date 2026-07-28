@@ -47,6 +47,12 @@ const llmProvider = normalizeLlmProvider(config.llmProvider);
 const claude = createLlmSessionManager({ provider: llmProvider });
 const llmActorLabel =
   llmProvider === 'gemini' ? 'Gemini (voice)' : 'Claude (voice)';
+const llmModel =
+  typeof claude.getProviderInfo === 'function'
+    ? claude.getProviderInfo().model
+    : llmProvider === 'gemini'
+      ? config.geminiModel
+      : 'claude-cli';
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -95,6 +101,7 @@ app.get('/api/health', (_req, res) => {
     interactiveChatSafe: true,
     llmProvider,
     geminiModel: llmProvider === 'gemini' ? config.geminiModel : undefined,
+    llmModel,
     grillMePacks: listGrillMePacks().map((p) => p.id),
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
@@ -245,14 +252,14 @@ app.post('/api/chat', async (req, res) => {
     req.body?.interactiveChat === '1' ||
     String(clientId).startsWith('terminal-');
   console.log(
-    `[API CHAT] received request. clientId=${clientId} interactiveChat=${interactiveChat} text="${text}"`
+    `[API CHAT] received request. clientId=${clientId} llm=${llmProvider}/${llmModel} interactiveChat=${interactiveChat} text="${text}"`
   );
   if (!text) {
     return res.status(400).json({ error: 'text is required' });
   }
 
   initSse(res);
-  sendSse(res, 'meta', { clientId, interactiveChat });
+  sendSse(res, 'meta', { clientId, interactiveChat, llmProvider, llmModel });
 
   const voiceActivityId = `voice:${clientId}:${new Date().toISOString().slice(0, 10)}`;
   recordActivity({
@@ -1024,7 +1031,10 @@ async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
 
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
-  console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
+  console.log(
+    `[voice-agent] llmProvider=${llmProvider} llmModel=${llmModel} mock=${config.mock}`
+  );
+  console.log(`[voice-agent] claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
   console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
   console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
