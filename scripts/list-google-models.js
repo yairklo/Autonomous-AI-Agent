@@ -83,7 +83,7 @@ function canGenerateContent(model) {
 function scoreForPrimaryAgent(model) {
   const id = model.name.toLowerCase();
   if (!canGenerateContent(model)) return -Infinity;
-  if (/embed|imagen|veo|tts|aqa|gemma|robotics|computer-use|preview-tts/i.test(id)) {
+  if (/embed|imagen|veo|tts|aqa|gemma|robotics|computer-use|preview-tts|image|lyria|omni|audio|live|translate|deep-research|antigravity/i.test(id)) {
     return -1000;
   }
 

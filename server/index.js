@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
-import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
+import { createLlmSessionManager, normalizeLlmProvider } from './llm-session.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
 import {
@@ -43,7 +43,10 @@ fs.mkdirSync(config.uploadsDir, { recursive: true });
 fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
 
 const app = express();
-const claude = new ClaudeSessionManager();
+const llmProvider = normalizeLlmProvider(config.llmProvider);
+const claude = createLlmSessionManager({ provider: llmProvider });
+const llmActorLabel =
+  llmProvider === 'gemini' ? 'Gemini (voice)' : 'Claude (voice)';
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -90,6 +93,8 @@ app.get('/api/health', (_req, res) => {
     grillMeConversation: true,
     // Interactive CLI sends interactiveChat:true — auto dispatch off unless explicit trigger.
     interactiveChatSafe: true,
+    llmProvider,
+    geminiModel: llmProvider === 'gemini' ? config.geminiModel : undefined,
     grillMePacks: listGrillMePacks().map((p) => p.id),
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
@@ -391,7 +396,7 @@ app.post('/api/chat', async (req, res) => {
           source: 'voice',
           platform: 'voice',
           actorId: clientId,
-          actorLabel: 'Claude (voice)',
+          actorLabel: llmActorLabel,
           title: 'Voice / chat turn',
           text: result,
         });
@@ -406,6 +411,7 @@ app.post('/api/chat', async (req, res) => {
         sendSse(res, 'done', {
           result,
           clientId,
+          llmProvider,
         });
       } else if (event.type === 'error') {
         recordActivity({
@@ -414,10 +420,15 @@ app.post('/api/chat', async (req, res) => {
           source: 'voice',
           platform: 'voice',
           actorId: clientId,
-          actorLabel: 'Claude (voice)',
+          actorLabel: llmActorLabel,
           text: event.error || 'chat error',
         });
-        sendSse(res, 'error', { error: event.error });
+        sendSse(res, 'error', {
+          error: event.error,
+          code: event.code,
+          authUrl: event.authUrl,
+          tool: event.tool,
+        });
       }
     }
   } catch (err) {

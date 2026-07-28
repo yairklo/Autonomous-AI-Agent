@@ -44,6 +44,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@google/genai": "^2.13.0",
     "bidi-js": "^1.0.3",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
