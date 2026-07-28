@@ -1,94 +1,16 @@
-﻿/**
- * Durable cross-platform agent activity history (voice, Telegram, Cursor, MCP…).
- * Append-only JSONL under data/ — host GUI only; never broadcast to collaborators.
- */
-import fs from 'node:fs';
-import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
+import { Activity } from './models/Activity.js';
 import { config } from './config.js';
 
 const bus = new EventEmitter();
 bus.setMaxListeners(40);
 
-const MAX_MEMORY_EVENTS = 4000;
-const MAX_ACTIVITY_SUMMARIES = 400;
-
-/** @type {object[]} */
-let events = [];
-/** @type {Map<string, object>} */
-const activities = new Map();
-
-function activityFile() {
-  return (
-    process.env.AGENT_ACTIVITY_FILE ||
-    path.join(config.root, 'data', 'agent-activity.jsonl')
-  );
-}
-
-function ensureDir() {
-  const dir = path.dirname(activityFile());
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-function trimMemory() {
-  if (events.length > MAX_MEMORY_EVENTS) {
-    events = events.slice(-MAX_MEMORY_EVENTS);
-  }
-  if (activities.size > MAX_ACTIVITY_SUMMARIES) {
-    const sorted = [...activities.values()].sort((a, b) =>
-      String(b.updatedAt).localeCompare(String(a.updatedAt))
-    );
-    activities.clear();
-    for (const a of sorted.slice(0, MAX_ACTIVITY_SUMMARIES)) {
-      activities.set(a.activityId, a);
-    }
-  }
-}
-
-function upsertActivity(event) {
-  const id = event.activityId || event.runId || event.id;
-  const prev = activities.get(id) || {
-    activityId: id,
-    startedAt: event.at,
-    updatedAt: event.at,
-    source: event.source,
-    platform: event.platform,
-    actorId: event.actorId || '',
-    actorLabel: event.actorLabel || '',
-    title: event.title || event.text?.slice(0, 120) || 'Activity',
-    project: event.project || '',
-    status: 'running',
-    kinds: {},
-    eventCount: 0,
-    preview: '',
-  };
-
-  prev.updatedAt = event.at;
-  prev.eventCount += 1;
-  prev.kinds[event.kind] = (prev.kinds[event.kind] || 0) + 1;
-  if (event.source) prev.source = event.source;
-  if (event.platform) prev.platform = event.platform;
-  if (event.actorId) prev.actorId = event.actorId;
-  if (event.actorLabel) prev.actorLabel = event.actorLabel;
-  if (event.project) prev.project = event.project;
-  if (event.title && event.kind === 'run_start') prev.title = event.title;
-  if (event.kind === 'run_end') prev.status = 'done';
-  else if (event.kind === 'error' || event.type === 'error') prev.status = 'error';
-  else if (prev.status !== 'error' && prev.status !== 'done') prev.status = 'running';
-
-  const previewText = String(event.text || '').trim();
-  if (previewText) prev.preview = previewText.slice(0, 180);
-
-  activities.set(id, prev);
-  return prev;
-}
-
 /**
- * Record one activity event (persisted + in-memory + subscribers).
+ * Record one activity event (persisted to MongoDB + subscribers).
  * @param {object} partial
  */
-export function recordActivity(partial = {}) {
+export async function recordActivity(partial = {}) {
   const event = {
     id: partial.id || uuidv4(),
     activityId: partial.activityId || partial.runId || `act-${uuidv4()}`,
@@ -106,23 +28,47 @@ export function recordActivity(partial = {}) {
     meta: partial.meta || {},
   };
 
-  events.push(event);
-  const summary = upsertActivity(event);
-  trimMemory();
+  bus.emit('event', event);
 
-  // Standalone Telegram / workers set AGENT_ACTIVITY_PERSIST=0 and POST to the
-  // voice-agent instead — avoids double-writing the same JSONL on one machine.
-  if (process.env.AGENT_ACTIVITY_PERSIST !== '0') {
+  if (config.mongoUri) {
     try {
-      ensureDir();
-      fs.appendFileSync(activityFile(), `${JSON.stringify(event)}\n`, 'utf8');
+      let status = 'pending';
+      if (event.kind === 'run_end' || event.kind === 'done') status = 'success';
+      else if (event.kind === 'error' || event.type === 'error') status = 'error';
+      else if (event.kind === 'run_start') status = 'running';
+
+      const act = new Activity({
+        sessionId: event.activityId, // link to session via activityId/runId
+        userId: event.actorId,
+        channel: event.platform,
+        actionType: event.kind,
+        details: {
+          text: event.text,
+          title: event.title,
+          source: event.source,
+          project: event.project,
+          meta: event.meta
+        },
+        status: status,
+        error: status === 'error' ? event.text : undefined,
+        createdAt: new Date(event.at)
+      });
+      await act.save();
     } catch (err) {
-      console.warn('[activity-store] persist failed:', err.message);
+      console.warn('[activity-store] mongo save failed:', err.message);
     }
   }
 
-  bus.emit('event', event);
-  bus.emit('activity', summary);
+  // To keep compatibility with UI that expects summaries, we can emit a mock summary
+  // or fetch the latest status. For simplicity, we just emit the raw event.
+  // The UI usually relies on 'activity' emit for list updates, we'll emit a basic one:
+  bus.emit('activity', {
+    activityId: event.activityId,
+    updatedAt: event.at,
+    title: event.title || event.text?.slice(0, 120) || 'Activity',
+    status: event.kind === 'error' ? 'error' : (event.kind === 'run_end' ? 'done' : 'running')
+  });
+
   return event;
 }
 
@@ -180,42 +126,101 @@ export function recordFromRunEvent(runEvent) {
   });
 }
 
-export function listActivities({
+export async function listActivities({
   limit = 80,
   query = '',
   filter = '',
   platform = '',
+  userId = '',
+  sessionId = '',
+  page = 1
 } = {}) {
-  const q = String(query || filter || '')
-    .trim()
-    .toLowerCase();
-  const plat = String(platform || '')
-    .trim()
-    .toLowerCase();
-  let items = [...activities.values()];
-  if (plat) {
-    items = items.filter((a) => String(a.platform).toLowerCase() === plat);
+  if (!config.mongoUri) return [];
+  
+  const q = {};
+  if (platform) q.channel = platform;
+  if (userId) q.userId = userId;
+  if (sessionId) q.sessionId = sessionId;
+  
+  const search = query || filter;
+  if (search) {
+    q.$text = { $search: search };
   }
-  if (q) {
-    items = items.filter((a) => {
-      const hay =
-        `${a.title} ${a.preview} ${a.source} ${a.actorLabel} ${a.project}`.toLowerCase();
-      return hay.includes(q);
-    });
+
+  const skip = (Math.max(1, page) - 1) * limit;
+
+  try {
+    const items = await Activity.find(q)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .exec();
+    
+    // Map back to the UI expected format
+    return items.map(act => ({
+      activityId: act.sessionId,
+      updatedAt: act.createdAt,
+      source: act.channel,
+      platform: act.channel,
+      actorId: act.userId,
+      title: act.details?.title || act.details?.text?.slice(0, 120) || 'Activity',
+      project: act.details?.project || '',
+      status: act.status === 'success' ? 'done' : act.status,
+      preview: act.details?.text?.slice(0, 180) || ''
+    }));
+  } catch (err) {
+    console.warn('[activity-store] listActivities failed:', err.message);
+    return [];
   }
-  items.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  return items.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
 }
 
-export function getActivityEvents(activityId, { limit = 300 } = {}) {
+export async function getActivityEvents(activityId, { limit = 300 } = {}) {
   const id = String(activityId || '');
-  if (!id) return [];
-  const matched = events.filter((e) => e.activityId === id || e.runId === id);
-  return matched.slice(-Math.max(1, Math.min(1000, Number(limit) || 300)));
+  if (!id || !config.mongoUri) return [];
+  
+  try {
+    const items = await Activity.find({ sessionId: id })
+      .sort({ createdAt: 1 })
+      .limit(Number(limit))
+      .exec();
+    
+    return items.map(act => ({
+      activityId: act.sessionId,
+      runId: act.sessionId,
+      at: act.createdAt,
+      kind: act.actionType,
+      type: act.actionType,
+      text: act.details?.text || '',
+      source: act.details?.source || '',
+      platform: act.channel,
+      meta: act.details?.meta || {}
+    }));
+  } catch (err) {
+    console.warn('[activity-store] getActivityEvents failed:', err.message);
+    return [];
+  }
 }
 
-export function getActivity(activityId) {
-  return activities.get(String(activityId || '')) || null;
+export async function getActivity(activityId) {
+  if (!config.mongoUri) return null;
+  try {
+    const act = await Activity.findOne({ sessionId: String(activityId || '') }).sort({ createdAt: -1 }).exec();
+    if (!act) return null;
+    return {
+      activityId: act.sessionId,
+      updatedAt: act.createdAt,
+      source: act.channel,
+      platform: act.channel,
+      actorId: act.userId,
+      title: act.details?.title || act.details?.text?.slice(0, 120) || 'Activity',
+      project: act.details?.project || '',
+      status: act.status === 'success' ? 'done' : act.status,
+      preview: act.details?.text?.slice(0, 180) || ''
+    };
+  } catch (err) {
+    console.warn('[activity-store] getActivity failed:', err.message);
+    return null;
+  }
 }
 
 export function subscribeActivity(listener) {
@@ -224,32 +229,6 @@ export function subscribeActivity(listener) {
 }
 
 export function loadActivityStoreFromDisk() {
-  const file = activityFile();
-  try {
-    if (!fs.existsSync(file)) return { loaded: 0 };
-    const text = fs.readFileSync(file, 'utf8');
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    const slice = lines.slice(-MAX_MEMORY_EVENTS);
-    events = [];
-    activities.clear();
-    for (const line of slice) {
-      try {
-        const event = JSON.parse(line);
-        events.push(event);
-        upsertActivity(event);
-      } catch {
-        /* skip bad line */
-      }
-    }
-    return { loaded: events.length };
-  } catch (err) {
-    console.warn('[activity-store] load failed:', err.message);
-    return { loaded: 0, error: err.message };
-  }
-}
-
-// Load on import so history survives restarts.
-const boot = loadActivityStoreFromDisk();
-if (boot.loaded) {
-  console.log(`[activity-store] loaded ${boot.loaded} events from disk`);
+  // Deprecated JSONL loading. We now use MongoDB.
+  return { loaded: 0, deprecated: true };
 }

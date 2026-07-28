@@ -7,6 +7,7 @@ import {
   isExplicitConfirmation,
 } from './session-store.js';
 import { formatCompletionMessage } from './executor.js';
+import { logMessage } from '../message-store.js';
 
 /**
  * Conversational product agent: grill → summarize → confirm → hand off to Cursor.
@@ -75,6 +76,14 @@ export class JoinUpProductAgent {
     }
 
     this.store.appendHistory(userId, 'user', cleaned);
+    logMessage({
+      sessionId: this.clientIdFor(userId),
+      userId: String(userId),
+      channel: 'telegram',
+      role: 'user',
+      content: cleaned
+    });
+
     if (!hasPendingBuild) {
       this.store.update(userId, { phase: 'grilling' });
     }
@@ -83,6 +92,13 @@ export class JoinUpProductAgent {
     const { cleanReply, technicalPrompt } = extractReadyToBuild(agentReply);
 
     this.store.appendHistory(userId, 'assistant', cleanReply);
+    logMessage({
+      sessionId: this.clientIdFor(userId),
+      userId: String(userId),
+      channel: 'telegram',
+      role: 'assistant',
+      content: cleanReply
+    });
 
     if (technicalPrompt) {
       this.store.update(userId, {
