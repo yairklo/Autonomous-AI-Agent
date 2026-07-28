@@ -1,5 +1,7 @@
 import cors from 'cors';
 import express from 'express';
+import mongoose from 'mongoose';
+import fs from 'node:fs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +31,7 @@ import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 import { mountRunEventsRoutes } from './run-events-http.js';
 import { mountActivityRoutes } from './activity-http.js';
 import { recordActivity } from './activity-store.js';
+import { logMessage, getMessages } from './message-store.js';
 import {
   loadJobsConfig,
   saveWhatsappGroups,
@@ -254,6 +257,14 @@ app.post('/api/chat', async (req, res) => {
     title: 'Voice / chat turn',
     text,
   });
+  
+  logMessage({
+    sessionId: clientId,
+    userId: clientId,
+    channel: 'web-ui',
+    role: 'user',
+    content: text
+  });
 
   const ac = new AbortController();
   res.on('close', () => {
@@ -380,6 +391,14 @@ app.post('/api/chat', async (req, res) => {
           actorLabel: 'Claude (voice)',
           title: 'Voice / chat turn',
           text: result,
+        });
+        
+        logMessage({
+          sessionId: clientId,
+          userId: clientId,
+          channel: 'web-ui',
+          role: 'assistant',
+          content: result
         });
         sendSse(res, 'done', {
           result,
@@ -586,6 +605,14 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       });
       return res.end();
     }
+    
+    logMessage({
+      sessionId: clientId,
+      userId: clientId,
+      channel: 'voice',
+      role: 'user',
+      content: text
+    });
 
     const ac = new AbortController();
     res.on('close', () => {
@@ -619,8 +646,16 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       } else if (event.type === 'session') {
         sendSse(res, 'session', { sessionId: event.sessionId });
       } else if (event.type === 'done') {
+        const result = event.result || full;
+        logMessage({
+          sessionId: clientId,
+          userId: clientId,
+          channel: 'voice',
+          role: 'assistant',
+          content: result
+        });
         sendSse(res, 'done', {
-          result: event.result || full,
+          result: result,
           clientId,
           transcript: text,
         });
@@ -1001,10 +1036,26 @@ const server = app.listen(config.port, config.host, () => {
         console.error('[joinup-telegram] autostart failed:', err.message);
       });
   }
-
 });
 
 server.on('error', (err) => {
   console.error('[voice-agent] failed to start:', err.message);
   process.exit(1);
 });
+
+// Initialize Mongoose before listening
+if (config.mongoUri) {
+  mongoose.connect(config.mongoUri)
+    .then(() => console.log('[voice-agent] Connected to MongoDB'))
+    .catch(err => console.error('[voice-agent] MongoDB connection error:', err));
+    
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+  });
+  process.on('SIGTERM', async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+  });
+}
