@@ -31,6 +31,12 @@ Open on your phone (same LAN or Tailscale):
 2. **Hold** the big button, speak, **release** to send.
 3. Replies stream in and are spoken aloud.
 
+**VPS / Coolify:** the mic requires a browser **secure context**. Use the
+Coolify **HTTPS** domain (Let’s Encrypt), not `http://<VPS-IP>:8787`. See
+[DEPLOY.md](./DEPLOY.md) § “HTTPS required for microphone”. The GUI checks
+`window.isSecureContext` and surfaces an explicit status line when HTTP blocks
+`getUserMedia` / Web Speech.
+
 ### Mock mode (no Claude auth required)
 
 ```bash
@@ -114,7 +120,7 @@ Returns `audio/wav` when a local engine works (Windows SAPI / macOS `say` / espe
 | `ALLOWED_TELEGRAM_USER_IDS` | — | Comma-separated Telegram user IDs allow-list |
 | `JOINUP_PROJECT_ROOT` | `C:\JoinUpApp` | Absolute path to the joinUp repo (execution is pinned here) |
 | `JOINUP_TELEGRAM_MOCK` | `0` | `1` = mock product grilling (no Claude) |
-| `JOINUP_TELEGRAM_AUTOSTART` | `0` | `1` = start joinUp bot with `npm start` |
+| `JOINUP_TELEGRAM_AUTOSTART` | `0` | With `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1` only: embed bot in `npm start` (local). Coolify: leave both unset/`0`. |
 
 ### joinUp Telegram Product Bot
 
@@ -182,7 +188,7 @@ Deploy **two independent Docker applications** (separate CPU/RAM in Coolify UI):
 | voice-agent | `Dockerfile.app` | `npm start` (:8787) |
 | joinup-telegram | `Dockerfile.joinup-telegram` | `npm run start:joinup-telegram` |
 
-Set `VOICE_AGENT_URL` on the Telegram app to the voice-agent public/private URL so Cursor Live logs bridge over HTTP. See [DEPLOY.md](./DEPLOY.md).
+Set `VOICE_AGENT_URL` on the Telegram app to the voice-agent **HTTPS** public URL so Cursor Live logs bridge correctly. See [DEPLOY.md](./DEPLOY.md).
 
 `docker-compose.yaml` remains an optional local multi-service helper; prefer per-Dockerfile Coolify apps in production.
 

@@ -59,13 +59,13 @@
       </div>
 
       <form id="textForm" class="text-row" autocomplete="off">
-        <input
+        <textarea
           id="textInput"
-          type="text"
+          rows="7"
           enterkeyhint="send"
           placeholder="Or type a message…"
           aria-label="Message"
-        />
+        ></textarea>
         <button type="submit" class="send">Send</button>
       </form>
 
@@ -119,7 +119,7 @@
         <h2>Server</h2>
         <label>
           Base URL
-          <input id="serverUrl" type="url" placeholder="http://192.168.x.x:8787" />
+          <input id="serverUrl" type="url" placeholder="https://agent.example.com (blank = same origin)" />
         </label>
         <label class="check">
           <input id="autoSpeak" type="checkbox" checked />
