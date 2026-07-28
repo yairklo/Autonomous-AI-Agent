@@ -2,7 +2,6 @@ import cors from 'cors';
 import express from 'express';
 import mongoose from 'mongoose';
 import fs from 'node:fs';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import multer from 'multer';
