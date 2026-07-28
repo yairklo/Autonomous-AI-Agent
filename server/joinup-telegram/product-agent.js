@@ -1,4 +1,4 @@
-import { ClaudeSessionManager } from '../claude-session.js';
+import { createLlmSessionManager } from '../llm-session.js';
 import { JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT } from './prompt.js';
 import {
   claimsSendingToBuild,
@@ -11,7 +11,7 @@ import { logMessage } from '../message-store.js';
 
 /**
  * Conversational product agent: grill → summarize → confirm → hand off to Cursor.
- * Uses Claude CLI (or mock) with the joinUp-specific system prompt.
+ * Uses Claude CLI or Gemini (AGENT_LLM_PROVIDER) with the joinUp-specific system prompt.
  */
 export class JoinUpProductAgent {
   /**
@@ -22,6 +22,7 @@ export class JoinUpProductAgent {
    * @param {string} [options.sessionsFile]
    * @param {string} [options.claudeBin]
    * @param {string} [options.systemPrompt]
+   * @param {string} [options.provider]
    * @param {(line: string) => void} [options.onLog]
    */
   constructor(options) {
@@ -29,11 +30,12 @@ export class JoinUpProductAgent {
     this.executor = options.executor;
     this.onLog = options.onLog || (() => {});
     this.mock = Boolean(options.mock);
-    this.claude = new ClaudeSessionManager({
+    this.claude = createLlmSessionManager({
       mock: this.mock,
       sessionsFile: options.sessionsFile,
       claudeBin: options.claudeBin,
       systemPrompt: options.systemPrompt || JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT,
+      provider: options.provider,
     });
   }
 

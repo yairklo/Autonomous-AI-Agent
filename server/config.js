@@ -1,4 +1,5 @@
 import os from 'node:os';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -9,9 +10,45 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
+/** Load project .env into process.env before reading config (non-destructive). */
+function loadDotEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const text = fs.readFileSync(filePath, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+loadDotEnvFile(path.join(root, '.env'));
+loadDotEnvFile(path.join(root, '.env.local'));
+
 function env(name, fallback) {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
+}
+
+function resolveLlmProvider() {
+  const explicit = env('AGENT_LLM_PROVIDER', env('LLM_PROVIDER', ''));
+  if (explicit) return String(explicit).toLowerCase();
+  // If a Gemini key is present and no provider was forced, prefer Gemini.
+  if (env('GEMINI_API_KEY', env('GOOGLE_API_KEY', ''))) return 'gemini';
+  return 'claude';
 }
 
 const codingDefaultRoot = resolveCodingProjectRoot();
@@ -132,6 +169,20 @@ export const config = {
   maxUploadBytes: 25 * 1024 * 1024,
   claudeTimeoutMs: Number(env('CLAUDE_TIMEOUT_MS', String(5 * 60 * 1000))),
   systemPrompt: env('VOICE_SYSTEM_PROMPT', defaultSystemPrompt),
+  // Orchestration LLM: claude (CLI) | gemini (GEMINI_API_KEY + @google/genai).
+  // MCP tools stay server-side either way.
+  llmProvider: resolveLlmProvider(),
+  geminiApiKey: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', '')),
+  // From scripts/list-google-models.js live discovery (override anytime).
+  geminiModel: env('GEMINI_MODEL', 'gemini-3.6-flash'),
+  geminiSessionsFile: env(
+    'GEMINI_SESSIONS_FILE',
+    path.join(root, 'gemini-sessions.json')
+  ),
+  geminiTimeoutMs: Number(env('GEMINI_TIMEOUT_MS', String(5 * 60 * 1000))),
+  // Free-tier oriented defaults — verify in AI Studio for your project.
+  geminiRpm: Number(env('GEMINI_RPM', '15')),
+  geminiRpd: Number(env('GEMINI_RPD', '1500')),
   // When true, ONLY explicit skip-Grill-Me / dispatch utterances auto-invoke
   // dispatch_coding_task. Ordinary coding requests stay in Grill-Me Mode via Claude.
   autoDispatchCoding: env('AUTO_DISPATCH_CODING', '1') === '1',

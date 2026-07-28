@@ -10,6 +10,7 @@ coverage/
 dist/
 .claude/
 sessions.json
+gemini-sessions.json
 data/cv-profile.json
 data/cv-applications/*
 !data/cv-applications/README.md
