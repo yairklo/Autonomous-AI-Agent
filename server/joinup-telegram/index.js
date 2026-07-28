@@ -17,8 +17,9 @@
  *
  * Cross-service bridges POST to VOICE_AGENT_URL (or JOINUP_RUN_LOG_URL).
  *
- * Or auto-start with the voice-agent server when JOINUP_TELEGRAM_BOT_TOKEN is set
- * and JOINUP_TELEGRAM_AUTOSTART=1 (not recommended on Coolify — use a separate app).
+ * Or embed in the voice-agent process only when BOTH are set (local combined mode):
+ *   JOINUP_TELEGRAM_AUTOSTART=1 and JOINUP_TELEGRAM_ALLOW_EMBEDDED=1
+ * Coolify AUTOSTART=1 alone is ignored so Dockerfile.app never launches the bot.
  */
 
 export { loadJoinUpTelegramConfig, parseAllowedUserIds, pinToJoinUpRoot, resolveJoinUpRoot } from './config.js';

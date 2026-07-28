@@ -48,4 +48,16 @@ assert.equal(
   'https://x.example'
 );
 
+const deploy = read('DEPLOY.md');
+assert.match(deploy, /HTTPS required for microphone/);
+assert.match(deploy, /Let’s Encrypt|Let's Encrypt/);
+assert.match(deploy, /window\.isSecureContext/);
+assert.match(deploy, /Coolify/);
+
+const clientApp = read('client/app.js');
+assert.match(clientApp, /window\.isSecureContext/);
+assert.match(clientApp, /isGuiSecureContext/);
+assert.match(clientApp, /getUserMedia/);
+assert.match(clientApp, /insecureMicMessage/);
+
 console.log('docker deploy layout validation: ok');

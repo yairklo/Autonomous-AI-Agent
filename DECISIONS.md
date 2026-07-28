@@ -6,6 +6,11 @@
 **Env:** `VOICE_AGENT_URL`, `JOINUP_RUN_LOG_URL`, `JOINUP_TELEGRAM_AUTOSTART=0`  
 **Date:** 2026-07-27
 
+## D21 — Voice-agent never embeds joinUp Telegram from AUTOSTART alone
+**Decision:** `server/index.js` starts the joinUp Telegram bot only when both `JOINUP_TELEGRAM_AUTOSTART=1` and `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1`. Coolify leftover `AUTOSTART=1` on Dockerfile.app is ignored and logged.  
+**Why:** Operators deploying only `Dockerfile.app` still saw the Telegram bot because Coolify env overrode the image default `AUTOSTART=0`.  
+**Date:** 2026-07-27
+
 ## D10 — Coding tasks dispatch to headless agent (not GUI)
 **Decision:** When a user utterance is a coding / Cursor-dispatch request, the Claude orchestration layer (`server/task-router.js` + `/api/chat`) invokes `scripts/dispatch-task.js` instead of opening the Cursor GUI.  
 **Why:** Voice → coding must be headless and automatable; E2E requires branch + commit without human clicks.  
