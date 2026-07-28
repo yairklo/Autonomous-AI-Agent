@@ -239,6 +239,25 @@ if (process.env.DISPATCH_SKIP_QUALITY_GATES !== '1') {
 
 after = captureGit(resolvedPath);
 
+// Always push the feature branch after green gates. With mergeTarget=none the
+// previous code relied on Cursor to push — if the agent died mid-run we marked
+// success on a local branch rename with no remote update.
+if (process.env.DISPATCH_SKIP_PUSH !== '1') {
+  try {
+    pushFeatureBranch(resolvedPath, after.branch || branchName);
+    fs.appendFileSync(
+      runLogPath,
+      `pushedBranch=${after.branch || branchName}\n`,
+      'utf8'
+    );
+    console.log(`✓ Pushed feature branch ${after.branch || branchName} to origin`);
+  } catch (err) {
+    console.error(`✗ git push failed: ${err.message}`);
+    fs.appendFileSync(runLogPath, `pushError=${err.message}\n`, 'utf8');
+    process.exit(1);
+  }
+}
+
 if (mergeTarget && process.env.DISPATCH_SKIP_MERGE !== '1') {
   try {
     mergeFeatureIntoTarget(resolvedPath, mergeTarget, after.branch || branchName);
@@ -258,8 +277,24 @@ fs.appendFileSync(
   'utf8'
 );
 
-if (after.branch === before.branch && after.commit === before.commit) {
-  console.error('✗ Cursor agent produced no new git branch or commit.');
+// Success requires a NEW commit SHA — renaming/checking out a feature branch
+// on the same commit must not count as done.
+if (!after.commit || after.commit === before.commit) {
+  const dirty = isDirtyWorkTree(resolvedPath);
+  console.error(
+    '✗ Cursor agent produced no new commit ' +
+      `(before=${before.commit || '(none)'} after=${after.commit || '(none)'} branch=${after.branch || '(none)'}).`
+  );
+  if (dirty) {
+    console.error(
+      '  Working tree still has uncommitted changes. Salvage in the container:\n' +
+        `    cd ${resolvedPath}\n` +
+        '    git status\n' +
+        '    git diff\n' +
+        '    git add -A && git commit -m "…" && git push -u origin HEAD\n' +
+        '  Or re-dispatch a short task: commit+push existing mic/GUI changes only (do not redo).'
+    );
+  }
   process.exit(1);
 }
 
@@ -531,6 +566,42 @@ async function enforceQualityGatesWithFixLoop({
 }
 
 /**
+ * Push current/feature branch to origin (required when mergeTarget is none).
+ */
+function pushFeatureBranch(cwd, featureBranch) {
+  const current = captureGit(cwd).branch;
+  const source =
+    (featureBranch && String(featureBranch).trim()) ||
+    current ||
+    '';
+  if (!source) {
+    throw new Error('No branch to push');
+  }
+  // Stay on the branch we intend to publish.
+  if (current !== source) {
+    try {
+      git(cwd, `checkout ${source}`, { inherit: true });
+    } catch {
+      git(cwd, `checkout -b ${source}`, { inherit: true });
+    }
+  }
+  console.log(`[dispatch] Pushing ${source} → origin`);
+  git(cwd, `push -u origin ${source}`, { inherit: true });
+}
+
+function isDirtyWorkTree(cwd) {
+  try {
+    const out = execSync('git status --porcelain', {
+      cwd,
+      encoding: 'utf8',
+    }).trim();
+    return Boolean(out);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Merge current/feature branch into deploy target and push.
  */
 function mergeFeatureIntoTarget(cwd, target, featureBranch) {
@@ -607,17 +678,15 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     }
 
     console.log(`[spawn] ${command} ${spawnArgs.map(windowsQuote).join(' ')}`);
+    const childEnv = buildCursorAgentEnv(env);
+    console.log(
+      `[spawn] HOME=${childEnv.HOME || '(unset)'} ` +
+        `CURSOR_API_KEY=${childEnv.CURSOR_API_KEY ? '(set)' : '(unset)'} ` +
+        `cursorDir=${path.join(childEnv.HOME || '', '.cursor')}`
+    );
     const child = spawn(command, spawnArgs, {
       cwd,
-      env: {
-        ...env,
-        DISPATCH_NO_CLAUDE: '1',
-        // Prefer headless / non-interactive behavior inside Coolify containers
-        CI: env.CI || '1',
-        NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
-        // Claude Code rejects bypassPermissions as root unless IS_SANDBOX=1
-        IS_SANDBOX: env.IS_SANDBOX || '1',
-      },
+      env: childEnv,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
@@ -657,6 +726,30 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
       }
     });
   });
+}
+
+function buildCursorAgentEnv(env = process.env) {
+  // Coolify / Docker: interactive `docker exec` shells often have HOME=/root
+  // (where `agent login` stores creds in the cursor_config volume), but the
+  // Node server process may inherit a different/empty HOME. Cursor then looks
+  // in the wrong place and reports "Authentication required".
+  const home =
+    String(env.HOME || env.USERPROFILE || '').trim() ||
+    (process.platform === 'win32'
+      ? env.USERPROFILE || process.env.USERPROFILE || ''
+      : '/root');
+
+  return {
+    ...env,
+    HOME: home,
+    ...(process.platform === 'win32' && home ? { USERPROFILE: home } : {}),
+    DISPATCH_NO_CLAUDE: '1',
+    // Prefer headless / non-interactive behavior inside Coolify containers
+    CI: env.CI || '1',
+    NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
+    // Claude Code rejects bypassPermissions as root unless IS_SANDBOX=1
+    IS_SANDBOX: env.IS_SANDBOX || '1',
+  };
 }
 
 function windowsQuote(arg) {
