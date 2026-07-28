@@ -1,13 +1,18 @@
 /**
  * Pre-dispatch / pre-chat CLI auth gate + Phase B notify / wait / resume.
  * Supports Cursor (coding) and Claude (chat / Grill-Me).
+ *
+ * Cursor DeepControl: keep `agent login` ALIVE after printing the URL —
+ * killing it invalidates the challenge and browser approval does nothing.
  */
 
 import { checkClaudeAuth, checkCursorAuth } from './health.js';
+import { startClaudeLoginSession } from './claude-login-session.js';
 import {
-  captureClaudeLoginUrl,
-  captureCursorLoginUrl,
-} from './capture-login-url.js';
+  hasActiveCursorLoginSession,
+  startCursorLoginSession,
+  waitForCursorLoginExit,
+} from './cursor-login-session.js';
 import { notifyCliAuthRequired } from './notify.js';
 import { parkTask, removeParked } from './queue.js';
 
@@ -18,14 +23,8 @@ function probeFn(tool) {
   return tool === 'claude' ? checkClaudeAuth : checkCursorAuth;
 }
 
-function defaultCaptureFn(tool) {
-  return tool === 'claude' ? captureClaudeLoginUrl : captureCursorLoginUrl;
-}
-
 function waitMsForTool(tool, env) {
   if (tool === 'claude') {
-    // Chat/Telegram: default fail-fast so the auth URL can be returned in-band.
-    // Set CLI_AUTH_CLAUDE_WAIT_MS to poll/resume without a second user message.
     const raw = env.CLI_AUTH_CLAUDE_WAIT_MS;
     if (raw != null && String(raw).trim() !== '') {
       return Number(raw);
@@ -37,8 +36,7 @@ function waitMsForTool(tool, env) {
 
 /**
  * Poll until CLI auth is healthy or timeout.
- * @param {object} [opts]
- * @param {'cursor'|'claude'} [opts.tool]
+ * For Cursor, also watch the live login process exit.
  */
 export async function waitForCliAuth({
   tool = 'cursor',
@@ -59,6 +57,20 @@ export async function waitForCliAuth({
       throw err;
     }
     attempt += 1;
+
+    if (tool === 'cursor' && hasActiveCursorLoginSession()) {
+      const login = await waitForCursorLoginExit({ timeoutMs: 500 });
+      if (login.ok) {
+        onLog?.(
+          `[cli-auth] cursor login process finished OK — re-probing status…`
+        );
+      } else if (login.running) {
+        onLog?.(
+          `[cli-auth] cursor login still waiting for browser approval (attempt=${attempt})`
+        );
+      }
+    }
+
     const result = await check({ env, ...rest });
     if (result.ok) {
       onLog?.(
@@ -74,7 +86,10 @@ export async function waitForCliAuth({
       };
     }
     onLog?.(
-      `[cli-auth] waiting for ${tool} login… attempt=${attempt} status=${result.status}`
+      `[cli-auth] waiting for ${tool} login… attempt=${attempt} status=${result.status}` +
+        (tool === 'cursor' && hasActiveCursorLoginSession()
+          ? ' (login process alive)'
+          : '')
     );
     await new Promise((r) => setTimeout(r, Math.max(1000, intervalMs)));
   }
@@ -83,7 +98,6 @@ export async function waitForCliAuth({
 /**
  * @param {'cursor'|'claude'} [tool]
  * @param {object} [opts]
- * @returns {Promise<import('./health.js').CliAuthHealthResult>}
  */
 export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
   const {
@@ -108,7 +122,6 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
   onLog?.(`[cli-auth] probing ${tool} session…`);
   let result = await check({ env, ...rest });
 
-  // One immediate re-probe (Phase A light): handles race after volume mount.
   if (!result.ok && result.status === 'auth_required') {
     onLog?.(`[cli-auth] first ${tool} probe failed; re-checking once…`);
     result = await check({ env, ...rest });
@@ -121,23 +134,41 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
     return result;
   }
 
-  // Phase B: capture URL (if missing), notify human, park, wait for recovery.
+  // Phase B: start LIVE login (do not kill), notify, park, wait.
   let authUrl = result.authUrl || '';
-  const captureFn =
-    typeof captureLoginUrlOpt === 'function'
-      ? captureLoginUrlOpt
-      : captureLoginUrlOpt === false
-        ? null
-        : defaultCaptureFn(tool);
+  let authCodeHint = '';
 
-  if (!authUrl && result.status === 'auth_required' && captureFn) {
+  if (typeof captureLoginUrlOpt === 'function') {
     try {
-      onLog?.(`[cli-auth] capturing ${tool} login URL…`);
-      const captured = await captureFn({ env });
-      authUrl = captured.authUrl || '';
-      if (authUrl) onLog?.(`[cli-auth] login URL: ${authUrl}`);
+      const captured = await captureLoginUrlOpt({ env });
+      authUrl = captured.authUrl || authUrl;
+      authCodeHint = captured.authCode || captured.authCodeFromCli || '';
     } catch (err) {
-      onLog?.(`[cli-auth] login URL capture failed: ${err.message}`);
+      onLog?.(`[cli-auth] custom capture failed: ${err.message}`);
+    }
+  } else if (captureLoginUrlOpt !== false && result.status === 'auth_required') {
+    try {
+      if (tool === 'cursor') {
+        onLog?.(
+          '[cli-auth] starting live Cursor login (process stays alive for DeepControl)…'
+        );
+        const live = await startCursorLoginSession({ env });
+        authUrl = live.authUrl || authUrl;
+        onLog?.(
+          `[cli-auth] login URL: ${authUrl || '(none yet)'} running=${live.running}`
+        );
+      } else {
+        onLog?.('[cli-auth] starting live Claude login (paste browser code next)…');
+        const live = await startClaudeLoginSession({ env });
+        authUrl = live.authUrl || authUrl;
+        authCodeHint = live.authCodeFromCli || '';
+        onLog?.(
+          `[cli-auth] login URL: ${authUrl || '(none yet)'}` +
+            (authCodeHint ? ` cliCode=${authCodeHint}` : '')
+        );
+      }
+    } catch (err) {
+      onLog?.(`[cli-auth] live login start failed: ${err.message}`);
     }
   }
 
@@ -157,6 +188,7 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
     await notifyCliAuthRequired({
       tool,
       authUrl,
+      authCode: authCodeHint,
       reason: result.reason,
       project,
       task,
@@ -171,7 +203,7 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
 
   const waitMs = waitMsForTool(tool, env);
   if (skipWait || waitMs <= 0) {
-    const err = buildAuthError(tool, result, authUrl);
+    const err = buildAuthError(tool, result, authUrl, authCodeHint);
     err.queueId = parked.id;
     onLog?.(
       `[cli-auth] FAIL tool=${tool} status=${result.status} reason=${result.reason}` +
@@ -181,7 +213,10 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
   }
 
   onLog?.(
-    `[cli-auth] parked queueId=${parked.id}; waiting up to ${waitMs}ms for ${tool} browser login…`
+    `[cli-auth] parked queueId=${parked.id}; waiting up to ${waitMs}ms for ${tool} browser login…` +
+      (tool === 'cursor'
+        ? ' (keep login process alive — do not kill agent login)'
+        : ' (send browser code via Telegram /api/cli-auth/submit-code)')
   );
 
   const recovered = await waitForCliAuth({
@@ -204,7 +239,8 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
       ...recovered,
       reason: recovered.reason || result.reason,
     },
-    authUrl
+    authUrl,
+    authCodeHint
   );
   err.code = 'CLI_AUTH_TIMEOUT';
   err.queueId = parked.id;
@@ -215,15 +251,17 @@ export async function assertCliAuthReady(tool = 'cursor', opts = {}) {
   throw err;
 }
 
-function buildAuthError(tool, result, authUrl) {
+function buildAuthError(tool, result, authUrl, authCode = '') {
   const err = new Error(
     `CLI auth required for ${tool}: ${result.reason}` +
-      (authUrl ? ` — open ${authUrl}` : '')
+      (authUrl ? ` — open ${authUrl}` : '') +
+      (authCode ? ` — code ${authCode}` : '')
   );
   err.code = 'CLI_AUTH_REQUIRED';
   err.tool = tool;
   err.status = result.status;
   err.authUrl = authUrl || result.authUrl || '';
+  err.authCode = authCode || '';
   err.detail = result.detail || '';
   err.health = result;
   return err;

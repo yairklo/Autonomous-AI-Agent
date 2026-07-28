@@ -6,20 +6,11 @@ import { createTelegramClient } from '../jobs/telegram.js';
 
 /**
  * @param {object} opts
- * @param {string} [opts.tool]
- * @param {string} [opts.authUrl]
- * @param {string} [opts.reason]
- * @param {string} [opts.project]
- * @param {string} [opts.task]
- * @param {string} [opts.runId]
- * @param {string} [opts.queueId]
- * @param {(line: string) => void} [opts.onLog]
- * @param {NodeJS.ProcessEnv} [opts.env]
- * @param {boolean} [opts.dryRun]
  */
 export async function notifyCliAuthRequired({
   tool = 'cursor',
   authUrl = '',
+  authCode = '',
   reason = '',
   project = '',
   task = '',
@@ -29,6 +20,18 @@ export async function notifyCliAuthRequired({
   env = process.env,
   dryRun = false,
 } = {}) {
+  const cursorHint =
+    tool === 'cursor'
+      ? [
+          'IMPORTANT: Keep this session open — the VPS login process must stay alive.',
+          'Open the URL, complete Cursor login in the browser, then wait.',
+          'Do NOT generate a new link until this one finishes (challenge is one-shot).',
+        ]
+      : [
+          'Claude (Docker/SSH): open the URL, sign in, then COPY the login code from the browser.',
+          'Send that code back in Telegram (or POST /api/cli-auth/submit-code {"code":"..."}).',
+        ];
+
   const lines = [
     'CLI authentication required',
     `Tool: ${tool}`,
@@ -40,10 +43,12 @@ export async function notifyCliAuthRequired({
     '',
     authUrl
       ? `Open this login URL on your phone/PC:\n${authUrl}`
-      : 'No login URL captured. On the VPS run: npm run auth:cursor',
+      : `No login URL captured. On the VPS run: npm run auth:${tool === 'claude' ? 'claude' : 'cursor'}`,
+    authCode ? `CLI-printed code (if any): ${authCode}` : '',
     '',
-    'After login: POST /api/cli-auth/retry  (or wait — the agent will re-check automatically)',
-    `Or: npm run cli-auth:health`,
+    ...cursorHint,
+    '',
+    'After success the agent re-checks automatically. Optional: POST /api/cli-auth/retry',
   ].filter(Boolean);
 
   const text = lines.join('\n');
@@ -69,8 +74,10 @@ export async function notifyCliAuthRequired({
       ats: tool,
       step: 'cli_login',
       code: 'CLI_AUTH_REQUIRED',
-      message: reason || 'CLI session expired or missing',
-      manualUrl: authUrl || 'run: npm run auth:cursor',
+      message:
+        (reason || 'CLI session expired or missing') +
+        (authCode ? ` | code=${authCode}` : ''),
+      manualUrl: authUrl || `run: npm run auth:${tool}`,
     },
     { dryRun }
   );

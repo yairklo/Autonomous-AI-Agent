@@ -9,6 +9,8 @@ import {
 } from '../server/cli-auth/health.js';
 import {
   extractAuthUrl,
+  extractAuthCode,
+  looksLikeAuthCodeMessage,
   looksLikeAuthFailure,
 } from '../server/cli-auth/parse-auth-url.js';
 import { assertCliAuthReady, waitForCliAuth } from '../server/cli-auth/gate.js';
@@ -21,6 +23,18 @@ import {
   expireParked,
 } from '../server/cli-auth/queue.js';
 import { notifyCliAuthRequired } from '../server/cli-auth/notify.js';
+
+test('extractAuthCode finds labeled and device-style codes', () => {
+  assert.equal(extractAuthCode('Paste code here: ABCD-EFGH'), 'ABCD-EFGH');
+  assert.equal(extractAuthCode('WXYZ-1234'), 'WXYZ-1234');
+  assert.equal(extractAuthCode('hello world'), '');
+});
+
+test('looksLikeAuthCodeMessage', () => {
+  assert.equal(looksLikeAuthCodeMessage('ABCD-EFGH'), true);
+  assert.equal(looksLikeAuthCodeMessage('/authcode ABCD-EFGH'), true);
+  assert.equal(looksLikeAuthCodeMessage('מאשר'), false);
+});
 
 test('extractAuthUrl prefers login-looking URLs', () => {
   const text =
