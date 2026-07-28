@@ -3,6 +3,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { config } from './config.js';
+import {
+  applyWorkspaceDispatchPolicy,
+  findWorkspaceByRoot,
+  remapCodingProjectPath,
+  resolveCodingProjectRoot,
+  resolveWorkspaceFromPathOrText,
+} from './workspaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -92,8 +99,19 @@ export function detectCodingDispatch(text, options = {}) {
 
   if (!wantsExplicitDispatch(cleaned)) return null;
 
-  const project = extractProjectPath(cleaned) || config.root;
-  const resolvedProject = fs.existsSync(project) ? project : config.root;
+  const extracted = extractProjectPath(cleaned);
+  const { workspace, root } = resolveWorkspaceFromPathOrText({
+    path: extracted || '',
+    text: cleaned,
+  });
+  const remapped = remapCodingProjectPath(
+    root || extracted || resolveCodingProjectRoot({ text: cleaned })
+  );
+  const resolvedProject =
+    (fs.existsSync(remapped) ? remapped : null) ||
+    resolveCodingProjectRoot({ text: cleaned }) ||
+    config.root;
+  const ws = workspace || findWorkspaceByRoot(resolvedProject);
 
   return {
     project: resolvedProject,
@@ -101,6 +119,7 @@ export function detectCodingDispatch(text, options = {}) {
     dispatchScript: resolveDispatchScript(),
     skipGrillMe: true,
     shortConfirmation: isShortDispatchConfirmation(cleaned),
+    workspaceId: ws?.id || null,
     /** MCP tool args Claude / orchestration must use for coding work */
     mcpTool: 'dispatch_coding_task',
     mcpArgs: {
@@ -316,14 +335,21 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
     const args = [script, '--project', project, '--task', task];
     log(`[dispatch] node ${args.map(JSON.stringify).join(' ')}`);
 
-    const child = spawn(process.execPath, args, {
-      cwd: config.root,
+    const ws = findWorkspaceByRoot(project);
+    const dispatchEnv = applyWorkspaceDispatchPolicy(ws, {
       env: {
         ...process.env,
         // Prefer a reliable headless runner for automation; Claude/Cursor CLI still tried first in auto mode.
         DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'auto',
         DISPATCH_RUN_ID: activeRunId,
       },
+      // JoinUp (and any workspace with hard merge policy) must win over ambient env.
+      forcePolicy: Boolean(ws?.dispatch?.mergeTarget),
+    });
+
+    const child = spawn(process.execPath, args, {
+      cwd: config.root,
+      env: dispatchEnv,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

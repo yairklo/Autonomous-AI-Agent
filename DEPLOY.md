@@ -13,6 +13,42 @@
 #
 # Legacy: root `Dockerfile` matches `Dockerfile.app` for older Coolify configs.
 #
+# ## HTTPS required for microphone / push-to-talk (voice-agent GUI)
+#
+# There is **no nginx.conf / Caddyfile / certbot config in this repo**. TLS is
+# terminated by **Coolify’s reverse proxy** (Traefik/Caddy under the hood) when
+# you attach a domain + Let’s Encrypt to the `voice-agent` application.
+# The Node process still listens on plain HTTP `:8787` inside the container;
+# Coolify publishes HTTPS on 443 externally.
+#
+# Browsers only expose `navigator.mediaDevices.getUserMedia` and Web Speech in a
+# **secure context** (`https://` or `http://localhost`). Opening
+# `http://<VPS-IP>:8787` after the move from local/dev therefore makes the PTT
+# button appear to do nothing (`window.isSecureContext === false`).
+#
+# ### Copy-paste Coolify steps (voice-agent app)
+#
+# 1. Point a DNS A/AAAA record at your VPS public IP, e.g. `agent.example.com`.
+# 2. In Coolify → **voice-agent** application → **Settings** / **Domains**:
+#    add `agent.example.com` (or your chosen host).
+# 3. Enable **Generate SSL certificate** / Let’s Encrypt for that domain
+#    (Coolify UI wording varies slightly by version; leave HTTP→HTTPS redirect on).
+# 4. Confirm the app’s expose/port mapping still targets container port **8787**
+#    (`EXPOSE 8787` / `PORT=8787` in `Dockerfile.app`). Do **not** put TLS inside
+#    the Node app; Coolify terminates TLS and proxies to `http://container:8787`.
+# 5. Redeploy / wait until the certificate status is healthy.
+# 6. Open **`https://agent.example.com`** (not `http://IP:8787`). In DevTools
+#    console, `window.isSecureContext` must be `true` before using Hold to talk.
+# 7. On the **joinup-telegram** Coolify app, set
+#    `VOICE_AGENT_URL=https://agent.example.com` (no trailing slash required;
+#    code trims it). Redeploy Telegram so live logs / history POST to HTTPS.
+# 8. In the PWA **Settings → Base URL**, leave blank for same-origin, or set the
+#    same `https://…` URL. Never keep an `http://…` Base URL while the page is
+#    loaded over HTTPS (mixed content blocks uploads).
+#
+# Local optional Compose (`docker-compose.yaml`) stays HTTP on `localhost:8787`,
+# which browsers treat as a secure context — mic keeps working for local smoke.
+#
 # ## Shared / required environment variables
 #
 # ### voice-agent (`Dockerfile.app`)
@@ -21,9 +57,12 @@
 # |----------|-------|
 # | `HOST` / `PORT` | Default `0.0.0.0:8787` |
 # | `HEADLESS_BROWSER` | `true` in containers |
-# | `GITHUB_TOKEN` | Clone/push JoinUpApp |
+# | `GITHUB_TOKEN` | Clone/push **all** workspaces in `workspaces.json` (agent, JoinUp, portfolio, EcoDrive) |
+# | `AGENT_PROJECT_ROOT` | Default `/workspaces/Autonomous-AI-Agent` (self-coding; not `/app`) |
+# | `PORTFOLIO_PROJECT_ROOT` | Default `/workspaces/portfolio` |
+# | `ECODRIVE_PROJECT_ROOT` | Default `/workspaces/EcoDrive` |
 # | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Jobs approval bot (inside app) |
-# | `JOINUP_TELEGRAM_AUTOSTART` | Keep unset/`0` on this app. Alone it no longer starts the bot; embedded mode also needs `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1` (local only). |
+# | `JOINUP_TELEGRAM_AUTOSTART` | Keep `0` — Telegram is a separate Coolify app. Alone it no longer starts the bot; embedded mode also needs `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1` (local only). |
 # | Volumes | `.wwebjs_auth`, `data`, `assets`, Claude/Cursor/git config, `/workspaces` |
 #
 # ### joinup-telegram (`Dockerfile.joinup-telegram`)
@@ -32,12 +71,19 @@
 # |----------|-------|
 # | `JOINUP_TELEGRAM_BOT_TOKEN` | Required |
 # | `ALLOWED_TELEGRAM_USER_IDS` | Required (comma-separated) |
-# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` |
+# | `JOINUP_PROJECT_ROOT` | Default `/workspaces/JoinUpApp` (registry id `joinup`) |
 # | `VOICE_AGENT_URL` | **Required in Coolify** — full URL of the voice-agent app (e.g. `https://agent.example.com`). Live Cursor logs + activity history POST here. |
 # | `JOINUP_RUN_LOG_URL` | Legacy alias for `VOICE_AGENT_URL` |
 # | `GITHUB_TOKEN`, `VERCEL_*`, `RENDER_*` | Same as before for notify/redeploy |
-# | Volumes | `data`, Claude/Cursor/git config, `/workspaces` (JoinUpApp clone) |
+# | Volumes | `data`, Claude/Cursor/git config, `/workspaces` (all coding clones) |
 #
+# ## Coding workspaces (`workspaces.json`)
+#
+# Cursor dispatch never uses the Docker image tree `/app` (no `.git`). Bootstrap
+# clones each registry entry under `/workspaces`. Chat/GUI default =
+# `autonomous-agent`. JoinUp Telegram stays pinned to `joinup` with
+# `mergeTarget=Dev`. Add a repo later by appending an entry to `workspaces.json`
+# and ensuring `GITHUB_TOKEN` can read/write that repo.
 # ## Network communication
 #
 # Services talk **only** via configurable URLs/ports in env vars:

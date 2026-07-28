@@ -1,5 +1,6 @@
 import cors from 'cors';
 import express from 'express';
+import mongoose from 'mongoose';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +30,12 @@ import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 import { mountRunEventsRoutes } from './run-events-http.js';
 import { mountActivityRoutes } from './activity-http.js';
 import { recordActivity } from './activity-store.js';
+import { logMessage, getMessages } from './message-store.js';
+import {
+  loadJobsConfig,
+  saveWhatsappGroups,
+  WHATSAPP_GROUPS_OVERRIDE_PATH,
+} from './jobs/jobs-config.js';
 
 fs.mkdirSync(config.uploadsDir, { recursive: true });
 fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
@@ -92,6 +99,90 @@ app.get('/api/health', (_req, res) => {
  * GET /api/grill-me/packs
  * GET /api/grill-me/packs/:packId?locale=he|en&format=reply|spec|json
  */
+/**
+ * WhatsApp groups allow-list (config.json + optional data/whatsapp-groups.json).
+ * GET  /api/jobs/whatsapp-groups
+ * PUT  /api/jobs/whatsapp-groups  { groups: string[] }
+ * POST /api/jobs/whatsapp-groups  { group: string }  — add one
+ * DELETE /api/jobs/whatsapp-groups { group: string } — remove one
+ */
+app.get('/api/jobs/whatsapp-groups', (_req, res) => {
+  try {
+    const jobs = loadJobsConfig();
+    res.json({
+      ok: true,
+      groups: jobs.whatsapp.groups,
+      source: jobs.groupsSource,
+      overridePath: WHATSAPP_GROUPS_OVERRIDE_PATH,
+      connectHint:
+        'On the VPS run: npm run whatsapp:connect (or docker exec … npm run whatsapp:connect) and scan the QR.',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.put('/api/jobs/whatsapp-groups', (req, res) => {
+  try {
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups : null;
+    if (!groups) {
+      res.status(400).json({ ok: false, error: 'Body must include groups: string[]' });
+      return;
+    }
+    const saved = saveWhatsappGroups(groups);
+    res.json({
+      ok: true,
+      groups: saved.groups,
+      source: 'override',
+      path: saved.path,
+    });
+  } catch (err) {
+    const status = err.code === 'JOBS_GROUPS_EMPTY' ? 400 : 500;
+    res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/jobs/whatsapp-groups', (req, res) => {
+  try {
+    const name = String(req.body?.group || req.body?.name || '').trim();
+    if (!name) {
+      res.status(400).json({ ok: false, error: 'Body must include group: string' });
+      return;
+    }
+    const jobs = loadJobsConfig();
+    const saved = saveWhatsappGroups([...jobs.whatsapp.groups, name]);
+    res.json({ ok: true, groups: saved.groups, source: 'override', path: saved.path });
+  } catch (err) {
+    const status = err.code === 'JOBS_GROUPS_EMPTY' ? 400 : 500;
+    res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete('/api/jobs/whatsapp-groups', (req, res) => {
+  try {
+    const name = String(
+      req.body?.group || req.body?.name || req.query?.group || ''
+    ).trim();
+    if (!name) {
+      res.status(400).json({ ok: false, error: 'Provide group name to remove' });
+      return;
+    }
+    const jobs = loadJobsConfig();
+    const next = jobs.whatsapp.groups.filter(
+      (g) => g.toLowerCase() !== name.toLowerCase()
+    );
+    if (next.length === jobs.whatsapp.groups.length) {
+      res.status(404).json({ ok: false, error: `Group not found: ${name}` });
+      return;
+    }
+    const saved = saveWhatsappGroups(next);
+    res.json({ ok: true, groups: saved.groups, source: 'override', path: saved.path });
+  } catch (err) {
+    const status = err.code === 'JOBS_GROUPS_EMPTY' ? 400 : 500;
+    res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/api/grill-me/packs', (_req, res) => {
   res.json({ ok: true, packs: listGrillMePacks() });
 });
@@ -164,6 +255,14 @@ app.post('/api/chat', async (req, res) => {
     actorLabel: 'Voice GUI',
     title: 'Voice / chat turn',
     text,
+  });
+  
+  logMessage({
+    sessionId: clientId,
+    userId: clientId,
+    channel: 'web-ui',
+    role: 'user',
+    content: text
   });
 
   const ac = new AbortController();
@@ -291,6 +390,14 @@ app.post('/api/chat', async (req, res) => {
           actorLabel: 'Claude (voice)',
           title: 'Voice / chat turn',
           text: result,
+        });
+        
+        logMessage({
+          sessionId: clientId,
+          userId: clientId,
+          channel: 'web-ui',
+          role: 'assistant',
+          content: result
         });
         sendSse(res, 'done', {
           result,
@@ -497,6 +604,14 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       });
       return res.end();
     }
+    
+    logMessage({
+      sessionId: clientId,
+      userId: clientId,
+      channel: 'voice',
+      role: 'user',
+      content: text
+    });
 
     const ac = new AbortController();
     res.on('close', () => {
@@ -530,8 +645,16 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
       } else if (event.type === 'session') {
         sendSse(res, 'session', { sessionId: event.sessionId });
       } else if (event.type === 'done') {
+        const result = event.result || full;
+        logMessage({
+          sessionId: clientId,
+          userId: clientId,
+          channel: 'voice',
+          role: 'assistant',
+          content: result
+        });
         sendSse(res, 'done', {
-          result: event.result || full,
+          result: result,
           clientId,
           transcript: text,
         });
@@ -931,10 +1054,26 @@ const server = app.listen(config.port, config.host, () => {
       );
     }
   }
-
 });
 
 server.on('error', (err) => {
   console.error('[voice-agent] failed to start:', err.message);
   process.exit(1);
 });
+
+// Initialize Mongoose before listening
+if (config.mongoUri) {
+  mongoose.connect(config.mongoUri)
+    .then(() => console.log('[voice-agent] Connected to MongoDB'))
+    .catch(err => console.error('[voice-agent] MongoDB connection error:', err));
+    
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+  });
+  process.on('SIGTERM', async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+  });
+}

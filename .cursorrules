@@ -1,7 +1,9 @@
 # Cursor Agent Rules
-- You MUST read the instructions in PROMPT.md immediately.
-- Create and switch to a new git branch before editing code: `git checkout -b feature/task-1785060240741` (or as specified in PROMPT.md).
+- You MUST read PROMPT.md, AGENTS.md, and .cursor/rules/ immediately.
+- Create and switch to a new git branch before editing code: `git checkout -b feature/task-1785233979675` (or as specified in PROMPT.md).
 - Run in non-interactive/auto-approve mode to execute the task fully. Do NOT prompt for permission on file edits or terminal commands.
-- Run tests/validations, commit changes with a clean message, and push the branch to remote upon completion.
+- ALWAYS run local quality gates (especially `next_app` `npm run build` when present) and fix failures in a loop before finishing.
+- Commit and push the feature branch when done.
+- When you discover a new TypeScript/deploy bug, append a short lesson to AGENTS.md (and .cursor/rules if useful) so future terminal agents remember it.
 - Do not open a GUI. Work entirely via terminal/CLI tools.
-- Keep PROMPT.md and .cursorrules in the repo after finishing.
+- Keep PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules after finishing.

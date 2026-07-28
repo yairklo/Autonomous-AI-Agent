@@ -34,7 +34,9 @@
     "auth:cli": "node scripts/auth-cli.js",
     "auth:claude": "node scripts/auth-cli.js claude",
     "auth:cursor": "node scripts/auth-cli.js cursor",
-    "auth:git": "node scripts/auth-cli.js git"
+    "auth:git": "node scripts/auth-cli.js git",
+    "whatsapp:connect": "node scripts/connect-whatsapp.js",
+    "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive"
   },
   "engines": {
     "node": ">=18"
@@ -44,6 +46,7 @@
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
+    "mongoose": "^9.8.0",
     "multer": "^2.2.0",
     "qrcode-terminal": "^0.12.0",
     "telegraf": "^4.16.3",

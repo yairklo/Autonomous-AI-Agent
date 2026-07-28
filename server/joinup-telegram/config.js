@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDotEnv } from './load-env.js';
+import {
+  getWorkspace,
+  resolveWorkspaceRoot,
+} from '../workspaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const agentRoot = path.resolve(__dirname, '..', '..');
@@ -30,13 +34,16 @@ export function parseAllowedUserIds(raw) {
 }
 
 /**
- * Resolve and validate the joinUp project root.
+ * Resolve and validate the joinUp project root from workspaces registry
+ * (JOINUP_PROJECT_ROOT / workspaces.json id=joinup).
  * Execution is always pinned here — never derived from user/chat input.
  */
 export function resolveJoinUpRoot(rawPath = env('JOINUP_PROJECT_ROOT')) {
+  const joinupWs = getWorkspace('joinup');
+  const fromRegistry = joinupWs ? resolveWorkspaceRoot(joinupWs) : '';
   const candidate =
     rawPath ||
-    // Coolify/Docker default; Windows local sibling layout as fallback.
+    fromRegistry ||
     (process.platform === 'win32'
       ? path.resolve('C:\\JoinUpApp')
       : '/workspaces/JoinUpApp');
@@ -44,7 +51,7 @@ export function resolveJoinUpRoot(rawPath = env('JOINUP_PROJECT_ROOT')) {
 
   if (!fs.existsSync(resolved)) {
     const err = new Error(
-      `JOINUP_PROJECT_ROOT does not exist: ${resolved}. Set JOINUP_PROJECT_ROOT in .env.`
+      `JOINUP_PROJECT_ROOT does not exist: ${resolved}. Set JOINUP_PROJECT_ROOT in .env or run npm run bootstrap:workspace.`
     );
     err.code = 'JOINUP_ROOT_MISSING';
     throw err;
@@ -88,15 +95,19 @@ export function loadJoinUpTelegramConfig(envSource = process.env) {
   const allowedUserIds = parseAllowedUserIds(
     envSource.ALLOWED_TELEGRAM_USER_IDS || ''
   );
+  const joinupWs = getWorkspace('joinup', { envSource });
   const joinUpRoot = envSource.JOINUP_PROJECT_ROOT
     ? path.resolve(String(envSource.JOINUP_PROJECT_ROOT).trim())
-    : resolveJoinUpRoot();
+    : joinupWs
+      ? resolveWorkspaceRoot(joinupWs, { envSource })
+      : resolveJoinUpRoot();
 
   return {
     agentRoot,
     botToken,
     allowedUserIds,
     joinUpRoot: pinToJoinUpRoot(joinUpRoot, joinUpRoot),
+    workspaceId: 'joinup',
     mock: String(envSource.JOINUP_TELEGRAM_MOCK || envSource.VOICE_AGENT_MOCK || '0') === '1',
     sessionsFile: path.join(agentRoot, 'data', 'joinup-telegram-sessions.json'),
     stateFile: path.join(agentRoot, 'data', 'joinup-telegram-state.json'),

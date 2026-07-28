@@ -1,0 +1,72 @@
+{
+  "defaultWorkspaceId": "autonomous-agent",
+  "workspaces": [
+    {
+      "id": "autonomous-agent",
+      "label": "Autonomous AI Agent",
+      "gitRepo": "https://github.com/yairklo/Autonomous-AI-Agent.git",
+      "rootEnv": "AGENT_PROJECT_ROOT",
+      "defaultRoot": {
+        "linux": "/workspaces/Autonomous-AI-Agent",
+        "win32": "C:\\Autonomous AI Agent"
+      },
+      "aliases": [
+        "/app",
+        "autonomous-agent",
+        "voice-agent",
+        "telegram-bot",
+        "joinup-telegram"
+      ],
+      "dispatch": {
+        "mergeTarget": "none",
+        "maxFixLoops": 5
+      }
+    },
+    {
+      "id": "joinup",
+      "label": "JoinUp",
+      "gitRepo": "https://github.com/yairklo/JoinUpApp.git",
+      "rootEnv": "JOINUP_PROJECT_ROOT",
+      "defaultRoot": {
+        "linux": "/workspaces/JoinUpApp",
+        "win32": "C:\\JoinUpApp"
+      },
+      "aliases": ["joinup", "JoinUpApp"],
+      "dispatch": {
+        "mergeTarget": "Dev",
+        "maxFixLoops": 5,
+        "agentTimeoutMs": 1200000
+      }
+    },
+    {
+      "id": "portfolio",
+      "label": "Portfolio website",
+      "gitRepo": "https://github.com/yairklo/portfolio.git",
+      "rootEnv": "PORTFOLIO_PROJECT_ROOT",
+      "defaultRoot": {
+        "linux": "/workspaces/portfolio",
+        "win32": "C:\\portfolio"
+      },
+      "aliases": ["portfolio", "website", "אתר"],
+      "dispatch": {
+        "mergeTarget": "none",
+        "maxFixLoops": 5
+      }
+    },
+    {
+      "id": "ecodrive",
+      "label": "EcoDrive",
+      "gitRepo": "https://github.com/yairklo/EcoDrive.git",
+      "rootEnv": "ECODRIVE_PROJECT_ROOT",
+      "defaultRoot": {
+        "linux": "/workspaces/EcoDrive",
+        "win32": "C:\\EcoDrive"
+      },
+      "aliases": ["ecodrive", "EcoDrive"],
+      "dispatch": {
+        "mergeTarget": "none",
+        "maxFixLoops": 5
+      }
+    }
+  ]
+}

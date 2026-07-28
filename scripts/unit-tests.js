@@ -124,6 +124,8 @@ test('System prompt forbids raw shell/file edits; mandates MCP tool + Grill-Me',
   assert.match(config.systemPrompt, /never send Grill-Me/i);
   assert.match(config.systemPrompt, /DOMAIN PACK: WhatsApp jobs \+ CV/i);
   assert.match(config.systemPrompt, /human approval before send/i);
+  assert.match(config.systemPrompt, /CODING WORKSPACES/i);
+  assert.match(config.systemPrompt, /autonomous-agent|portfolio|ecodrive|joinup/i);
   assert.doesNotMatch(config.systemPrompt, /Bash tool/i);
 });
 
@@ -471,6 +473,8 @@ test('executeMcpTool submit_whatsapp_job_cv uses fixture profile', async () => {
       jobText: 'דרוש Full Stack. שלחו קו"ח ל-jobs@example.com',
       groupName: 'Jobs Israel',
       author: 'Dana HR',
+      profilePath: config.cvFixtureProfilePath,
+      cvPath: path.join(config.root, 'assets', 'cv.pdf'),
     },
     { onLog: (line) => logs.push(line) }
   );
@@ -497,6 +501,55 @@ test('jobs config.json allow-lists WhatsApp groups only', async () => {
   assert.strictEqual(isAllowedGroup('Random Spam Group', cfg), false);
   assert.ok(cfg.safety.neverSendWhatsappGroupMessages);
   assert.ok(cfg.safety.neverSubmitWithoutTelegramApproval);
+});
+
+test('saveWhatsappGroups writes override used by loadJobsConfig', async () => {
+  const {
+    loadJobsConfig,
+    saveWhatsappGroups,
+    normalizeGroupNames,
+  } = await import('../server/jobs/jobs-config.js');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-groups-'));
+  const cfgPath = path.join(tmp, 'config.json');
+  const overridePath = path.join(tmp, 'data', 'whatsapp-groups.json');
+  try {
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        whatsapp: { groups: ['Jobs Israel'], textOnly: true, neverSendMessages: true },
+        roles: ['Backend'],
+        safety: {
+          neverSendWhatsappGroupMessages: true,
+          neverSubmitWithoutTelegramApproval: true,
+        },
+      }),
+      'utf8'
+    );
+    const saved = saveWhatsappGroups(['My Custom Jobs', '  My Custom Jobs  ', 'Backend IL'], {
+      overridePath,
+    });
+    assert.deepStrictEqual(saved.groups, ['My Custom Jobs', 'Backend IL']);
+    assert.ok(fs.existsSync(overridePath));
+
+    const cfg = loadJobsConfig(cfgPath);
+    assert.deepStrictEqual(cfg.whatsapp.groups, ['My Custom Jobs', 'Backend IL']);
+    assert.strictEqual(cfg.groupsSource, 'override');
+    assert.deepStrictEqual(
+      normalizeGroupNames(['a', 'A', '', 'b']),
+      ['a', 'b']
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('connect-whatsapp script exists and documents QR login', () => {
+  const script = path.join(config.root, 'scripts', 'connect-whatsapp.js');
+  assert.ok(fs.existsSync(script));
+  const src = fs.readFileSync(script, 'utf8');
+  assert.match(src, /qrcode-terminal/);
+  assert.match(src, /LocalAuth/);
+  assert.match(src, /\.wwebjs_auth/);
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {
@@ -781,4 +834,79 @@ test('resolveVoiceAgentBaseUrl prefers VOICE_AGENT_URL over Compose-style defaul
     'http://voice-agent:8787'
   );
   assert.strictEqual(resolveVoiceAgentBaseUrl({}), 'http://127.0.0.1:8787');
+});
+
+test('workspaces registry loads agent/joinup/portfolio/ecodrive', async () => {
+  const {
+    clearWorkspacesCache,
+    listWorkspaces,
+    getWorkspace,
+    remapCodingProjectPath,
+    resolveWorkspaceFromPathOrText,
+    applyWorkspaceDispatchPolicy,
+  } = await import('../server/workspaces.js');
+
+  clearWorkspacesCache();
+  const list = listWorkspaces({ forceReload: true });
+  const ids = list.map((w) => w.id);
+  assert.ok(ids.includes('autonomous-agent'));
+  assert.ok(ids.includes('joinup'));
+  assert.ok(ids.includes('portfolio'));
+  assert.ok(ids.includes('ecodrive'));
+
+  assert.strictEqual(getWorkspace('joinup').dispatch.mergeTarget, 'Dev');
+  assert.strictEqual(getWorkspace('autonomous-agent').dispatch.mergeTarget, 'none');
+  assert.strictEqual(getWorkspace('portfolio').dispatch.mergeTarget, 'none');
+  assert.strictEqual(getWorkspace('ecodrive').dispatch.mergeTarget, 'none');
+
+  const envSource = {
+    AGENT_PROJECT_ROOT: '/workspaces/Autonomous-AI-Agent',
+    JOINUP_PROJECT_ROOT: '/workspaces/JoinUpApp',
+    PORTFOLIO_PROJECT_ROOT: '/workspaces/portfolio',
+    ECODRIVE_PROJECT_ROOT: '/workspaces/EcoDrive',
+  };
+
+  const remapped = remapCodingProjectPath('/app', { envSource });
+  assert.match(remapped.replace(/\\/g, '/'), /workspaces\/Autonomous-AI-Agent$/i);
+
+  const fromText = resolveWorkspaceFromPathOrText({
+    text: 'שגר תיקון ל-portfolio',
+    envSource,
+  });
+  assert.strictEqual(fromText.workspace?.id, 'portfolio');
+  assert.match(fromText.root.replace(/\\/g, '/'), /portfolio$/i);
+
+  const eco = resolveWorkspaceFromPathOrText({
+    text: 'skip Grill-Me and dispatch EcoDrive fix',
+    envSource,
+  });
+  assert.strictEqual(eco.workspace?.id, 'ecodrive');
+
+  const policy = applyWorkspaceDispatchPolicy(getWorkspace('joinup'), {
+    env: {},
+    forcePolicy: true,
+  });
+  assert.strictEqual(policy.DISPATCH_MERGE_TARGET, 'Dev');
+});
+
+test('detectCodingDispatch remaps /app to autonomous-agent workspace', () => {
+  const prev = process.env.AGENT_PROJECT_ROOT;
+  process.env.AGENT_PROJECT_ROOT = '/workspaces/Autonomous-AI-Agent';
+  try {
+    // Clear module cache is hard; remap is tested above. Here ensure dispatch
+    // still returns MCP tool when trigger present.
+    const d = detectCodingDispatch('שגר ל-Cursor: fix chat input in /app', {
+      interactiveChat: true,
+    });
+    assert.ok(d);
+    assert.strictEqual(d.mcpTool, 'dispatch_coding_task');
+    assert.ok(d.mcpArgs.projectPath);
+    assert.doesNotMatch(
+      String(d.mcpArgs.projectPath).replace(/\\/g, '/'),
+      /^\/app$/
+    );
+  } finally {
+    if (prev === undefined) delete process.env.AGENT_PROJECT_ROOT;
+    else process.env.AGENT_PROJECT_ROOT = prev;
+  }
 });

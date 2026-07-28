@@ -25,15 +25,18 @@ services:
       - NO_OPEN_BROWSER=1
       # Persist git identity via volume (named volumes cannot bind a single file)
       - GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig
-      # External coding workspace (JoinUpApp clone lives here)
+      # External coding workspaces (git clones; see workspaces.json)
       - JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp
       - JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git
       - JOINUP_GITHUB_REPO=yairklo/JoinUpApp
+      - AGENT_PROJECT_ROOT=/workspaces/Autonomous-AI-Agent
+      - PORTFOLIO_PROJECT_ROOT=/workspaces/portfolio
+      - ECODRIVE_PROJECT_ROOT=/workspaces/EcoDrive
       - WORKSPACE_BOOTSTRAP_STRICT=1
       # Keep Telegram as a separate process/container (Coolify metrics + isolation)
       - JOINUP_TELEGRAM_AUTOSTART=0
       # Inject secrets via Coolify / compose env file:
-      # GITHUB_TOKEN (required for clone/push), TELEGRAM_*, JOINUP_TELEGRAM_*,
+      # GITHUB_TOKEN (required for clone/push to all workspaces), TELEGRAM_*, JOINUP_TELEGRAM_*,
       # GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
     volumes:
       - wwebjs_auth:/app/.wwebjs_auth
@@ -60,6 +63,9 @@ services:
       - JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp
       - JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git
       - JOINUP_GITHUB_REPO=yairklo/JoinUpApp
+      - AGENT_PROJECT_ROOT=/workspaces/Autonomous-AI-Agent
+      - PORTFOLIO_PROJECT_ROOT=/workspaces/portfolio
+      - ECODRIVE_PROJECT_ROOT=/workspaces/EcoDrive
       - WORKSPACE_BOOTSTRAP_STRICT=1
       - AGENT_ACTIVITY_PERSIST=0
       # Explicit URL — do not rely on implicit Docker DNS alone in Coolify.

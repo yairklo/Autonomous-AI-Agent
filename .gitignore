@@ -14,6 +14,7 @@ data/cv-profile.json
 data/cv-applications/*
 !data/cv-applications/README.md
 data/jobs-db.json
+data/whatsapp-groups.json
 data/joinup-telegram-sessions.json
 data/joinup-telegram-state.json
 data/agent-activity.jsonl

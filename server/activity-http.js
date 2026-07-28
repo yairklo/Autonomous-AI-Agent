@@ -1,6 +1,3 @@
-/**
- * Host-only agent history API (voice GUI). Not exposed to Telegram collaborators.
- */
 import {
   getActivity,
   getActivityEvents,
@@ -8,30 +5,95 @@ import {
   recordActivity,
   subscribeActivity,
 } from './activity-store.js';
+import { getMessages } from './message-store.js';
+import { Activity } from './models/Activity.js';
+import { Message } from './models/Message.js';
 
 /**
  * @param {import('express').Express} app
  */
 export function mountActivityRoutes(app) {
-  app.get('/api/history', (req, res) => {
+  // Legacy alias
+  app.get('/api/history', async (req, res) => {
     const limit = Number(req.query.limit || 80);
     const filter = String(req.query.q || '');
     const platform = String(req.query.platform || '');
     res.json({
       ok: true,
-      activities: listActivities({ limit, filter, platform }),
+      activities: await listActivities({ limit, filter, platform }),
     });
   });
 
+  // NEW endpoint: /api/activities
+  // Supports query parameters: ?userId=...&channel=...&sessionId=...&limit=50&page=1
+  app.get('/api/activities', async (req, res) => {
+    const limit = Number(req.query.limit || 50);
+    const page = Number(req.query.page || 1);
+    const userId = req.query.userId || '';
+    const channel = req.query.channel || '';
+    const sessionId = req.query.sessionId || '';
+    const filter = req.query.q || '';
+    
+    try {
+      const activities = await listActivities({ limit, page, userId, platform: channel, sessionId, filter });
+      res.json({ ok: true, activities });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // NEW endpoint: /api/messages
+  // Fetch chat history filtered by userId, channel, or sessionId
+  app.get('/api/messages', async (req, res) => {
+    const limit = Number(req.query.limit || 50);
+    const userId = req.query.userId || '';
+    const channel = req.query.channel || '';
+    const sessionId = req.query.sessionId || '';
+    
+    try {
+      const messages = await getMessages({ limit, userId, channel, sessionId });
+      res.json({ ok: true, messages });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // NEW endpoint: /api/search
+  // Unified search endpoint allowing text search across messages and activities by keyword (?q=...&userId=...)
+  app.get('/api/search', async (req, res) => {
+    const q = req.query.q || '';
+    const userId = req.query.userId || '';
+    if (!q) return res.json({ ok: true, activities: [], messages: [] });
+    
+    try {
+      const activityQuery = { $text: { $search: q } };
+      if (userId) activityQuery.userId = userId;
+      
+      const messageQuery = { $text: { $search: q } };
+      if (userId) messageQuery.userId = userId;
+      
+      const [activities, messages] = await Promise.all([
+        Activity.find(activityQuery).sort({ createdAt: -1 }).limit(50).exec(),
+        Message.find(messageQuery).sort({ createdAt: -1 }).limit(50).exec()
+      ]);
+      
+      res.json({ ok: true, activities, messages });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Must be registered before /api/history/:activityId or "stream" is captured as an id → 404.
-  app.get('/api/history/stream', (req, res) => {
+  app.get('/api/history/stream', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
+    
+    const recent = await listActivities({ limit: 40 });
     res.write(
-      `event: hello\ndata: ${JSON.stringify({ ok: true, activities: listActivities({ limit: 40 }).length })}\n\n`
+      `event: hello\ndata: ${JSON.stringify({ ok: true, activities: recent.length })}\n\n`
     );
 
     const onEvent = (event) => {
@@ -47,10 +109,10 @@ export function mountActivityRoutes(app) {
     });
   });
 
-  app.get('/api/history/:activityId', (req, res) => {
+  app.get('/api/history/:activityId', async (req, res) => {
     const activityId = String(req.params.activityId || '');
-    const activity = getActivity(activityId);
-    const events = getActivityEvents(activityId, {
+    const activity = await getActivity(activityId);
+    const events = await getActivityEvents(activityId, {
       limit: Number(req.query.limit || 400),
     });
     if (!activity && events.length === 0) {
@@ -63,9 +125,9 @@ export function mountActivityRoutes(app) {
     });
   });
 
-  app.post('/api/activity', (req, res) => {
+  app.post('/api/activity', async (req, res) => {
     const body = req.body || {};
-    const event = recordActivity({
+    const event = await recordActivity({
       activityId: body.activityId,
       runId: body.runId,
       kind: body.kind || body.type || 'log',

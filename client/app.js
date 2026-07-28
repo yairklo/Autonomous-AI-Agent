@@ -21,6 +21,44 @@ function newClientId() {
   return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Mic / Web Speech require a secure context (HTTPS or localhost).
+ * Plain http://VPS-IP is NOT secure — browsers hide mediaDevices and block STT.
+ */
+function isGuiSecureContext() {
+  if (typeof window !== 'undefined' && typeof window.isSecureContext === 'boolean') {
+    return window.isSecureContext;
+  }
+  const host = String(location.hostname || '').toLowerCase();
+  return (
+    location.protocol === 'https:' ||
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '[::1]'
+  );
+}
+
+function insecureMicMessage() {
+  return (
+    `Microphone blocked: page is not a secure context (${location.protocol}//${location.host}). ` +
+    `Browsers only allow getUserMedia / Web Speech on HTTPS or localhost. ` +
+    `Open the Coolify HTTPS domain for this app (see DEPLOY.md) — not plain http://VPS-IP:8787.`
+  );
+}
+
+function mixedContentApiMessage(baseUrl) {
+  return (
+    `Settings Base URL is HTTP (${baseUrl}) while this page is HTTPS — the browser will block ` +
+    `microphone uploads as mixed content. Clear Base URL (same-origin) or use an https:// API URL.`
+  );
+}
+
+function resetPttUi() {
+  state.listening = false;
+  els.ptt.setAttribute('aria-pressed', 'false');
+  els.pttLabel.textContent = 'Hold to talk';
+}
+
 const els = {
   status: document.getElementById('statusLine'),
   transcript: document.getElementById('transcript'),
@@ -46,6 +84,10 @@ const els = {
   healthHint: document.getElementById('healthHint'),
   checkHealth: document.getElementById('checkHealth'),
   resetSession: document.getElementById('resetSession'),
+  waGroupsList: document.getElementById('waGroupsList'),
+  waGroupInput: document.getElementById('waGroupInput'),
+  waGroupAdd: document.getElementById('waGroupAdd'),
+  waGroupsHint: document.getElementById('waGroupsHint'),
 };
 
 const state = {
@@ -61,6 +103,7 @@ const state = {
   historyQuery: '',
   historySelectedId: '',
   historyItems: [],
+  waGroups: [],
 };
 
 localStorage.setItem(CLIENT_KEY, state.clientId);
@@ -73,6 +116,7 @@ if ('serviceWorker' in navigator) {
 els.settingsBtn.addEventListener('click', () => {
   applySettingsToForm();
   els.settingsDialog.showModal();
+  void loadWhatsappGroups();
 });
 
 els.settingsDialog.addEventListener('close', () => {
@@ -114,6 +158,106 @@ els.resetSession.addEventListener('click', async () => {
   }
 });
 
+if (els.waGroupAdd) {
+  els.waGroupAdd.addEventListener('click', () => void addWhatsappGroup());
+}
+if (els.waGroupInput) {
+  els.waGroupInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      void addWhatsappGroup();
+    }
+  });
+}
+
+async function loadWhatsappGroups() {
+  if (!els.waGroupsList || !els.waGroupsHint) return;
+  els.waGroupsHint.textContent = 'Loading groups…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'));
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    state.waGroups = Array.isArray(data.groups) ? data.groups : [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent =
+      `Source: ${data.source || 'config'}. ` +
+      'Connect on VPS: npm run whatsapp:connect';
+  } catch (err) {
+    els.waGroupsHint.textContent = `Could not load groups: ${err.message}`;
+  }
+}
+
+function renderWhatsappGroups() {
+  if (!els.waGroupsList) return;
+  els.waGroupsList.replaceChildren();
+  if (!state.waGroups.length) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No groups yet — add one below.';
+    els.waGroupsList.appendChild(empty);
+    return;
+  }
+  for (const name of state.waGroups) {
+    const li = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'wa-group-name';
+    label.textContent = name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'ghost danger';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => void removeWhatsappGroup(name));
+    li.append(label, remove);
+    els.waGroupsList.appendChild(li);
+  }
+}
+
+async function addWhatsappGroup() {
+  if (!els.waGroupInput || !els.waGroupsHint) return;
+  const name = els.waGroupInput.value.trim();
+  if (!name) return;
+  els.waGroupsHint.textContent = 'Saving…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: name }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    els.waGroupInput.value = '';
+    state.waGroups = data.groups || [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+  } catch (err) {
+    els.waGroupsHint.textContent = `Add failed: ${err.message}`;
+  }
+}
+
+async function removeWhatsappGroup(name) {
+  if (!els.waGroupsHint) return;
+  els.waGroupsHint.textContent = 'Removing…';
+  try {
+    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group: name }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    state.waGroups = data.groups || [];
+    renderWhatsappGroups();
+    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+  } catch (err) {
+    els.waGroupsHint.textContent = `Remove failed: ${err.message}`;
+  }
+}
+
 els.textForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = els.textInput.value.trim();
@@ -122,7 +266,23 @@ els.textForm.addEventListener('submit', async (e) => {
   await sendTurn(text);
 });
 
+els.textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    els.textForm.requestSubmit();
+  }
+});
+
 bindPtt(els.ptt);
+
+if (!isGuiSecureContext()) {
+  setStatus(insecureMicMessage());
+} else {
+  const base = (state.settings.serverUrl || '').trim();
+  if (location.protocol === 'https:' && /^http:\/\//i.test(base)) {
+    setStatus(mixedContentApiMessage(base));
+  }
+}
 
 function bindPtt(btn) {
   const start = (ev) => {
@@ -154,8 +314,62 @@ function bindPtt(btn) {
   });
 }
 
+async function startMediaRecorderFallback() {
+  if (!state.listening || state.mediaRecorder) return;
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+    resetPttUi();
+    setStatus(
+      isGuiSecureContext()
+        ? 'Mic error: navigator.mediaDevices.getUserMedia is unavailable in this browser.'
+        : insecureMicMessage()
+    );
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!state.listening) {
+      stopStream(stream);
+      return;
+    }
+    const recorder = new MediaRecorder(stream);
+    state.chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size) state.chunks.push(e.data);
+    };
+    recorder.start();
+    state.mediaRecorder = recorder;
+    state._mediaStream = stream;
+    setStatus('Recording audio… (server Whisper required if no speech API)');
+  } catch (err) {
+    resetPttUi();
+    const msg = String(err && err.message ? err.message : err);
+    if (!isGuiSecureContext() || /secure|https|permission|not allowed|denied/i.test(msg)) {
+      setStatus(
+        !isGuiSecureContext()
+          ? insecureMicMessage()
+          : `Mic error: ${msg}. If this is a public VPS URL, confirm you opened the HTTPS domain.`
+      );
+    } else {
+      setStatus(`Mic error: ${msg}`);
+    }
+  }
+}
+
 async function beginListen() {
   if (state.busy || state.listening) return;
+
+  // Hard stop: insecure HTTP on a VPS IP cannot use the mic — explain clearly.
+  if (!isGuiSecureContext()) {
+    setStatus(insecureMicMessage());
+    return;
+  }
+
+  const apiBase = (state.settings.serverUrl || '').trim();
+  if (location.protocol === 'https:' && /^http:\/\//i.test(apiBase)) {
+    setStatus(mixedContentApiMessage(apiBase));
+    return;
+  }
+
   state.listening = true;
   state.partial = '';
   state.chunks = [];
@@ -191,8 +405,25 @@ async function beginListen() {
       if (finalText) state.partial = `${state.partial} ${finalText}`.trim();
       setStatus((state.partial || interim || 'Listening…').trim());
     };
-    rec.onerror = () => {
-      // Fall through to MediaRecorder path on hard failures handled in endListen
+    // Previously ignored: on insecure/partial support this left mediaRecorder null
+    // and endListen only showed "No speech captured" with no permission prompt.
+    rec.onerror = (ev) => {
+      const code = String(ev?.error || '');
+      const fatal = [
+        'not-allowed',
+        'service-not-allowed',
+        'audio-capture',
+        'network',
+        'language-not-supported',
+      ].includes(code);
+      if (!fatal || !state.listening || state.mediaRecorder) return;
+      state.recognition = null;
+      try {
+        rec.stop();
+      } catch {
+        /* ignore */
+      }
+      void startMediaRecorderFallback();
     };
     try {
       rec.start();
@@ -204,23 +435,7 @@ async function beginListen() {
   }
 
   // Fallback: record audio and upload (needs server Whisper)
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream);
-    state.chunks = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size) state.chunks.push(e.data);
-    };
-    recorder.start();
-    state.mediaRecorder = recorder;
-    state._mediaStream = stream;
-    setStatus('Recording audio… (server Whisper required if no speech API)');
-  } catch (err) {
-    state.listening = false;
-    els.ptt.setAttribute('aria-pressed', 'false');
-    els.pttLabel.textContent = 'Hold to talk';
-    setStatus(`Mic error: ${err.message}`);
-  }
+  await startMediaRecorderFallback();
 }
 
 async function endListen() {
@@ -260,6 +475,10 @@ async function endListen() {
     }
   }
 
+  if (!isGuiSecureContext()) {
+    setStatus(insecureMicMessage());
+    return;
+  }
   setStatus('No speech captured. Try again or type a message.');
 }
 

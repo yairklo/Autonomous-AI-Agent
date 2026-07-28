@@ -33,7 +33,6 @@ agent-transcripts
 test-*.js
 scripts/test-*.js
 # Keep scripts/auth-cli.js and scripts/dispatch-task.js in the image
-scripts/connect-whatsapp.js
 scripts/mock-scan.js
 scripts/scan-last-message.js
 whatsapp-debug.png
