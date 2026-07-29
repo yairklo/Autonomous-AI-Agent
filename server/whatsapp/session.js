@@ -272,9 +272,24 @@ export function createWhatsappSession(opts = {}) {
     }
   }
 
+  async function reset() {
+    await stop();
+    try {
+      if (fs.existsSync(authPath)) {
+        fs.rmSync(authPath, { recursive: true, force: true });
+        onLog(`[whatsapp-session] wiped corrupted session at ${authPath}`);
+      }
+    } catch (err) {
+      onLog(`[whatsapp-session] reset failed: ${err.message}`);
+      throw err;
+    }
+    return snapshot();
+  }
+
   return {
     start,
     stop,
+    reset,
     snapshot,
     getQr,
     getClient,

@@ -52,7 +52,7 @@ export function mountWhatsappRoutes(app, deps = {}) {
     res.json({ ok: true, ...session.snapshot() });
   });
 
-  app.get('/api/whatsapp/qr', (_req, res) => {
+  app.get('/api/whatsapp/qr', async (_req, res) => {
     const qr = session.getQr();
     if (!qr) {
       return res.status(404).json({
@@ -61,7 +61,18 @@ export function mountWhatsappRoutes(app, deps = {}) {
         state: session.getState(),
       });
     }
-    return res.json({ ok: true, ...qr });
+    let dataUrl = null;
+    try {
+      const QRCode = (await import('qrcode')).default;
+      dataUrl = await QRCode.toDataURL(qr.qr, {
+        width: 280,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+      });
+    } catch (err) {
+      console.warn('[whatsapp] qr dataUrl failed:', err.message);
+    }
+    return res.json({ ok: true, ...qr, dataUrl });
   });
 
   app.post('/api/whatsapp/start', async (_req, res) => {
@@ -81,6 +92,22 @@ export function mountWhatsappRoutes(app, deps = {}) {
   app.post('/api/whatsapp/stop', async (_req, res) => {
     try {
       const snap = await session.stop();
+      res.json({ ok: true, ...snap });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error: err.message,
+        ...session.snapshot(),
+      });
+    }
+  });
+
+  app.post('/api/whatsapp/reset', async (_req, res) => {
+    try {
+      if (typeof session.reset !== 'function') {
+        throw new Error('reset not implemented on session');
+      }
+      const snap = await session.reset();
       res.json({ ok: true, ...snap });
     } catch (err) {
       res.status(500).json({
