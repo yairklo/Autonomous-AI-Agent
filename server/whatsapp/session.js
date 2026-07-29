@@ -75,9 +75,9 @@ export function createWhatsappSession(opts = {}) {
     if (createClientImpl) {
       return createClientImpl({ onLog, authPath });
     }
-    let wweb;
+    let wwebMod;
     try {
-      wweb = await import('whatsapp-web.js');
+      wwebMod = await import('whatsapp-web.js');
     } catch (cause) {
       const err = new Error(
         'whatsapp-web.js is not installed. Run: npm install whatsapp-web.js'
@@ -86,7 +86,17 @@ export function createWhatsappSession(opts = {}) {
       err.cause = cause;
       throw err;
     }
-    const { Client, LocalAuth } = wweb;
+    // ESM interop: LocalAuth lives on default export in current whatsapp-web.js.
+    const wweb = wwebMod.default || wwebMod;
+    const Client = wweb.Client || wwebMod.Client;
+    const LocalAuth = wweb.LocalAuth || wwebMod.LocalAuth;
+    if (typeof Client !== 'function' || typeof LocalAuth !== 'function') {
+      const err = new Error(
+        'whatsapp-web.js export shape unexpected (Client/LocalAuth missing)'
+      );
+      err.code = 'WA_CLIENT_EXPORT';
+      throw err;
+    }
     return new Client({
       authStrategy: new LocalAuth({ dataPath: authPath }),
       puppeteer: {
