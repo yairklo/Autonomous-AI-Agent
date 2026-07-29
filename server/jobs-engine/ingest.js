@@ -30,11 +30,21 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   }
 
   let chat;
+  const chatId = msg.from?.includes('@g.us') ? msg.from : (msg.to?.includes('@g.us') ? msg.to : msg.from);
   try {
     chat = typeof msg.getChat === 'function' ? await msg.getChat() : msg.chat;
   } catch (err) {
-    onLog(`[whatsapp-ingest] getChat failed: ${err.message || err} (from: ${msg.from})`);
-    return { skipped: 'get_chat_failed' };
+    if (deps.client && typeof deps.client.getChatById === 'function' && chatId) {
+      try {
+        chat = await deps.client.getChatById(chatId);
+      } catch (err2) {
+        onLog(`[whatsapp-ingest] getChatById also failed: ${err2.message || err2} (chatId: ${chatId})`);
+        return { skipped: 'get_chat_failed' };
+      }
+    } else {
+      onLog(`[whatsapp-ingest] getChat failed: ${err.message || err} (from: ${msg.from}, to: ${msg.to})`);
+      return { skipped: 'get_chat_failed' };
+    }
   }
 
   const isGroup = Boolean(chat?.isGroup);
@@ -134,7 +144,7 @@ export function attachMessageIngest(client, deps = {}) {
     if (msg?.from?.includes('@lid') || msg?.from?.includes('@broadcast')) {
       return;
     }
-    void handleWhatsappMessage(msg, deps).catch((err) => {
+    void handleWhatsappMessage(msg, { ...deps, client }).catch((err) => {
       onLog(`[whatsapp-ingest] handler error: ${err.message}`);
     });
   };
