@@ -141,8 +141,11 @@ export function attachMessageIngest(client, deps = {}) {
 
   const handler = (msg) => {
     // Suppress noisy internal whatsapp messages (like status/linked devices)
+    // ONLY if they are not explicitly sent to a group.
     if (msg?.from?.includes('@lid') || msg?.from?.includes('@broadcast')) {
-      return;
+      if (!msg?.to?.includes('@g.us')) {
+        return;
+      }
     }
     void handleWhatsappMessage(msg, { ...deps, client }).catch((err) => {
       onLog(`[whatsapp-ingest] handler error: ${err.message}`);
