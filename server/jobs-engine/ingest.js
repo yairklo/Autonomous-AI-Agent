@@ -33,15 +33,24 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   try {
     chat = typeof msg.getChat === 'function' ? await msg.getChat() : msg.chat;
   } catch (err) {
-    onLog(`[whatsapp-ingest] getChat failed: ${err.message}`);
+    onLog(`[whatsapp-ingest] getChat failed: ${err.message || err} (from: ${msg.from})`);
     return { skipped: 'get_chat_failed' };
   }
-  if (!chat?.isGroup) {
+
+  const isGroup = Boolean(chat?.isGroup);
+  const groupName = String(chat?.name || msg.groupName || '').trim();
+  const body = String(msg.body || msg.text || '').trim();
+
+  // Log incoming message to debug
+  onLog(`[whatsapp-ingest] MSG RECV | groupName="${groupName}" | isGroup=${isGroup} | from=${msg.from} | bodyPreview="${body.substring(0, 30)}"`);
+
+  if (!isGroup) {
+    onLog(`[whatsapp-ingest] skipped: not_group (from: ${msg.from})`);
     return { skipped: 'not_group' };
   }
 
-  const groupName = String(chat.name || msg.groupName || '').trim();
   if (!groupName) {
+    onLog(`[whatsapp-ingest] skipped: no_group_name (from: ${msg.from})`);
     return { skipped: 'no_group_name' };
   }
 
@@ -54,12 +63,13 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   if (!tracked) {
     // Fallback while Mongo empty/unavailable: config.json allow-list
     if (!isAllowedGroup(groupName, jobsConfig)) {
+      onLog(`[whatsapp-ingest] skipped: group_not_tracked (groupName: "${groupName}")`);
       return { skipped: 'group_not_tracked' };
     }
   }
 
-  const body = String(msg.body || msg.text || '').trim();
   if (!body) {
+    onLog(`[whatsapp-ingest] skipped: empty_body (groupName: "${groupName}")`);
     return { skipped: 'empty_body' };
   }
 
