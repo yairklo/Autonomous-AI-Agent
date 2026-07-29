@@ -17,6 +17,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Skip Puppeteer's Chrome download — use Playwright image Chromium instead
+# (avoids flaky Google CDN downloads + corrupt partial cache folders on Coolify).
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 # Install dependencies first for better layer caching.
 # Use npm install (not npm ci) so Coolify builds tolerate lockfile
 # cross-platform variations. Force development during install so Coolify's
@@ -24,10 +29,14 @@ WORKDIR /app
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
 RUN npm install
-# whatsapp-web.js → puppeteer needs a matching Chrome binary (not Playwright's Chromium).
-ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
-RUN npx puppeteer browsers install chrome
 ENV NODE_ENV=production
+
+# Point whatsapp-web.js / puppeteer at Playwright's preinstalled Chromium.
+RUN CHROME="$(find /ms-playwright -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) 2>/dev/null | head -n 1)" \
+  && test -n "$CHROME" \
+  && test -x "$CHROME" \
+  && ln -sf "$CHROME" /usr/local/bin/wa-chrome \
+  && /usr/local/bin/wa-chrome --version
 
 # Claude Code CLI (subscription / browser login — not API-key based)
 RUN npm install -g @anthropic-ai/claude-code
@@ -55,7 +64,8 @@ ENV NODE_ENV=production \
     PORT=8787 \
     HEADLESS_BROWSER=true \
     CI=1 \
-    PUPPETEER_CACHE_DIR=/root/.cache/puppeteer \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome \
     CLAUDE_BIN=claude \
     CURSOR_BIN=agent \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
