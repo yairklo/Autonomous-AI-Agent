@@ -20,5 +20,6 @@ data/joinup-telegram-sessions.json
 data/joinup-telegram-state.json
 data/agent-activity.jsonl
 data/cli-auth-queue.json
+data/token-usage.jsonl
 .wwebjs_auth/
 .wwebjs_cache/

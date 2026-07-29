@@ -1,0 +1,236 @@
+/**
+ * Non-blocking WhatsApp Web session (whatsapp-web.js + LocalAuth).
+ * Never blocks HTTP boot — start() kicks initialize in the background.
+ */
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '../..');
+
+export const WA_STATES = [
+  'uninitialized',
+  'qr_required',
+  'connecting',
+  'authenticated',
+  'disconnected',
+];
+
+function defaultAuthPath() {
+  return (
+    String(process.env.WHATSAPP_AUTH_PATH || '').trim() ||
+    path.join(root, '.wwebjs_auth')
+  );
+}
+
+/**
+ * @param {object} [opts]
+ */
+export function createWhatsappSession(opts = {}) {
+  const onLog = opts.onLog || ((line) => console.log(line));
+  const authPath = opts.authPath || defaultAuthPath();
+  const createClientImpl = opts.createClient || null;
+  const notifyQr = opts.notifyQr || null;
+
+  let state = 'uninitialized';
+  let lastQr = '';
+  let lastQrAt = null;
+  let authenticatedAt = null;
+  let error = '';
+  let client = null;
+  let starting = false;
+
+  function setState(next, detail = '') {
+    state = next;
+    if (detail) error = String(detail);
+    else if (next === 'authenticated' || next === 'qr_required') error = '';
+    onLog(`[whatsapp-session] state=${state}${detail ? ` ${detail}` : ''}`);
+  }
+
+  function snapshot() {
+    return {
+      state,
+      hasQr: Boolean(lastQr),
+      lastQrAt,
+      authenticatedAt,
+      error,
+      authPath,
+      starting,
+    };
+  }
+
+  function getQr() {
+    if (!lastQr) return null;
+    return {
+      qr: lastQr,
+      at: lastQrAt,
+      state,
+    };
+  }
+
+  async function buildClient() {
+    if (createClientImpl) {
+      return createClientImpl({ onLog, authPath });
+    }
+    let wweb;
+    try {
+      wweb = await import('whatsapp-web.js');
+    } catch (cause) {
+      const err = new Error(
+        'whatsapp-web.js is not installed. Run: npm install whatsapp-web.js'
+      );
+      err.code = 'WA_CLIENT_MISSING';
+      err.cause = cause;
+      throw err;
+    }
+    const { Client, LocalAuth } = wweb;
+    return new Client({
+      authStrategy: new LocalAuth({ dataPath: authPath }),
+      puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      },
+    });
+  }
+
+  function wireClient(c) {
+    if (typeof c.on !== 'function') return;
+
+    c.on('qr', (qr) => {
+      lastQr = String(qr || '');
+      lastQrAt = new Date().toISOString();
+      setState('qr_required');
+      try {
+        const qrcode = require('qrcode-terminal');
+        onLog('[whatsapp-session] Scan QR (terminal):');
+        qrcode.generate(lastQr, { small: true });
+      } catch {
+        onLog('[whatsapp-session] QR ready — GET /api/whatsapp/qr');
+      }
+      if (typeof notifyQr === 'function') {
+        void Promise.resolve(notifyQr({ qr: lastQr, at: lastQrAt })).catch(
+          (err) => onLog(`[whatsapp-session] notifyQr failed: ${err.message}`)
+        );
+      }
+    });
+
+    c.on('authenticated', () => {
+      authenticatedAt = new Date().toISOString();
+      setState('authenticated');
+    });
+
+    c.on('ready', () => {
+      lastQr = '';
+      authenticatedAt = authenticatedAt || new Date().toISOString();
+      setState('authenticated', 'ready');
+    });
+
+    c.on('auth_failure', (msg) => {
+      setState('disconnected', `auth_failure: ${msg}`);
+    });
+
+    c.on('disconnected', (reason) => {
+      setState('disconnected', String(reason || 'disconnected'));
+    });
+  }
+
+  /**
+   * Start session without blocking the caller on QR scan.
+   * initialize() runs in background.
+   */
+  async function start() {
+    if (state === 'authenticated' && client) {
+      return snapshot();
+    }
+    if (starting) {
+      return snapshot();
+    }
+    starting = true;
+    error = '';
+    setState('connecting');
+
+    try {
+      if (!client) {
+        client = await buildClient();
+        wireClient(client);
+      }
+      const initPromise =
+        typeof client.initialize === 'function'
+          ? client.initialize()
+          : Promise.resolve();
+      void initPromise
+        .then(() => {
+          starting = false;
+        })
+        .catch((err) => {
+          starting = false;
+          setState('disconnected', err.message || String(err));
+        });
+    } catch (err) {
+      starting = false;
+      setState('disconnected', err.message || String(err));
+      throw err;
+    }
+
+    return snapshot();
+  }
+
+  async function stop() {
+    starting = false;
+    try {
+      if (client && typeof client.destroy === 'function') {
+        await client.destroy();
+      }
+    } catch (err) {
+      onLog(`[whatsapp-session] destroy: ${err.message}`);
+    }
+    client = null;
+    lastQr = '';
+    setState('disconnected', 'stopped');
+    return snapshot();
+  }
+
+  function getClient() {
+    return client;
+  }
+
+  /** Test helper: inject state without real WA. */
+  function _setStateForTests(next, qr = '') {
+    state = next;
+    if (qr) {
+      lastQr = qr;
+      lastQrAt = new Date().toISOString();
+    }
+    if (next === 'authenticated') {
+      authenticatedAt = new Date().toISOString();
+      lastQr = '';
+    }
+  }
+
+  return {
+    start,
+    stop,
+    snapshot,
+    getQr,
+    getClient,
+    getState: () => state,
+    _setStateForTests,
+  };
+}
+
+/** Process-wide singleton for the voice-agent HTTP server. */
+let shared = null;
+
+export function getSharedWhatsappSession(opts = {}) {
+  if (!shared) {
+    shared = createWhatsappSession(opts);
+  }
+  return shared;
+}
+
+export function resetSharedWhatsappSessionForTests() {
+  shared = null;
+}

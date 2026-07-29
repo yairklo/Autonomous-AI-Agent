@@ -109,9 +109,9 @@ export class GeminiSessionManager extends EventEmitter {
   /**
    * @param {string} clientId
    * @param {string} prompt
-   * @param {{ signal?: AbortSignal }} [opts]
+   * @param {{ signal?: AbortSignal, source?: string, runId?: string }} [opts]
    */
-  async *ask(clientId, prompt, { signal } = {}) {
+  async *ask(clientId, prompt, { signal, source = 'unknown', runId } = {}) {
     const cleaned = String(prompt || '').trim();
     if (!cleaned) {
       yield { type: 'error', error: 'Empty prompt' };
@@ -146,6 +146,8 @@ export class GeminiSessionManager extends EventEmitter {
     ];
 
     let fullText = '';
+    let lastUsage = null;
+    const startedAt = Date.now();
     try {
       const stream = await this.rateLimiter.schedule(
         () => this._openStream(contents, signal),
@@ -156,6 +158,9 @@ export class GeminiSessionManager extends EventEmitter {
         if (signal?.aborted) {
           yield { type: 'error', error: 'Aborted' };
           return;
+        }
+        if (chunk?.usageMetadata) {
+          lastUsage = chunk.usageMetadata;
         }
         const text = extractChunkText(chunk);
         if (text) {
@@ -185,7 +190,20 @@ export class GeminiSessionManager extends EventEmitter {
       });
       this._save();
 
-      yield { type: 'done', result: fullText };
+      const durationMs = Date.now() - startedAt;
+      yield {
+        type: 'done',
+        result: fullText,
+        usage: lastUsage,
+        durationMs,
+        model: this.model,
+      };
+      void this._logUsage({
+        source,
+        runId,
+        usage: lastUsage,
+        durationMs,
+      });
     } catch (err) {
       const msg = err?.message || String(err);
       const payload = {
@@ -198,6 +216,22 @@ export class GeminiSessionManager extends EventEmitter {
         payload.code = err.code;
       }
       yield payload;
+    }
+  }
+
+  async _logUsage({ source = 'unknown', runId, usage, durationMs } = {}) {
+    try {
+      const { appendTokenUsage } = await import('./metrics/token-logger.js');
+      appendTokenUsage({
+        provider: 'gemini',
+        model: this.model,
+        usage: usage || {},
+        durationMs,
+        source,
+        runId,
+      });
+    } catch (err) {
+      console.warn('[gemini] token log failed:', err.message);
     }
   }
 

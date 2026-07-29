@@ -259,7 +259,10 @@ export class JoinUpProductAgent {
       `[joinup-telegram] ask user=${userId} llm=${this.llmProvider}/${this.llmModel}`
     );
     let full = '';
-    for await (const event of this.claude.ask(clientId, userText, { signal })) {
+    for await (const event of this.claude.ask(clientId, userText, {
+      signal,
+      source: 'telegram',
+    })) {
       if (event.type === 'text' && event.text) full += event.text;
       if (event.type === 'error') {
         const err = new Error(event.error || 'Product agent error');

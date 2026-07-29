@@ -31,6 +31,8 @@ import { mountRunEventsRoutes } from './run-events-http.js';
 import { mountActivityRoutes } from './activity-http.js';
 import { mountJoinUpRoutes } from './joinup-http.js';
 import { mountCliAuthRoutes } from './cli-auth/cli-auth-http.js';
+import { mountTokenMetricsRoutes } from './metrics/token-http.js';
+import { mountWhatsappRoutes, maybeAutostartWhatsapp } from './whatsapp/http.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -71,6 +73,8 @@ mountRunEventsRoutes(app);
 mountActivityRoutes(app);
 mountJoinUpRoutes(app);
 mountCliAuthRoutes(app);
+mountTokenMetricsRoutes(app);
+mountWhatsappRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -388,7 +392,10 @@ app.post('/api/chat', async (req, res) => {
 
   let full = '';
   try {
-    for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
+    for await (const event of claude.ask(clientId, text, {
+      signal: ac.signal,
+      source: 'web_chat',
+    })) {
       console.log(`[API CHAT] yielded event type=${event.type}`, event);
       if (event.type === 'text') {
         full += event.text;
@@ -573,7 +580,7 @@ app.post('/api/chat/sync', async (req, res) => {
   let full = '';
   let sessionId = null;
   try {
-    for await (const event of claude.ask(clientId, text)) {
+    for await (const event of claude.ask(clientId, text, { source: 'web_chat' })) {
       if (event.type === 'text') full += event.text;
       if (event.type === 'session') sessionId = event.sessionId;
       if (event.type === 'done') full = event.result || full;
@@ -660,7 +667,10 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
     sendSse(res, 'status', { stage: 'claude' });
 
     let full = '';
-    for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
+    for await (const event of claude.ask(clientId, text, {
+      signal: ac.signal,
+      source: 'voice',
+    })) {
       if (event.type === 'text') {
         full += event.text;
         sendSse(res, 'token', { text: event.text });
@@ -766,7 +776,10 @@ async function prepareDispatchTask(clientId, dispatch, signal) {
     'Cursor Agent CLI). No preamble, no markdown fences, no questions.';
 
   let refined = '';
-  for await (const event of claude.ask(clientId, refinePrompt, { signal })) {
+  for await (const event of claude.ask(clientId, refinePrompt, {
+    signal,
+    source: 'web_chat',
+  })) {
     if (event.type === 'text') refined += event.text;
     if (event.type === 'done') refined = event.result || refined;
     if (event.type === 'error') {
@@ -1046,6 +1059,10 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
   console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
+  console.log(
+    `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
+  );
+  maybeAutostartWhatsapp();
 
   // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).
   // Coolify often still has JOINUP_TELEGRAM_AUTOSTART=1 from older deploys —
