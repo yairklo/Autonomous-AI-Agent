@@ -130,16 +130,21 @@ export function attachMessageIngest(client, deps = {}) {
   }
 
   const handler = (msg) => {
+    // Suppress noisy internal whatsapp messages (like status/linked devices)
+    if (msg?.from?.includes('@lid') || msg?.from?.includes('@broadcast')) {
+      return;
+    }
     void handleWhatsappMessage(msg, deps).catch((err) => {
       onLog(`[whatsapp-ingest] handler error: ${err.message}`);
     });
   };
 
-  client.on('message', handler);
+  // Use 'message_create' to also capture messages sent by the user themselves (e.g. forwarding a job to "Me")
+  client.on('message_create', handler);
   const detach = () => {
-    if (typeof client.off === 'function') client.off('message', handler);
+    if (typeof client.off === 'function') client.off('message_create', handler);
     else if (typeof client.removeListener === 'function') {
-      client.removeListener('message', handler);
+      client.removeListener('message_create', handler);
     }
     delete client[ATTACHED];
   };
