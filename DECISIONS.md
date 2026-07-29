@@ -74,3 +74,8 @@
 **Why:** Matches approved architecture option 4 (MCP Tool מקומי המשולב בסוכן) and safety constraints.  
 **Env:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`  
 **Date:** 2026-07-26
+
+## D20 — WhatsApp jobs engine Step 2: Mongo TrackedGroup + shared-session ingest
+**Decision:** Runtime allow-list is Mongo `TrackedGroup` (seeded from `config.json` / `data/whatsapp-groups.json` when empty). Ingest attaches a listen-only `message` handler to the **shared** `whatsapp/session.js` client on `ready` — never a second Puppeteer Client. Matched Full Stack/Backend posts upsert Mongo `Job` with `status: discovered` (fingerprint dedupe; never regress later statuses). Ops HTTP: `/api/jobs/tracked-groups`, `/api/jobs/recent`. Playwright apply and chat `track`/`apply`/`list` deferred to Step 3.  
+**Why:** Step 1 session stays the single WA connection; Mongo becomes primary job store while JSON JobDb remains for MCP/offline.  
+**Date:** 2026-07-29
