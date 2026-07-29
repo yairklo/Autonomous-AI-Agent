@@ -199,7 +199,7 @@ test('startIngestWhenReady seeds and attaches on session ready', async () => {
   assert.equal(attached, true);
 });
 
-test('jobs engine HTTP returns 503 without mongo', async () => {
+test('jobs engine HTTP gui list works without mongo', async () => {
   const app = express();
   app.use(express.json());
   mountJobsEngineRoutes(app);
@@ -207,7 +207,24 @@ test('jobs engine HTTP returns 503 without mongo', async () => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const { port } = server.address();
-  const res = await fetch(`http://127.0.0.1:${port}/api/jobs/tracked-groups`);
+  const res = await fetch(`http://127.0.0.1:${port}/api/jobs/tracked-groups?gui=1`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.ok(Array.isArray(body.groups));
+  assert.ok(body.whatsapp?.state);
+  await new Promise((r) => server.close(r));
+});
+
+test('jobs engine recent returns 503 without mongo', async () => {
+  const app = express();
+  app.use(express.json());
+  mountJobsEngineRoutes(app);
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/jobs/recent`);
   assert.equal(res.status, 503);
   const body = await res.json();
   assert.equal(body.code, 'MONGO_UNAVAILABLE');
