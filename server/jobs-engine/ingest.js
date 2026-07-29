@@ -38,17 +38,18 @@ export async function handleWhatsappMessage(msg, deps = {}) {
       try {
         chat = await deps.client.getChatById(chatId);
       } catch (err2) {
-        onLog(`[whatsapp-ingest] getChatById also failed: ${err2.message || err2} (chatId: ${chatId})`);
-        return { skipped: 'get_chat_failed' };
+        onLog(`[whatsapp-ingest] getChatById also failed, falling back to raw ID (chatId: ${chatId})`);
+        chat = null;
       }
     } else {
-      onLog(`[whatsapp-ingest] getChat failed: ${err.message || err} (from: ${msg.from}, to: ${msg.to})`);
-      return { skipped: 'get_chat_failed' };
+      onLog(`[whatsapp-ingest] getChat failed, falling back to raw ID (chatId: ${chatId})`);
+      chat = null;
     }
   }
 
-  const isGroup = Boolean(chat?.isGroup);
-  const groupName = String(chat?.name || msg.groupName || '').trim();
+  const isGroup = Boolean(chat?.isGroup || chatId?.includes('@g.us'));
+  // If we couldn't get the chat name, fallback to the raw chatId!
+  const groupName = String(chat?.name || msg.groupName || chatId || '').trim();
   const body = String(msg.body || msg.text || '').trim();
 
   // Log incoming message to debug
