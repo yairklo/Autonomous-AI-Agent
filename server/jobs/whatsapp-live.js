@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { isAllowedGroup } from './jobs-config.js';
 import { filterTargetJobs } from './job-matcher.js';
+import { buildWhatsappPuppeteerOpts } from '../whatsapp/puppeteer-opts.js';
 
 const require = createRequire(import.meta.url);
 
@@ -167,11 +168,7 @@ async function defaultCreateClient({ onLog } = {}) {
   onLog?.('[whatsapp] creating whatsapp-web.js Client (LocalAuth, local only)');
   const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
-    puppeteer: {
-      headless: true,
-      // Required inside Docker / Coolify (Chromium sandbox restrictions)
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    },
+    puppeteer: buildWhatsappPuppeteerOpts(),
   });
   if (typeof client.on === 'function') {
     client.on('qr', (qr) => printQrToTerminal(qr, onLog));

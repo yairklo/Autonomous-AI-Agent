@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { buildWhatsappPuppeteerOpts } from './puppeteer-opts.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,10 +100,7 @@ export function createWhatsappSession(opts = {}) {
     }
     return new Client({
       authStrategy: new LocalAuth({ dataPath: authPath }),
-      puppeteer: {
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      },
+      puppeteer: buildWhatsappPuppeteerOpts(),
     });
   }
 

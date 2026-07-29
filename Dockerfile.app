@@ -24,6 +24,9 @@ WORKDIR /app
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
 RUN npm install
+# whatsapp-web.js → puppeteer needs a matching Chrome binary (not Playwright's Chromium).
+ENV PUPPETEER_CACHE_DIR=/root/.cache/puppeteer
+RUN npx puppeteer browsers install chrome
 ENV NODE_ENV=production
 
 # Claude Code CLI (subscription / browser login — not API-key based)
@@ -52,6 +55,7 @@ ENV NODE_ENV=production \
     PORT=8787 \
     HEADLESS_BROWSER=true \
     CI=1 \
+    PUPPETEER_CACHE_DIR=/root/.cache/puppeteer \
     CLAUDE_BIN=claude \
     CURSOR_BIN=agent \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
