@@ -550,6 +550,19 @@ test('connect-whatsapp script exists and documents QR login', () => {
   assert.match(src, /qrcode-terminal/);
   assert.match(src, /LocalAuth/);
   assert.match(src, /\.wwebjs_auth/);
+  assert.match(src, /buildWhatsappPuppeteerOpts/);
+});
+
+test('whatsapp puppeteer opts honor executable path env', async () => {
+  const { buildWhatsappPuppeteerOpts } = await import(
+    '../server/whatsapp/puppeteer-opts.js'
+  );
+  const opts = buildWhatsappPuppeteerOpts({
+    PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium',
+  });
+  assert.equal(opts.executablePath, '/usr/bin/chromium');
+  assert.ok(opts.args.includes('--no-sandbox'));
+  assert.ok(opts.args.includes('--disable-dev-shm-usage'));
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {
