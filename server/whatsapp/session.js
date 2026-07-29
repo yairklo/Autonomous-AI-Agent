@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
 import { buildWhatsappPuppeteerOpts } from './puppeteer-opts.js';
 
 const require = createRequire(import.meta.url);
@@ -198,6 +199,17 @@ export function createWhatsappSession(opts = {}) {
 
     try {
       if (!client) {
+        // Clean up SingletonLock in case of a previous crash
+        const lockPath = path.join(authPath, 'session', 'SingletonLock');
+        try {
+          if (fs.existsSync(lockPath)) {
+            fs.unlinkSync(lockPath);
+            onLog(`[whatsapp-session] Removed stale SingletonLock at ${lockPath}`);
+          }
+        } catch (err) {
+          onLog(`[whatsapp-session] Could not remove SingletonLock: ${err.message}`);
+        }
+
         client = await buildClient();
         wireClient(client);
       }
