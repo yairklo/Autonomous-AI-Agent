@@ -391,6 +391,44 @@ dialog::backdrop {
   align-items: center;
 }
 
+.wa-groups-suggestions {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.wa-groups-suggestions li {
+  margin: 0;
+}
+
+.wa-groups-suggestions button {
+  width: 100%;
+  text-align: start;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgba(125, 206, 160, 0.22);
+  background: rgba(0, 0, 0, 0.22);
+  color: inherit;
+  cursor: pointer;
+}
+
+.wa-groups-suggestions button:hover {
+  border-color: rgba(125, 206, 160, 0.45);
+}
+
+#waSessionHint[data-state='authenticated'] {
+  color: #7dcea0;
+}
+
+#waSessionHint[data-state='qr_required'],
+#waSessionHint[data-state='disconnected'],
+#waSessionHint[data-state='uninitialized'] {
+  color: #e8b86d;
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;

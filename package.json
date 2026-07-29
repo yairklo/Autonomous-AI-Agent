@@ -42,7 +42,8 @@
     "whatsapp:connect": "node scripts/connect-whatsapp.js",
     "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive",
     "test:whatsapp-session": "node scripts/test-whatsapp-session.js",
-    "test:whatsapp-ingest": "node scripts/test-whatsapp-ingest.js"
+    "test:whatsapp-ingest": "node scripts/test-whatsapp-ingest.js",
+    "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js"
   },
   "engines": {
     "node": ">=18"

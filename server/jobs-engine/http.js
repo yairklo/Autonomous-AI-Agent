@@ -1,19 +1,19 @@
 /**
- * Jobs-engine ops HTTP (tracked groups + recent Mongo jobs).
+ * Jobs-engine ops HTTP (tracked groups + recent Mongo jobs + GUI track/resolve).
  *
  * GET    /api/jobs/tracked-groups
- * POST   /api/jobs/tracked-groups  { name }
+ * POST   /api/jobs/tracked-groups  { name }  — resolve in live WA, then track
  * DELETE /api/jobs/tracked-groups  { name }
  * GET    /api/jobs/recent?limit=&status=
  */
 
-import {
-  listTrackedGroups,
-  trackGroupByName,
-  untrackGroupByName,
-  mongoReady,
-} from './group-store.js';
+import { mongoReady } from './group-store.js';
 import { listRecentJobs } from './job-store.js';
+import {
+  listGroupsForGui,
+  trackGroupFromGui,
+  untrackGroupFromGui,
+} from './track-gui.js';
 
 function mongoUnavailable(res) {
   return res.status(503).json({
@@ -28,40 +28,75 @@ function mongoUnavailable(res) {
  */
 export function mountJobsEngineRoutes(app) {
   app.get('/api/jobs/tracked-groups', async (req, res) => {
-    if (!mongoReady()) return mongoUnavailable(res);
     try {
+      // GUI-friendly list works with file fallback when Mongo is down.
+      if (String(req.query.gui || '') === '1' || !mongoReady()) {
+        const payload = await listGroupsForGui();
+        return res.json(payload);
+      }
+      const { listTrackedGroups } = await import('./group-store.js');
       const activeOnly = String(req.query.active || '1') !== '0';
       const groups = await listTrackedGroups({ activeOnly });
-      res.json({ ok: true, groups });
+      const gui = await listGroupsForGui();
+      res.json({
+        ok: true,
+        groups: groups.map((g) => g.name),
+        tracked: groups,
+        whatsapp: gui.whatsapp,
+        source: 'mongo',
+      });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message, code: err.code });
     }
   });
 
   app.post('/api/jobs/tracked-groups', async (req, res) => {
-    if (!mongoReady()) return mongoUnavailable(res);
     try {
       const name = req.body?.name || req.body?.group;
-      const group = await trackGroupByName(name, { addedBy: 'api' });
-      res.json({ ok: true, group });
+      const result = await trackGroupFromGui(name, { addedBy: 'gui' });
+      if (!result.found) {
+        const status =
+          result.code === 'WA_NOT_READY'
+            ? 409
+            : result.code === 'GROUP_NAME_REQUIRED'
+              ? 400
+              : 404;
+        return res.status(status).json(result);
+      }
+      res.json(result);
     } catch (err) {
       const status = err.code === 'GROUP_NAME_REQUIRED' ? 400 : 500;
-      res.status(status).json({ ok: false, error: err.message, code: err.code });
+      res.status(status).json({
+        ok: false,
+        found: false,
+        added: false,
+        error: err.message,
+        code: err.code,
+      });
     }
   });
 
   app.delete('/api/jobs/tracked-groups', async (req, res) => {
-    if (!mongoReady()) return mongoUnavailable(res);
     try {
-      const name = req.body?.name || req.body?.group;
-      const group = await untrackGroupByName(name);
-      if (!group) {
-        return res.status(404).json({ ok: false, error: 'Group not found' });
+      const name = req.body?.name || req.body?.group || req.query?.name;
+      const result = await untrackGroupFromGui(name);
+      if (!result.ok) {
+        const status =
+          result.code === 'GROUP_NAME_REQUIRED'
+            ? 400
+            : result.code === 'GROUP_NOT_TRACKED'
+              ? 404
+              : 500;
+        return res.status(status).json(result);
       }
-      res.json({ ok: true, group });
+      res.json(result);
     } catch (err) {
-      const status = err.code === 'GROUP_NAME_REQUIRED' ? 400 : 500;
-      res.status(status).json({ ok: false, error: err.message, code: err.code });
+      res.status(500).json({
+        ok: false,
+        removed: false,
+        error: err.message,
+        code: err.code,
+      });
     }
   });
 
