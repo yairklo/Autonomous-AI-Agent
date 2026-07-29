@@ -43,12 +43,47 @@ export function createWhatsappSession(opts = {}) {
   let error = '';
   let client = null;
   let starting = false;
+  let ready = false;
+  /** @type {Set<(client: object, snap: object) => void>} */
+  const readyListeners = new Set();
 
   function setState(next, detail = '') {
     state = next;
     if (detail) error = String(detail);
     else if (next === 'authenticated' || next === 'qr_required') error = '';
+    if (next === 'disconnected' || next === 'connecting' || next === 'qr_required') {
+      ready = false;
+    }
     onLog(`[whatsapp-session] state=${state}${detail ? ` ${detail}` : ''}`);
+  }
+
+  function emitReady() {
+    ready = true;
+    const snap = snapshot();
+    for (const fn of readyListeners) {
+      try {
+        fn(client, snap);
+      } catch (err) {
+        onLog(`[whatsapp-session] onReady listener failed: ${err.message}`);
+      }
+    }
+  }
+
+  function onReady(fn) {
+    if (typeof fn !== 'function') return () => {};
+    readyListeners.add(fn);
+    if (ready && client) {
+      try {
+        fn(client, snapshot());
+      } catch (err) {
+        onLog(`[whatsapp-session] onReady late-call failed: ${err.message}`);
+      }
+    }
+    return () => readyListeners.delete(fn);
+  }
+
+  function whenReady(fn) {
+    return onReady(fn);
   }
 
   function snapshot() {
@@ -134,6 +169,7 @@ export function createWhatsappSession(opts = {}) {
       lastQr = '';
       authenticatedAt = authenticatedAt || new Date().toISOString();
       setState('authenticated', 'ready');
+      emitReady();
     });
 
     c.on('auth_failure', (msg) => {
@@ -206,7 +242,7 @@ export function createWhatsappSession(opts = {}) {
   }
 
   /** Test helper: inject state without real WA. */
-  function _setStateForTests(next, qr = '') {
+  function _setStateForTests(next, qr = '', opts = {}) {
     state = next;
     if (qr) {
       lastQr = qr;
@@ -215,6 +251,12 @@ export function createWhatsappSession(opts = {}) {
     if (next === 'authenticated') {
       authenticatedAt = new Date().toISOString();
       lastQr = '';
+    }
+    if (opts.client) {
+      client = opts.client;
+    }
+    if (opts.emitReady || (next === 'authenticated' && opts.client)) {
+      emitReady();
     }
   }
 
@@ -225,6 +267,9 @@ export function createWhatsappSession(opts = {}) {
     getQr,
     getClient,
     getState: () => state,
+    onReady,
+    whenReady,
+    isReady: () => ready,
     _setStateForTests,
   };
 }
