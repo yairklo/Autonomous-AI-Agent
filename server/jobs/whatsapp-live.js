@@ -114,7 +114,7 @@ export async function startWhatsappJobWatcher({
   };
 }
 
-function sealClientAgainstSends(client, onLog) {
+export function sealClientAgainstSends(client, onLog) {
   const block = async () => {
     const err = new Error(
       'Blocked: agent must never send WhatsApp group/DM messages'

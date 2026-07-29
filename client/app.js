@@ -88,6 +88,8 @@ const els = {
   waGroupInput: document.getElementById('waGroupInput'),
   waGroupAdd: document.getElementById('waGroupAdd'),
   waGroupsHint: document.getElementById('waGroupsHint'),
+  waSessionHint: document.getElementById('waSessionHint'),
+  waGroupSuggestions: document.getElementById('waGroupSuggestions'),
 };
 
 const state = {
@@ -173,19 +175,63 @@ if (els.waGroupInput) {
 async function loadWhatsappGroups() {
   if (!els.waGroupsList || !els.waGroupsHint) return;
   els.waGroupsHint.textContent = 'Loading groups…';
+  clearWaSuggestions();
   try {
-    const res = await fetch(api('/api/jobs/whatsapp-groups'));
+    const res = await fetch(api('/api/jobs/tracked-groups?gui=1'));
     const data = await res.json();
     if (!res.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${res.status}`);
     }
     state.waGroups = Array.isArray(data.groups) ? data.groups : [];
     renderWhatsappGroups();
-    els.waGroupsHint.textContent =
-      `Source: ${data.source || 'config'}. ` +
-      'Connect on VPS: npm run whatsapp:connect';
+    updateWaSessionHint(data.whatsapp);
+    const ready = data.whatsapp?.ready
+      ? 'WhatsApp connected — search will verify the group exists.'
+      : 'WhatsApp not ready — connect via POST /api/whatsapp/start first.';
+    els.waGroupsHint.textContent = `${ready} Source: ${data.source || 'config'}.`;
   } catch (err) {
     els.waGroupsHint.textContent = `Could not load groups: ${err.message}`;
+    if (els.waSessionHint) {
+      els.waSessionHint.textContent = 'WhatsApp: status unknown';
+      els.waSessionHint.dataset.state = '';
+    }
+  }
+}
+
+function updateWaSessionHint(wa) {
+  if (!els.waSessionHint) return;
+  const stateName = wa?.state || 'unknown';
+  els.waSessionHint.dataset.state = stateName;
+  if (wa?.ready || stateName === 'authenticated') {
+    els.waSessionHint.textContent = `WhatsApp: connected (${stateName})`;
+  } else {
+    els.waSessionHint.textContent = `WhatsApp: ${stateName} — start session before Find & add`;
+  }
+}
+
+function clearWaSuggestions() {
+  if (!els.waGroupSuggestions) return;
+  els.waGroupSuggestions.replaceChildren();
+  els.waGroupSuggestions.hidden = true;
+}
+
+function renderWaSuggestions(suggestions) {
+  if (!els.waGroupSuggestions) return;
+  clearWaSuggestions();
+  if (!Array.isArray(suggestions) || !suggestions.length) return;
+  els.waGroupSuggestions.hidden = false;
+  for (const s of suggestions) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = s.name;
+    btn.addEventListener('click', () => {
+      if (els.waGroupInput) els.waGroupInput.value = s.name;
+      clearWaSuggestions();
+      void addWhatsappGroup();
+    });
+    li.appendChild(btn);
+    els.waGroupSuggestions.appendChild(li);
   }
 }
 
@@ -194,7 +240,7 @@ function renderWhatsappGroups() {
   els.waGroupsList.replaceChildren();
   if (!state.waGroups.length) {
     const empty = document.createElement('li');
-    empty.textContent = 'No groups yet — add one below.';
+    empty.textContent = 'No groups yet — search and add one below.';
     els.waGroupsList.appendChild(empty);
     return;
   }
@@ -217,42 +263,67 @@ async function addWhatsappGroup() {
   if (!els.waGroupInput || !els.waGroupsHint) return;
   const name = els.waGroupInput.value.trim();
   if (!name) return;
-  els.waGroupsHint.textContent = 'Saving…';
+  els.waGroupsHint.textContent = `Searching WhatsApp for “${name}”…`;
+  clearWaSuggestions();
+  if (els.waGroupAdd) els.waGroupAdd.disabled = true;
   try {
-    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+    const res = await fetch(api('/api/jobs/tracked-groups'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group: name }),
+      body: JSON.stringify({ name }),
     });
     const data = await res.json();
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+    if (data.whatsapp) updateWaSessionHint(data.whatsapp);
+    else if (data.waState) updateWaSessionHint({ state: data.waState, ready: data.waState === 'authenticated' });
+
+    if (!res.ok || !data.ok || !data.found) {
+      renderWaSuggestions(data.suggestions);
+      const detail =
+        data.message ||
+        data.error ||
+        (data.code === 'WA_NOT_READY'
+          ? 'WhatsApp is not connected'
+          : `Group not found: ${name}`);
+      els.waGroupsHint.textContent = detail;
+      return;
     }
+
     els.waGroupInput.value = '';
-    state.waGroups = data.groups || [];
+    state.waGroups = Array.isArray(data.groups) ? data.groups : state.waGroups;
+    if (!state.waGroups.includes(data.match?.name) && data.match?.name) {
+      state.waGroups = [...state.waGroups, data.match.name];
+    }
+    // Prefer server list after add
+    if (Array.isArray(data.groups)) state.waGroups = data.groups;
     renderWhatsappGroups();
-    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+    els.waGroupsHint.textContent =
+      data.message || `Found and added: ${data.match?.name || name}`;
   } catch (err) {
     els.waGroupsHint.textContent = `Add failed: ${err.message}`;
+  } finally {
+    if (els.waGroupAdd) els.waGroupAdd.disabled = false;
   }
 }
 
 async function removeWhatsappGroup(name) {
   if (!els.waGroupsHint) return;
-  els.waGroupsHint.textContent = 'Removing…';
+  els.waGroupsHint.textContent = `Removing “${name}”…`;
+  clearWaSuggestions();
   try {
-    const res = await fetch(api('/api/jobs/whatsapp-groups'), {
+    const res = await fetch(api('/api/jobs/tracked-groups'), {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group: name }),
+      body: JSON.stringify({ name }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new Error(data.error || data.message || `HTTP ${res.status}`);
     }
-    state.waGroups = data.groups || [];
+    state.waGroups = Array.isArray(data.groups)
+      ? data.groups
+      : state.waGroups.filter((g) => g.toLowerCase() !== name.toLowerCase());
     renderWhatsappGroups();
-    els.waGroupsHint.textContent = `Saved ${state.waGroups.length} group(s).`;
+    els.waGroupsHint.textContent = data.message || `Removed: ${name}`;
   } catch (err) {
     els.waGroupsHint.textContent = `Remove failed: ${err.message}`;
   }

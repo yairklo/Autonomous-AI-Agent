@@ -133,22 +133,23 @@
 
         <h2>WhatsApp groups</h2>
         <p class="hint">
-          Exact group names to watch. Saved on the server under
-          <code>data/whatsapp-groups.json</code>. Connect once with
-          <code>npm run whatsapp:connect</code> on the VPS and scan the QR.
+          Type a group name — the agent searches your linked WhatsApp, then adds it
+          if found (exact or unique partial match). Used for live job ingest.
         </p>
+        <p class="hint" id="waSessionHint">WhatsApp: checking…</p>
         <ul id="waGroupsList" class="wa-groups-list" aria-label="Watched WhatsApp groups"></ul>
         <div class="wa-groups-add">
           <input
             id="waGroupInput"
             type="text"
-            placeholder="Group name (exact)…"
-            aria-label="New WhatsApp group name"
+            placeholder="Search group name…"
+            aria-label="WhatsApp group name to find and track"
             autocomplete="off"
           />
-          <button type="button" id="waGroupAdd" class="send">Add</button>
+          <button type="button" id="waGroupAdd" class="send">Find &amp; add</button>
         </div>
         <p class="hint" id="waGroupsHint">Loading groups…</p>
+        <ul id="waGroupSuggestions" class="wa-groups-suggestions" hidden></ul>
 
         <div class="settings-actions">
           <button type="button" id="checkHealth" class="ghost">Check health</button>

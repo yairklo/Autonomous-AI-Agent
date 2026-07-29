@@ -33,6 +33,9 @@ import { mountJoinUpRoutes } from './joinup-http.js';
 import { mountCliAuthRoutes } from './cli-auth/cli-auth-http.js';
 import { mountTokenMetricsRoutes } from './metrics/token-http.js';
 import { mountWhatsappRoutes, maybeAutostartWhatsapp } from './whatsapp/http.js';
+import { getSharedWhatsappSession } from './whatsapp/session.js';
+import { mountJobsEngineRoutes } from './jobs-engine/http.js';
+import { startIngestWhenReady } from './jobs-engine/ingest.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -75,6 +78,7 @@ mountJoinUpRoutes(app);
 mountCliAuthRoutes(app);
 mountTokenMetricsRoutes(app);
 mountWhatsappRoutes(app);
+mountJobsEngineRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -1062,6 +1066,12 @@ const server = app.listen(config.port, config.host, () => {
   console.log(
     `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
   );
+  console.log(
+    `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`
+  );
+  startIngestWhenReady(getSharedWhatsappSession(), {
+    onLog: (line) => console.log(line),
+  });
   maybeAutostartWhatsapp();
 
   // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).

@@ -61,9 +61,9 @@ export function resolveWhatsappGroups(
  * @param {string} [opts.overridePath]
  * @returns {{ groups: string[], path: string }}
  */
-export function saveWhatsappGroups(groups, { overridePath } = {}) {
+export function saveWhatsappGroups(groups, { overridePath, allowEmpty = false } = {}) {
   const cleaned = normalizeGroupNames(groups);
-  if (!cleaned.length) {
+  if (!cleaned.length && !allowEmpty) {
     const err = new Error('At least one WhatsApp group name is required');
     err.code = 'JOBS_GROUPS_EMPTY';
     throw err;
