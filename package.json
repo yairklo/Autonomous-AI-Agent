@@ -40,7 +40,8 @@
     "cli-auth:health": "node scripts/cli-auth-health.js",
     "test:cli-auth": "node scripts/test-cli-auth-health.js",
     "whatsapp:connect": "node scripts/connect-whatsapp.js",
-    "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive"
+    "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive",
+    "test:whatsapp-session": "node scripts/test-whatsapp-session.js"
   },
   "engines": {
     "node": ">=18"

@@ -32,6 +32,7 @@ import { mountActivityRoutes } from './activity-http.js';
 import { mountJoinUpRoutes } from './joinup-http.js';
 import { mountCliAuthRoutes } from './cli-auth/cli-auth-http.js';
 import { mountTokenMetricsRoutes } from './metrics/token-http.js';
+import { mountWhatsappRoutes, maybeAutostartWhatsapp } from './whatsapp/http.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -73,6 +74,7 @@ mountActivityRoutes(app);
 mountJoinUpRoutes(app);
 mountCliAuthRoutes(app);
 mountTokenMetricsRoutes(app);
+mountWhatsappRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -1057,6 +1059,10 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
   console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
+  console.log(
+    `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
+  );
+  maybeAutostartWhatsapp();
 
   // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).
   // Coolify often still has JOINUP_TELEGRAM_AUTOSTART=1 from older deploys —
