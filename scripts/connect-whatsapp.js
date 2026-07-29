@@ -54,7 +54,13 @@ async function main() {
     process.exit(1);
   }
 
-  const { Client, LocalAuth } = wweb;
+  const wwebPkg = wweb.default || wweb;
+  const Client = wwebPkg.Client || wweb.Client;
+  const LocalAuth = wwebPkg.LocalAuth || wweb.LocalAuth;
+  if (typeof Client !== 'function' || typeof LocalAuth !== 'function') {
+    console.error('[whatsapp] unexpected whatsapp-web.js export shape');
+    process.exit(1);
+  }
   console.log(`[whatsapp] LocalAuth path: ${authPath}`);
   console.log('[whatsapp] Creating client (headless Chromium)…');
 

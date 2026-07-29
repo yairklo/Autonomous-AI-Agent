@@ -31,6 +31,7 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Cursor Agent CLI → ~/.local/bin/agent (subscription / browser login)
 ENV PATH="/root/.local/bin:${PATH}"
+ENV HOME=/root
 RUN curl -fsSL https://cursor.com/install | bash \
   && ln -sf /root/.local/bin/agent /usr/local/bin/agent \
   && ln -sf /root/.local/bin/agent /usr/local/bin/cursor-agent \

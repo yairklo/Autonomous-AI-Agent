@@ -1,62 +1,30 @@
-# joinUp Telegram Product Bot — Coolify standalone application
-# Separate from the voice-agent app so Coolify can show CPU/RAM per service.
-# Needs Claude + Cursor CLIs (product grilling + coding dispatch), not Playwright/WhatsApp.
-FROM node:22-bookworm-slim
+# joinUp Telegram Product Bot — thin Coolify app (Telegram I/O only).
+# Grill-Me + Cursor + JoinUp git live on voice-agent via /api/joinup/*.
+# Use full bookworm (not slim) so we skip apt during build (Coolify OOM/kills).
+FROM node:22-bookworm
 
 USER root
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    ca-certificates \
-    build-essential \
-    openssh-client \
-    python3 \
-  && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
-RUN npm install --omit=optional
+# omit optional (playwright/whatsapp) — thin bot only needs telegraf + fetch client
+RUN npm install --omit=optional --omit=dev \
+  && npm cache clean --force
 ENV NODE_ENV=production
-
-# Claude Code CLI (subscription / browser login — not API-key based)
-RUN npm install -g @anthropic-ai/claude-code
-
-# Cursor Agent CLI → ~/.local/bin/agent (subscription / browser login)
-ENV PATH="/root/.local/bin:${PATH}"
-RUN curl -fsSL https://cursor.com/install | bash \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/agent \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/cursor-agent \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/cursor \
-  && agent --version || /root/.local/bin/agent --version
 
 COPY . .
 
-RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin /workspaces \
-  && mkdir -p /app/data
+RUN mkdir -p /app/data
 
-# Coolify defaults — point VOICE_AGENT_URL / JOINUP_RUN_LOG_URL at the voice-agent app
-# (public Coolify URL or private network hostname). Do not rely on Compose aliases alone.
 ENV NODE_ENV=production \
     CI=1 \
-    CLAUDE_BIN=claude \
-    CURSOR_BIN=agent \
-    GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
-    NO_OPEN_BROWSER=1 \
-    JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp \
-    JOINUP_GIT_REPO=https://github.com/yairklo/JoinUpApp.git \
-    JOINUP_GITHUB_REPO=yairklo/JoinUpApp \
-    AGENT_PROJECT_ROOT=/workspaces/Autonomous-AI-Agent \
-    PORTFOLIO_PROJECT_ROOT=/workspaces/portfolio \
-    ECODRIVE_PROJECT_ROOT=/workspaces/EcoDrive \
-    WORKSPACE_BOOTSTRAP_STRICT=1 \
-    IS_SANDBOX=1 \
-    AGENT_ACTIVITY_PERSIST=0
+    JOINUP_THIN_BOT=1 \
+    AGENT_ACTIVITY_PERSIST=0 \
+    NO_OPEN_BROWSER=1
 
-# No HTTP port — Telegram long-polling outbound only.
-# Live Cursor logs are POSTed to the voice-agent via VOICE_AGENT_URL.
+# No public HTTP port — Telegram long-polling outbound only.
+# Coolify: disable HTTP healthcheck / public port for this app.
+# Requires VOICE_AGENT_URL + JOINUP_BOT_SHARED_SECRET (+ bot token / allow-list).
 
 CMD ["npm", "run", "start:joinup-telegram"]

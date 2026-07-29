@@ -31,17 +31,23 @@
     "test:joinup-staging": "node scripts/test-joinup-render-staging.js",
     "test:activity": "node scripts/test-activity-store.js",
     "test:run-events": "node scripts/test-cursor-log-parser.js",
+    "metrics:tokens": "node scripts/metrics-tokens.js",
+    "test:metrics-tokens": "node scripts/test-token-logger.js",
     "auth:cli": "node scripts/auth-cli.js",
     "auth:claude": "node scripts/auth-cli.js claude",
     "auth:cursor": "node scripts/auth-cli.js cursor",
     "auth:git": "node scripts/auth-cli.js git",
+    "cli-auth:health": "node scripts/cli-auth-health.js",
+    "test:cli-auth": "node scripts/test-cli-auth-health.js",
     "whatsapp:connect": "node scripts/connect-whatsapp.js",
-    "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive"
+    "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive",
+    "test:whatsapp-session": "node scripts/test-whatsapp-session.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@google/genai": "^2.13.0",
     "bidi-js": "^1.0.3",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",

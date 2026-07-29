@@ -14,6 +14,11 @@ import {
   applyWorkspaceDispatchPolicy,
   findWorkspaceByRoot,
 } from '../server/workspaces.js';
+import { buildCursorAgentEnv } from '../server/cli-auth/cursor-env.js';
+import {
+  extractAuthUrl,
+  looksLikeAuthFailure,
+} from '../server/cli-auth/parse-auth-url.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -199,9 +204,18 @@ fs.writeFileSync(
 try {
   await runCursorAgent(cursorLaunch, resolvedPath, agentPrompt);
 } catch (err) {
-  // Soft-continue into quality gates: agent may have committed before timeout.
   console.error(`✗ Cursor agent reported failure: ${err.message}`);
   fs.appendFileSync(runLogPath, `agentError=${err.message}\n`, 'utf8');
+
+  // Never soft-continue past auth failures — that caused false success on stale commits.
+  if (err.code === 'CLI_AUTH_REQUIRED' || looksLikeAuthFailure(err.message)) {
+    console.error(
+      '[dispatch] Aborting: Cursor CLI authentication failure (no soft-continue).'
+    );
+    process.exit(1);
+  }
+
+  // Soft-continue into quality gates: agent may have committed before timeout.
   console.warn(
     '[dispatch] Continuing to local quality-gate / fix loop (agent may have already committed).'
   );
@@ -239,6 +253,25 @@ if (process.env.DISPATCH_SKIP_QUALITY_GATES !== '1') {
 
 after = captureGit(resolvedPath);
 
+// Always push the feature branch after green gates. With mergeTarget=none the
+// previous code relied on Cursor to push — if the agent died mid-run we marked
+// success on a local branch rename with no remote update.
+if (process.env.DISPATCH_SKIP_PUSH !== '1') {
+  try {
+    pushFeatureBranch(resolvedPath, after.branch || branchName);
+    fs.appendFileSync(
+      runLogPath,
+      `pushedBranch=${after.branch || branchName}\n`,
+      'utf8'
+    );
+    console.log(`✓ Pushed feature branch ${after.branch || branchName} to origin`);
+  } catch (err) {
+    console.error(`✗ git push failed: ${err.message}`);
+    fs.appendFileSync(runLogPath, `pushError=${err.message}\n`, 'utf8');
+    process.exit(1);
+  }
+}
+
 if (mergeTarget && process.env.DISPATCH_SKIP_MERGE !== '1') {
   try {
     mergeFeatureIntoTarget(resolvedPath, mergeTarget, after.branch || branchName);
@@ -258,8 +291,24 @@ fs.appendFileSync(
   'utf8'
 );
 
-if (after.branch === before.branch && after.commit === before.commit) {
-  console.error('✗ Cursor agent produced no new git branch or commit.');
+// Success requires a NEW commit SHA — renaming/checking out a feature branch
+// on the same commit must not count as done.
+if (!after.commit || after.commit === before.commit) {
+  const dirty = isDirtyWorkTree(resolvedPath);
+  console.error(
+    '✗ Cursor agent produced no new commit ' +
+      `(before=${before.commit || '(none)'} after=${after.commit || '(none)'} branch=${after.branch || '(none)'}).`
+  );
+  if (dirty) {
+    console.error(
+      '  Working tree still has uncommitted changes. Salvage in the container:\n' +
+        `    cd ${resolvedPath}\n` +
+        '    git status\n' +
+        '    git diff\n' +
+        '    git add -A && git commit -m "…" && git push -u origin HEAD\n' +
+        '  Or re-dispatch a short task: commit+push existing mic/GUI changes only (do not redo).'
+    );
+  }
   process.exit(1);
 }
 
@@ -531,6 +580,42 @@ async function enforceQualityGatesWithFixLoop({
 }
 
 /**
+ * Push current/feature branch to origin (required when mergeTarget is none).
+ */
+function pushFeatureBranch(cwd, featureBranch) {
+  const current = captureGit(cwd).branch;
+  const source =
+    (featureBranch && String(featureBranch).trim()) ||
+    current ||
+    '';
+  if (!source) {
+    throw new Error('No branch to push');
+  }
+  // Stay on the branch we intend to publish.
+  if (current !== source) {
+    try {
+      git(cwd, `checkout ${source}`, { inherit: true });
+    } catch {
+      git(cwd, `checkout -b ${source}`, { inherit: true });
+    }
+  }
+  console.log(`[dispatch] Pushing ${source} → origin`);
+  git(cwd, `push -u origin ${source}`, { inherit: true });
+}
+
+function isDirtyWorkTree(cwd) {
+  try {
+    const out = execSync('git status --porcelain', {
+      cwd,
+      encoding: 'utf8',
+    }).trim();
+    return Boolean(out);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Merge current/feature branch into deploy target and push.
  */
 function mergeFeatureIntoTarget(cwd, target, featureBranch) {
@@ -607,17 +692,15 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     }
 
     console.log(`[spawn] ${command} ${spawnArgs.map(windowsQuote).join(' ')}`);
+    const childEnv = buildCursorAgentEnv(env);
+    console.log(
+      `[spawn] HOME=${childEnv.HOME || '(unset)'} ` +
+        `CURSOR_API_KEY=${childEnv.CURSOR_API_KEY ? '(set)' : '(unset)'} ` +
+        `cursorDir=${path.join(childEnv.HOME || '', '.cursor')}`
+    );
     const child = spawn(command, spawnArgs, {
       cwd,
-      env: {
-        ...env,
-        DISPATCH_NO_CLAUDE: '1',
-        // Prefer headless / non-interactive behavior inside Coolify containers
-        CI: env.CI || '1',
-        NO_OPEN_BROWSER: env.NO_OPEN_BROWSER || '1',
-        // Claude Code rejects bypassPermissions as root unless IS_SANDBOX=1
-        IS_SANDBOX: env.IS_SANDBOX || '1',
-      },
+      env: childEnv,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
@@ -625,6 +708,7 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     });
     let stdout = '';
     let stderr = '';
+    let authAborted = false;
     const timer = setTimeout(() => {
       try {
         child.kill('SIGTERM');
@@ -633,15 +717,40 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
       }
       reject(new Error(`Timed out after ${timeoutMs}ms: ${launch.display}`));
     }, timeoutMs);
+
+    const maybeAbortAuth = (chunkText) => {
+      if (authAborted) return;
+      if (!looksLikeAuthFailure(chunkText) && !extractAuthUrl(chunkText)) return;
+      // Only abort when auth language is present (URL alone can appear in normal docs).
+      if (!looksLikeAuthFailure(`${stdout}\n${stderr}\n${chunkText}`)) return;
+      authAborted = true;
+      clearTimeout(timer);
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      const authUrl = extractAuthUrl(`${stdout}\n${stderr}\n${chunkText}`);
+      const err = new Error(
+        `Authentication required during Cursor run` +
+          (authUrl ? ` — open ${authUrl}` : '')
+      );
+      err.code = 'CLI_AUTH_REQUIRED';
+      err.authUrl = authUrl || '';
+      reject(err);
+    };
+
     child.stdout.on('data', (c) => {
       const t = c.toString();
       stdout += t;
       process.stdout.write(t);
+      maybeAbortAuth(t);
     });
     child.stderr.on('data', (c) => {
       const t = c.toString();
       stderr += t;
       process.stderr.write(t);
+      maybeAbortAuth(t);
     });
     child.on('error', (err) => {
       clearTimeout(timer);
@@ -649,8 +758,21 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (authAborted) return;
       if (code === 0) resolve({ stdout, stderr, code });
       else {
+        const combined = `${stderr || ''}\n${stdout || ''}`;
+        if (looksLikeAuthFailure(combined)) {
+          const authUrl = extractAuthUrl(combined);
+          const err = new Error(
+            `${launch.display} exited ${code}: Authentication required` +
+              (authUrl ? ` — open ${authUrl}` : '')
+          );
+          err.code = 'CLI_AUTH_REQUIRED';
+          err.authUrl = authUrl || '';
+          reject(err);
+          return;
+        }
         reject(
           new Error(`${launch.display} exited ${code}: ${(stderr || stdout).slice(-800)}`)
         );
@@ -658,6 +780,8 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     });
   });
 }
+
+// buildCursorAgentEnv lives in server/cli-auth/cursor-env.js (shared with health gate).
 
 function windowsQuote(arg) {
   const s = String(arg);

@@ -95,19 +95,36 @@ export function loadJoinUpTelegramConfig(envSource = process.env) {
   const allowedUserIds = parseAllowedUserIds(
     envSource.ALLOWED_TELEGRAM_USER_IDS || ''
   );
-  const joinupWs = getWorkspace('joinup', { envSource });
-  const joinUpRoot = envSource.JOINUP_PROJECT_ROOT
-    ? path.resolve(String(envSource.JOINUP_PROJECT_ROOT).trim())
-    : joinupWs
-      ? resolveWorkspaceRoot(joinupWs, { envSource })
-      : resolveJoinUpRoot();
+  const thinBot =
+    ['1', 'true', 'yes'].includes(
+      String(envSource.JOINUP_THIN_BOT || '1').toLowerCase()
+    ) || Boolean(String(envSource.VOICE_AGENT_URL || '').trim());
+
+  let joinUpRoot = '';
+  try {
+    const joinupWs = getWorkspace('joinup', { envSource });
+    joinUpRoot = envSource.JOINUP_PROJECT_ROOT
+      ? path.resolve(String(envSource.JOINUP_PROJECT_ROOT).trim())
+      : joinupWs
+        ? resolveWorkspaceRoot(joinupWs, { envSource })
+        : '';
+    if (joinUpRoot) {
+      joinUpRoot = pinToJoinUpRoot(joinUpRoot, joinUpRoot);
+    } else if (!thinBot) {
+      joinUpRoot = pinToJoinUpRoot(resolveJoinUpRoot(), resolveJoinUpRoot());
+    }
+  } catch (err) {
+    if (!thinBot) throw err;
+    joinUpRoot = '';
+  }
 
   return {
     agentRoot,
     botToken,
     allowedUserIds,
-    joinUpRoot: pinToJoinUpRoot(joinUpRoot, joinUpRoot),
+    joinUpRoot,
     workspaceId: 'joinup',
+    thinBot,
     mock: String(envSource.JOINUP_TELEGRAM_MOCK || envSource.VOICE_AGENT_MOCK || '0') === '1',
     sessionsFile: path.join(agentRoot, 'data', 'joinup-telegram-sessions.json'),
     stateFile: path.join(agentRoot, 'data', 'joinup-telegram-state.json'),

@@ -1,4 +1,4 @@
-import { ClaudeSessionManager } from '../claude-session.js';
+import { createLlmSessionManager } from '../llm-session.js';
 import { JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT } from './prompt.js';
 import {
   claimsSendingToBuild,
@@ -11,7 +11,7 @@ import { logMessage } from '../message-store.js';
 
 /**
  * Conversational product agent: grill → summarize → confirm → hand off to Cursor.
- * Uses Claude CLI (or mock) with the joinUp-specific system prompt.
+ * Uses Claude CLI or Gemini (AGENT_LLM_PROVIDER) with the joinUp-specific system prompt.
  */
 export class JoinUpProductAgent {
   /**
@@ -22,6 +22,7 @@ export class JoinUpProductAgent {
    * @param {string} [options.sessionsFile]
    * @param {string} [options.claudeBin]
    * @param {string} [options.systemPrompt]
+   * @param {string} [options.provider]
    * @param {(line: string) => void} [options.onLog]
    */
   constructor(options) {
@@ -29,12 +30,22 @@ export class JoinUpProductAgent {
     this.executor = options.executor;
     this.onLog = options.onLog || (() => {});
     this.mock = Boolean(options.mock);
-    this.claude = new ClaudeSessionManager({
+    this.claude = createLlmSessionManager({
       mock: this.mock,
       sessionsFile: options.sessionsFile,
       claudeBin: options.claudeBin,
       systemPrompt: options.systemPrompt || JOINUP_PRODUCT_AGENT_SYSTEM_PROMPT,
+      provider: options.provider,
     });
+    const info =
+      typeof this.claude.getProviderInfo === 'function'
+        ? this.claude.getProviderInfo()
+        : { provider: 'unknown', model: 'unknown' };
+    this.llmProvider = info.provider;
+    this.llmModel = info.model;
+    this.onLog(
+      `[joinup-telegram] product agent llm=${this.llmProvider}/${this.llmModel} mock=${this.mock}`
+    );
   }
 
   clientIdFor(userId) {
@@ -43,26 +54,32 @@ export class JoinUpProductAgent {
 
   /**
    * Handle one inbound Telegram text message for an authorized user.
-   * @param {{ userId: string|number, text: string, signal?: AbortSignal }} input
-   * @returns {Promise<{ reply: string, phase: string, dispatched?: boolean }>}
+   * @param {{ userId: string|number, text: string, signal?: AbortSignal, deferDispatch?: boolean }} input
+   * @returns {Promise<{ reply: string, phase: string, dispatched?: boolean, needsDispatch?: boolean, pendingBuild?: boolean }>}
    */
-  async handleMessage({ userId, text, signal }) {
+  async handleMessage({ userId, text, signal, deferDispatch = false }) {
     const cleaned = String(text || '').trim();
     if (!cleaned) {
       return {
         reply: 'Please send a short description of what you would like in joinUp.',
         phase: this.store.get(userId).phase,
+        pendingBuild: Boolean(this.store.get(userId).pendingTechnicalPrompt),
       };
     }
 
     if (isCancelOrReset(cleaned)) {
       this.claude.reset(this.clientIdFor(userId));
       this.store.reset(userId);
-      this.store.update(userId, { phase: 'idle' });
+      this.store.update(userId, {
+        phase: 'idle',
+        pendingTechnicalPrompt: '',
+        pendingSpecSummary: '',
+      });
       return {
         reply:
           'Okay — I cleared our conversation. Tell me a new joinUp idea whenever you are ready.',
         phase: 'idle',
+        pendingBuild: false,
       };
     }
 
@@ -72,6 +89,14 @@ export class JoinUpProductAgent {
     // If we already have a technical prompt and the user confirms / asks to run it, execute.
     if (hasPendingBuild && isExplicitConfirmation(cleaned)) {
       this.store.appendHistory(userId, 'user', cleaned);
+      if (deferDispatch) {
+        return {
+          reply: '',
+          phase: 'awaiting_confirmation',
+          needsDispatch: true,
+          pendingBuild: true,
+        };
+      }
       return this._executeConfirmed(userId, signal);
     }
 
@@ -109,6 +134,14 @@ export class JoinUpProductAgent {
       });
       // If the user already confirmed in this same message, build immediately.
       if (isExplicitConfirmation(cleaned)) {
+        if (deferDispatch) {
+          return {
+            reply: cleanReply || '',
+            phase: 'awaiting_confirmation',
+            needsDispatch: true,
+            pendingBuild: true,
+          };
+        }
         return this._executeConfirmed(userId, signal);
       }
       return {
@@ -116,17 +149,25 @@ export class JoinUpProductAgent {
           cleanReply ||
           'I have a clear plan for joinUp. Should I proceed with building this for joinUp?',
         phase: 'awaiting_confirmation',
+        pendingBuild: true,
       };
     }
 
     // Safety net: LLM claimed "sending to fix/build" but omitted READY_TO_BUILD.
-    // Example that previously failed: "שולח את זה לתיקון:" with no marker → no Cursor.
     if (claimsSendingToBuild(cleanReply)) {
       const synthesized = this._ensureTechnicalPrompt(userId, cleanReply);
       if (synthesized) {
         this.onLog(
           '[joinup-telegram] LLM claimed send-to-fix/build — dispatching (synthesized READY_TO_BUILD if needed)'
         );
+        if (deferDispatch) {
+          return {
+            reply: cleanReply,
+            phase: 'awaiting_confirmation',
+            needsDispatch: true,
+            pendingBuild: true,
+          };
+        }
         return this._executeConfirmed(userId, signal);
       }
     }
@@ -142,7 +183,32 @@ export class JoinUpProductAgent {
       lastAgentReply: cleanReply,
     });
 
-    return { reply: cleanReply, phase: this.store.get(userId).phase };
+    return {
+      reply: cleanReply,
+      phase: this.store.get(userId).phase,
+      pendingBuild: Boolean(this.store.get(userId).pendingTechnicalPrompt),
+    };
+  }
+
+  /**
+   * Clear Claude session + JoinUp store (including stuck pendingBuild).
+   */
+  resetUser(userId) {
+    this.claude.reset(this.clientIdFor(userId));
+    this.store.reset(userId);
+    this.store.update(userId, {
+      phase: 'idle',
+      pendingTechnicalPrompt: '',
+      pendingSpecSummary: '',
+      lastAgentReply: '',
+    });
+  }
+
+  /**
+   * Start Cursor build for a pending technical prompt (used by async /api/joinup/dispatch).
+   */
+  async executePending(userId, signal) {
+    return this._executeConfirmed(userId, signal);
   }
 
   /**
@@ -189,11 +255,21 @@ export class JoinUpProductAgent {
     }
 
     const clientId = this.clientIdFor(userId);
+    this.onLog(
+      `[joinup-telegram] ask user=${userId} llm=${this.llmProvider}/${this.llmModel}`
+    );
     let full = '';
-    for await (const event of this.claude.ask(clientId, userText, { signal })) {
+    for await (const event of this.claude.ask(clientId, userText, {
+      signal,
+      source: 'telegram',
+    })) {
       if (event.type === 'text' && event.text) full += event.text;
       if (event.type === 'error') {
-        throw new Error(event.error || 'Product agent error');
+        const err = new Error(event.error || 'Product agent error');
+        if (event.code) err.code = event.code;
+        if (event.authUrl) err.authUrl = event.authUrl;
+        if (event.tool) err.tool = event.tool;
+        throw err;
       }
     }
     return full.trim();

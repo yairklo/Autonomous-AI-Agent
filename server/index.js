@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
-import { ClaudeSessionManager } from './claude-session.js';
 import { config } from './config.js';
+import { createLlmSessionManager, normalizeLlmProvider } from './llm-session.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
 import {
@@ -29,6 +29,10 @@ import {
 import { synthesizeToFile, ttsAvailableHint } from './tts.js';
 import { mountRunEventsRoutes } from './run-events-http.js';
 import { mountActivityRoutes } from './activity-http.js';
+import { mountJoinUpRoutes } from './joinup-http.js';
+import { mountCliAuthRoutes } from './cli-auth/cli-auth-http.js';
+import { mountTokenMetricsRoutes } from './metrics/token-http.js';
+import { mountWhatsappRoutes, maybeAutostartWhatsapp } from './whatsapp/http.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -41,7 +45,16 @@ fs.mkdirSync(config.uploadsDir, { recursive: true });
 fs.mkdirSync(config.cvApplicationsDir, { recursive: true });
 
 const app = express();
-const claude = new ClaudeSessionManager();
+const llmProvider = normalizeLlmProvider(config.llmProvider);
+const claude = createLlmSessionManager({ provider: llmProvider });
+const llmActorLabel =
+  llmProvider === 'gemini' ? 'Gemini (voice)' : 'Claude (voice)';
+const llmModel =
+  typeof claude.getProviderInfo === 'function'
+    ? claude.getProviderInfo().model
+    : llmProvider === 'gemini'
+      ? config.geminiModel
+      : 'claude-cli';
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -58,6 +71,10 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 mountRunEventsRoutes(app);
 mountActivityRoutes(app);
+mountJoinUpRoutes(app);
+mountCliAuthRoutes(app);
+mountTokenMetricsRoutes(app);
+mountWhatsappRoutes(app);
 
 app.get('/api/health', (_req, res) => {
   const nets = os.networkInterfaces();
@@ -86,6 +103,9 @@ app.get('/api/health', (_req, res) => {
     grillMeConversation: true,
     // Interactive CLI sends interactiveChat:true — auto dispatch off unless explicit trigger.
     interactiveChatSafe: true,
+    llmProvider,
+    geminiModel: llmProvider === 'gemini' ? config.geminiModel : undefined,
+    llmModel,
     grillMePacks: listGrillMePacks().map((p) => p.id),
     mcpTools: listMcpTools().map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
@@ -236,14 +256,14 @@ app.post('/api/chat', async (req, res) => {
     req.body?.interactiveChat === '1' ||
     String(clientId).startsWith('terminal-');
   console.log(
-    `[API CHAT] received request. clientId=${clientId} interactiveChat=${interactiveChat} text="${text}"`
+    `[API CHAT] received request. clientId=${clientId} llm=${llmProvider}/${llmModel} interactiveChat=${interactiveChat} text="${text}"`
   );
   if (!text) {
     return res.status(400).json({ error: 'text is required' });
   }
 
   initSse(res);
-  sendSse(res, 'meta', { clientId, interactiveChat });
+  sendSse(res, 'meta', { clientId, interactiveChat, llmProvider, llmModel });
 
   const voiceActivityId = `voice:${clientId}:${new Date().toISOString().slice(0, 10)}`;
   recordActivity({
@@ -372,7 +392,10 @@ app.post('/api/chat', async (req, res) => {
 
   let full = '';
   try {
-    for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
+    for await (const event of claude.ask(clientId, text, {
+      signal: ac.signal,
+      source: 'web_chat',
+    })) {
       console.log(`[API CHAT] yielded event type=${event.type}`, event);
       if (event.type === 'text') {
         full += event.text;
@@ -387,7 +410,7 @@ app.post('/api/chat', async (req, res) => {
           source: 'voice',
           platform: 'voice',
           actorId: clientId,
-          actorLabel: 'Claude (voice)',
+          actorLabel: llmActorLabel,
           title: 'Voice / chat turn',
           text: result,
         });
@@ -402,6 +425,7 @@ app.post('/api/chat', async (req, res) => {
         sendSse(res, 'done', {
           result,
           clientId,
+          llmProvider,
         });
       } else if (event.type === 'error') {
         recordActivity({
@@ -410,10 +434,15 @@ app.post('/api/chat', async (req, res) => {
           source: 'voice',
           platform: 'voice',
           actorId: clientId,
-          actorLabel: 'Claude (voice)',
+          actorLabel: llmActorLabel,
           text: event.error || 'chat error',
         });
-        sendSse(res, 'error', { error: event.error });
+        sendSse(res, 'error', {
+          error: event.error,
+          code: event.code,
+          authUrl: event.authUrl,
+          tool: event.tool,
+        });
       }
     }
   } catch (err) {
@@ -551,7 +580,7 @@ app.post('/api/chat/sync', async (req, res) => {
   let full = '';
   let sessionId = null;
   try {
-    for await (const event of claude.ask(clientId, text)) {
+    for await (const event of claude.ask(clientId, text, { source: 'web_chat' })) {
       if (event.type === 'text') full += event.text;
       if (event.type === 'session') sessionId = event.sessionId;
       if (event.type === 'done') full = event.result || full;
@@ -638,7 +667,10 @@ app.post('/api/voice', upload.single('audio'), async (req, res) => {
     sendSse(res, 'status', { stage: 'claude' });
 
     let full = '';
-    for await (const event of claude.ask(clientId, text, { signal: ac.signal })) {
+    for await (const event of claude.ask(clientId, text, {
+      signal: ac.signal,
+      source: 'voice',
+    })) {
       if (event.type === 'text') {
         full += event.text;
         sendSse(res, 'token', { text: event.text });
@@ -744,7 +776,10 @@ async function prepareDispatchTask(clientId, dispatch, signal) {
     'Cursor Agent CLI). No preamble, no markdown fences, no questions.';
 
   let refined = '';
-  for await (const event of claude.ask(clientId, refinePrompt, { signal })) {
+  for await (const event of claude.ask(clientId, refinePrompt, {
+    signal,
+    source: 'web_chat',
+  })) {
     if (event.type === 'text') refined += event.text;
     if (event.type === 'done') refined = event.result || refined;
     if (event.type === 'error') {
@@ -1009,7 +1044,10 @@ async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
 
 const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
-  console.log(`[voice-agent] mock=${config.mock} claudeBin=${config.claudeBin}`);
+  console.log(
+    `[voice-agent] llmProvider=${llmProvider} llmModel=${llmModel} mock=${config.mock}`
+  );
+  console.log(`[voice-agent] claudeBin=${config.claudeBin}`);
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
   console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
   console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
@@ -1021,6 +1059,10 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
   console.log(`[voice-agent] Terminal chat: npm run chat`);
   console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
+  console.log(
+    `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
+  );
+  maybeAutostartWhatsapp();
 
   // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).
   // Coolify often still has JOINUP_TELEGRAM_AUTOSTART=1 from older deploys —

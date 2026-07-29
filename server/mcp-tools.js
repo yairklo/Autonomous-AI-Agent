@@ -415,10 +415,34 @@ async function executeDispatchCodingTask(args, { onLog, signal } = {}) {
     })}`
   );
 
-  const result = await runDispatchTask(
-    { project: projectPath, task: taskDescription },
-    { onLog, signal }
-  );
+  let result;
+  try {
+    result = await runDispatchTask(
+      { project: projectPath, task: taskDescription },
+      { onLog, signal }
+    );
+  } catch (err) {
+    if (err?.code === 'CLI_AUTH_REQUIRED' || err?.code === 'CLI_AUTH_TIMEOUT') {
+      onLog?.(
+        `[mcp] tool=dispatch_coding_task status=${err.code} tool=${err.tool || 'cursor'}`
+      );
+      return {
+        ok: false,
+        tool: 'dispatch_coding_task',
+        code: err.code,
+        projectPath,
+        taskDescription,
+        authTool: err.tool || 'cursor',
+        authUrl: err.authUrl || '',
+        queueId: err.queueId || '',
+        error: err.message,
+        summary:
+          'Cursor CLI is not authenticated on this host. ' +
+          'Open the auth URL (or run `npm run auth:cursor`), then POST /api/cli-auth/retry.',
+      };
+    }
+    throw err;
+  }
 
   onLog?.(`[mcp] tool=dispatch_coding_task status=ok exit=${result.code ?? 0}`);
 

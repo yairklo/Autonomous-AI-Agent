@@ -836,6 +836,67 @@ test('resolveVoiceAgentBaseUrl prefers VOICE_AGENT_URL over Compose-style defaul
   assert.strictEqual(resolveVoiceAgentBaseUrl({}), 'http://127.0.0.1:8787');
 });
 
+test('joinUp bot shared secret uses timing-safe compare', async () => {
+  const { joinUpBotSecretOk } = await import('../server/joinup-http.js');
+  const prev = process.env.JOINUP_BOT_SHARED_SECRET;
+  process.env.JOINUP_BOT_SHARED_SECRET = 'test-secret-value-32chars-min!!';
+  try {
+    assert.strictEqual(joinUpBotSecretOk('test-secret-value-32chars-min!!'), true);
+    assert.strictEqual(joinUpBotSecretOk('wrong'), false);
+    assert.strictEqual(joinUpBotSecretOk(''), false);
+  } finally {
+    if (prev === undefined) delete process.env.JOINUP_BOT_SHARED_SECRET;
+    else process.env.JOINUP_BOT_SHARED_SECRET = prev;
+  }
+});
+
+test('JoinUpProductAgent deferDispatch does not execute Cursor', async () => {
+  const { JoinUpProductAgent } = await import(
+    '../server/joinup-telegram/product-agent.js'
+  );
+  const { JoinUpSessionStore } = await import(
+    '../server/joinup-telegram/session-store.js'
+  );
+  let executed = 0;
+  const store = new JoinUpSessionStore({});
+  const executor = {
+    async execute() {
+      executed += 1;
+      return { vercel: {}, staging: {} };
+    },
+  };
+  const agent = new JoinUpProductAgent({
+    store,
+    executor,
+    mock: true,
+  });
+  const userId = `defer-${Date.now()}`;
+  store.update(userId, {
+    phase: 'awaiting_confirmation',
+    pendingTechnicalPrompt: 'Implement joinUp button',
+  });
+  const result = await agent.handleMessage({
+    userId,
+    text: 'מאשר',
+    deferDispatch: true,
+  });
+  assert.strictEqual(result.needsDispatch, true);
+  assert.strictEqual(executed, 0);
+  assert.ok(store.get(userId).pendingTechnicalPrompt);
+});
+
+test('clientId helpers for thin joinup bot', async () => {
+  const {
+    clientIdForTelegramUser,
+  } = await import('../server/joinup-telegram/voice-agent-client.js');
+  const { userIdFromClientId, clientIdForUser } = await import(
+    '../server/joinup-service.js'
+  );
+  assert.strictEqual(clientIdForTelegramUser(42), 'joinup-tg:42');
+  assert.strictEqual(userIdFromClientId('joinup-tg:99'), '99');
+  assert.strictEqual(clientIdForUser('7'), 'joinup-tg:7');
+});
+
 test('workspaces registry loads agent/joinup/portfolio/ecodrive', async () => {
   const {
     clearWorkspacesCache,
@@ -908,5 +969,141 @@ test('detectCodingDispatch remaps /app to autonomous-agent workspace', () => {
   } finally {
     if (prev === undefined) delete process.env.AGENT_PROJECT_ROOT;
     else process.env.AGENT_PROJECT_ROOT = prev;
+  }
+});
+
+test('normalizeLlmProvider maps google aliases to gemini', async () => {
+  const { normalizeLlmProvider } = await import('../server/llm-session.js');
+  assert.strictEqual(normalizeLlmProvider('gemini'), 'gemini');
+  assert.strictEqual(normalizeLlmProvider('Google'), 'gemini');
+  assert.strictEqual(normalizeLlmProvider('claude'), 'claude');
+  assert.strictEqual(normalizeLlmProvider(''), 'claude');
+});
+
+test('createLlmSessionManager returns GeminiSessionManager for gemini', async () => {
+  const { createLlmSessionManager, GeminiSessionManager, ClaudeSessionManager } =
+    await import('../server/llm-session.js');
+  const sessionsFile = path.join(os.tmpdir(), `gemini-factory-${Date.now()}.json`);
+  const gemini = createLlmSessionManager({
+    provider: 'gemini',
+    mock: true,
+    sessionsFile,
+  });
+  assert.ok(gemini instanceof GeminiSessionManager);
+  const claude = createLlmSessionManager({
+    provider: 'claude',
+    mock: true,
+    sessionsFile,
+  });
+  assert.ok(claude instanceof ClaudeSessionManager);
+  try {
+    fs.unlinkSync(sessionsFile);
+  } catch {
+    /* ignore */
+  }
+});
+
+test('GeminiRateLimiter spaces requests and retries 429 with jitter', async () => {
+  const {
+    GeminiRateLimiter,
+    backoffDelayMs,
+    isRateLimitError,
+  } = await import('../server/gemini-rate-limit.js');
+
+  assert.ok(isRateLimitError({ status: 429 }));
+  assert.ok(isRateLimitError(new Error('RESOURCE_EXHAUSTED')));
+  assert.strictEqual(isRateLimitError(new Error('boom')), false);
+
+  const d0 = backoffDelayMs(0, { baseMs: 100, capMs: 1000, retryAfterMs: null });
+  assert.ok(d0 >= 0 && d0 <= 100);
+  assert.strictEqual(
+    backoffDelayMs(1, { baseMs: 100, capMs: 1000, retryAfterMs: 2500 }),
+    1000
+  );
+
+  const limiter = new GeminiRateLimiter({
+    rpm: 60,
+    rpd: 100,
+    maxRetries: 2,
+    baseMs: 10,
+    capMs: 50,
+  });
+  let calls = 0;
+  const result = await limiter.schedule(async () => {
+    calls += 1;
+    if (calls === 1) {
+      const err = new Error('429 Too Many Requests');
+      err.status = 429;
+      throw err;
+    }
+    return 'ok';
+  });
+  assert.strictEqual(result, 'ok');
+  assert.strictEqual(calls, 2);
+  assert.ok(limiter.stats.rateLimited >= 1);
+  assert.strictEqual(limiter.stats.completed, 1);
+});
+
+test('GeminiSessionManager mock ask streams and persists history', async () => {
+  const { GeminiSessionManager } = await import('../server/gemini-session.js');
+  const sessionsFile = path.join(os.tmpdir(), `gemini-sess-${Date.now()}.json`);
+  const manager = new GeminiSessionManager({
+    mock: true,
+    sessionsFile,
+    systemPrompt: 'test',
+  });
+  const clientId = 'test-gemini-client';
+  let full = '';
+  let sessionId = null;
+  for await (const ev of manager.ask(clientId, 'hello gemini')) {
+    if (ev.type === 'session') sessionId = ev.sessionId;
+    if (ev.type === 'text') full += ev.text;
+    if (ev.type === 'done') full = ev.result || full;
+    if (ev.type === 'error') assert.fail(ev.error);
+  }
+  assert.ok(sessionId);
+  assert.match(full, /mock Gemini/i);
+  const stored = manager.getSession(clientId);
+  assert.ok(stored?.history?.length >= 2);
+  assert.strictEqual(stored.history.at(-2).role, 'user');
+  assert.strictEqual(stored.history.at(-1).role, 'model');
+  manager.reset(clientId);
+  assert.strictEqual(manager.getSession(clientId), null);
+  try {
+    fs.unlinkSync(sessionsFile);
+  } catch {
+    /* ignore */
+  }
+});
+
+test('GeminiSessionManager uses injected stream + rate limiter', async () => {
+  const { GeminiSessionManager } = await import('../server/gemini-session.js');
+  const { GeminiRateLimiter } = await import('../server/gemini-rate-limit.js');
+  const sessionsFile = path.join(os.tmpdir(), `gemini-stream-${Date.now()}.json`);
+  const limiter = new GeminiRateLimiter({ rpm: 120, rpd: 50, maxRetries: 0 });
+  const manager = new GeminiSessionManager({
+    mock: false,
+    apiKey: 'test-key',
+    model: 'gemini-3.6-flash',
+    sessionsFile,
+    rateLimiter: limiter,
+    systemPrompt: 'You are a test agent.',
+    streamFn: async function* () {
+      yield { text: 'Hello ' };
+      yield { text: 'from Gemini' };
+    },
+  });
+  let full = '';
+  for await (const ev of manager.ask('c1', 'hi')) {
+    if (ev.type === 'text') full += ev.text;
+    if (ev.type === 'done') full = ev.result || full;
+    if (ev.type === 'error') assert.fail(ev.error);
+  }
+  assert.strictEqual(full, 'Hello from Gemini');
+  assert.strictEqual(limiter.stats.completed, 1);
+  try {
+    fs.unlinkSync(sessionsFile);
+  } catch {
+    /* ignore */
   }
 });

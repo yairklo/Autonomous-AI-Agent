@@ -62,6 +62,35 @@ export class ClaudeSessionManager extends EventEmitter {
     this._load();
   }
 
+  /** @returns {{ provider: 'claude', model: string }} */
+  getProviderInfo() {
+    return { provider: 'claude', model: 'claude-cli' };
+  }
+
+  async _logUsage({
+    source = 'unknown',
+    runId,
+    usage,
+    costUsd,
+    durationMs,
+    model,
+  } = {}) {
+    try {
+      const { appendTokenUsage } = await import('./metrics/token-logger.js');
+      appendTokenUsage({
+        provider: 'claude',
+        model: model || this.getProviderInfo().model,
+        usage: usage || {},
+        estimatedCostUsd: costUsd,
+        durationMs,
+        source,
+        runId,
+      });
+    } catch (err) {
+      console.warn('[claude] token log failed:', err.message);
+    }
+  }
+
   _load() {
     try {
       if (fs.existsSync(this.sessionsFile)) {
@@ -96,7 +125,7 @@ export class ClaudeSessionManager extends EventEmitter {
    * { type: 'done', result }
    * { type: 'error', error }
    */
-  async *ask(clientId, prompt, { signal } = {}) {
+  async *ask(clientId, prompt, { signal, source = 'unknown', runId } = {}) {
     const cleaned = String(prompt || '').trim();
     if (!cleaned) {
       yield { type: 'error', error: 'Empty prompt' };
@@ -106,6 +135,28 @@ export class ClaudeSessionManager extends EventEmitter {
     if (this.mock) {
       yield* this._mockAsk(clientId, cleaned);
       return;
+    }
+
+    // Pre-chat Claude CLI auth gate (URL notify + optional wait). Skip in unit tests via CLI_AUTH_SKIP=1.
+    if (String(process.env.CLI_AUTH_SKIP || '').trim() !== '1') {
+      try {
+        const { assertCliAuthReady } = await import('./cli-auth/gate.js');
+        await assertCliAuthReady('claude', {
+          onLog: (line) => console.log(line),
+          env: process.env,
+          task: cleaned.slice(0, 240),
+          signal,
+        });
+      } catch (err) {
+        yield {
+          type: 'error',
+          error: err.message || String(err),
+          code: err.code || 'CLI_AUTH_REQUIRED',
+          authUrl: err.authUrl || '',
+          tool: err.tool || 'claude',
+        };
+        return;
+      }
     }
 
     const existing = this.getSession(clientId);
@@ -134,6 +185,7 @@ export class ClaudeSessionManager extends EventEmitter {
     let fullText = '';
     let sawResult = false;
     let rawStdout = '';
+    const startedAt = Date.now();
 
     try {
       for await (const event of this._runClaude(args, { signal })) {
@@ -172,7 +224,27 @@ export class ClaudeSessionManager extends EventEmitter {
             fullText = event.result;
             yield { type: 'text', text: event.result };
           }
-          yield { type: 'done', result: fullText || event.result || '' };
+          const durationMs =
+            event.durationMs != null
+              ? Number(event.durationMs)
+              : Date.now() - startedAt;
+          const done = {
+            type: 'done',
+            result: fullText || event.result || '',
+            usage: event.usage || null,
+            costUsd: event.costUsd,
+            durationMs,
+            model: event.model || '',
+          };
+          yield done;
+          void this._logUsage({
+            source,
+            runId,
+            usage: event.usage,
+            costUsd: event.costUsd,
+            durationMs,
+            model: event.model,
+          });
         }
 
         if (event.type === 'error') {
@@ -183,7 +255,7 @@ export class ClaudeSessionManager extends EventEmitter {
               type: 'text',
               text: '[Session expired — starting a new conversation.]\n\n',
             };
-            yield* this.ask(clientId, cleaned, { signal });
+            yield* this.ask(clientId, cleaned, { signal, source, runId });
             return;
           }
           yield { type: 'error', error: msg };
@@ -219,7 +291,13 @@ export class ClaudeSessionManager extends EventEmitter {
         yield {
           type: 'done',
           result: fullText || '(No response from Claude CLI)',
+          durationMs: Date.now() - startedAt,
         };
+        void this._logUsage({
+          source,
+          runId,
+          durationMs: Date.now() - startedAt,
+        });
       }
     } catch (err) {
       // If resume failed, retry once without resume
@@ -230,7 +308,7 @@ export class ClaudeSessionManager extends EventEmitter {
           type: 'text',
           text: '[Session expired — starting a new conversation.]\n\n',
         };
-        yield* this.ask(clientId, cleaned, { signal });
+        yield* this.ask(clientId, cleaned, { signal, source, runId });
         return;
       }
       yield { type: 'error', error: msg };
@@ -504,6 +582,12 @@ function parseStreamLine(line) {
       result: obj.result || obj.content || '',
       sessionId: sessionId || obj.session_id,
       isError: false,
+      usage: obj.usage || null,
+      costUsd:
+        obj.total_cost_usd != null ? Number(obj.total_cost_usd) : undefined,
+      durationMs: obj.duration_ms != null ? Number(obj.duration_ms) : undefined,
+      model: obj.model || obj.modelUsage?.model || '',
+      numTurns: obj.num_turns != null ? Number(obj.num_turns) : undefined,
     });
   }
 

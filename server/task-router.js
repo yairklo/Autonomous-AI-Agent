@@ -317,6 +317,7 @@ function extractProjectPath(text) {
 export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}) {
   return new Promise(async (resolve, reject) => {
     const { startRun, endRun, createRunLogger } = await import('./run-events.js');
+    const dispatchStartedAt = Date.now();
     const activeRunId =
       runId ||
       startRun({
@@ -330,6 +331,46 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
       project,
       onLog,
     });
+
+    const logCursorUsage = async (ok) => {
+      try {
+        const { appendTokenUsage } = await import('./metrics/token-logger.js');
+        appendTokenUsage({
+          provider: 'cursor',
+          model: 'cursor-agent',
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          estimatedCostUsd: 0,
+          durationMs: Date.now() - dispatchStartedAt,
+          source: 'mcp_dispatch',
+          runId: activeRunId,
+        });
+      } catch (err) {
+        log(`[cli-auth] token log skipped: ${err.message}`);
+      }
+      void ok;
+    };
+
+    try {
+      // Skip live CLI probe for dry-run dispatches (tests / dry pipelines).
+      if (String(process.env.DISPATCH_DRY_RUN || '').trim() !== '1') {
+        const { assertCliAuthReady } = await import('./cli-auth/gate.js');
+        await assertCliAuthReady('cursor', {
+          onLog: log,
+          env: process.env,
+          project,
+          task,
+          runId: activeRunId,
+          signal,
+        });
+      }
+    } catch (err) {
+      endRun(activeRunId, { ok: false, text: err.message });
+      void logCursorUsage(false);
+      reject(err);
+      return;
+    }
 
     const script = resolveDispatchScript();
     const args = [script, '--project', project, '--task', task];
@@ -380,12 +421,14 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
     });
     child.on('error', (err) => {
       endRun(activeRunId, { ok: false, text: err.message });
+      void logCursorUsage(false);
       reject(err);
     });
     child.on('close', (code) => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (code === 0) {
         endRun(activeRunId, { ok: true, text: 'Dispatch finished successfully' });
+        void logCursorUsage(true);
         resolve({ ok: true, stdout, stderr, code, runId: activeRunId });
       } else {
         const err = new Error(
@@ -396,6 +439,7 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
         err.stderr = stderr;
         err.runId = activeRunId;
         endRun(activeRunId, { ok: false, text: err.message });
+        void logCursorUsage(false);
         reject(err);
       }
     });
