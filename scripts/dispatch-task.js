@@ -420,10 +420,8 @@ function resolveClaudeLaunch(model) {
     buildArgs: (prompt, cwd) => [
       '-y',
       '@anthropic-ai/claude-code',
-      '-p',
-      prompt,
-      '--auto-approve',
-      '--print'
+      '--print',
+      prompt
     ] // model passing might require specific flags or env vars for claude CLI
   };
 }
