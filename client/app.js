@@ -1079,14 +1079,42 @@ async function loadHistoryDetail(activityId) {
       for (const ev of events) {
         const row = document.createElement('div');
         row.className = 'history-event';
+        const isTelegram = a.platform === 'telegram' || a.source === 'joinup-telegram';
         row.innerHTML = `
-          <span class="history-event-kind"></span>
-          <span class="history-event-time"></span>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <span class="history-event-kind"></span>
+              <span class="history-event-time"></span>
+            </div>
+            ${isTelegram ? `<button type="button" class="ghost history-event-run-btn" style="font-size: 0.75rem; padding: 2px 6px; min-height: 0;" title="Run Cursor using this message as the technical prompt">🚀 Run</button>` : ''}
+          </div>
           <div class="history-event-text"></div>
         `;
         row.querySelector('.history-event-kind').textContent = ev.kind || ev.type || 'log';
         row.querySelector('.history-event-time').textContent = formatHistoryTime(ev.at);
         row.querySelector('.history-event-text').textContent = ev.text || '';
+        
+        const runBtn = row.querySelector('.history-event-run-btn');
+        if (runBtn) {
+          runBtn.addEventListener('click', async () => {
+            try {
+              const clientId = `telegram-${a.actorId || ''}`;
+              els.historyDetail.insertAdjacentHTML('afterbegin', '<p class="history-alert">Starting task from message...</p>');
+              const res = await fetch(api('/api/gui/joinup/dispatch'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, technicalPrompt: ev.text })
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Failed to start');
+              alert('Task started successfully from this message!');
+              void loadHistoryList();
+            } catch(err) {
+              alert('Start error: ' + err.message);
+            }
+          });
+        }
+        
         timeline.appendChild(row);
       }
     }

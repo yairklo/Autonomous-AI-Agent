@@ -234,6 +234,15 @@ export class JoinUpProductAgent {
   }
 
   /**
+   * Forces the session to adopt a new technical prompt (e.g. from a specific historical message)
+   * by wrapping it with the standard Cursor instructions.
+   */
+  forceSetPendingTask(userId, summary) {
+    this.store.update(userId, { pendingTechnicalPrompt: '' });
+    return this._ensureTechnicalPrompt(userId, summary);
+  }
+
+  /**
    * Ensure a pending technical prompt exists before Cursor dispatch.
    * Synthesizes one from the product summary + recent history when the LLM forgot READY_TO_BUILD.
    */

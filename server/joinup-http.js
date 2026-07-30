@@ -139,10 +139,14 @@ export function mountJoinUpRoutes(app) {
 async function triggerDispatch(clientId, req, res) {
   const userId = userIdFromClientId(clientId);
   const { agent, store, joinUpRoot } = getJoinUpService();
+  
+  const customPrompt = String(req.body?.technicalPrompt || '').trim();
+  if (customPrompt) {
+    agent.forceSetPendingTask(userId, customPrompt);
+  }
+  
   const session = store.get(userId);
-  const technicalPrompt = String(
-    req.body?.technicalPrompt || session.pendingTechnicalPrompt || ''
-  ).trim();
+  const technicalPrompt = String(session.pendingTechnicalPrompt || '').trim();
   if (!technicalPrompt) {
     return res.status(409).json({
       error: 'No pending technical prompt — grill and confirm first',
