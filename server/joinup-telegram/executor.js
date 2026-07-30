@@ -193,7 +193,7 @@ export class JoinUpCursorExecutor {
 /**
  * Human-readable completion note for Telegram (non-technical).
  * Includes Vercel preview + Render staging when available.
- * @param {{ ok?: boolean, projectPath?: string, error?: string, vercel?: object, staging?: object }} result
+ * @param {{ ok?: boolean, projectPath?: string, error?: string, vercel?: object, staging?: object, taskSummary?: string }} result
  */
 export function formatCompletionMessage(result) {
   const vercelLines = formatVercelTelegramLines(result?.vercel);
@@ -203,6 +203,11 @@ export function formatCompletionMessage(result) {
     ...(stagingLines.length && vercelLines.length ? [''] : []),
     ...stagingLines,
   ];
+  
+  const taskText = result?.taskSummary 
+    ? `\n\nהמשימה שבוצעה:\n${result.taskSummary}` 
+    : '';
+
   if (result?.ok) {
     return [
       'מוכן — העדכון ל-joinUp נבנה ועלה.',
@@ -210,7 +215,7 @@ export function formatCompletionMessage(result) {
       ...middle,
       '',
       'אפשר לפתוח את הקישור ולבדוק את השינוי. אם משהו לא מרגיש נכון — כתבו לי.',
-    ].join('\n');
+    ].join('\n') + taskText;
   }
   return [
     'משהו השתבש בבנייה של joinUp.',
@@ -221,7 +226,7 @@ export function formatCompletionMessage(result) {
     result?.error ? `הערה: ${String(result.error).slice(0, 200)}` : '',
   ]
     .filter(Boolean)
-    .join('\n');
+    .join('\n') + taskText;
 }
 
 /**

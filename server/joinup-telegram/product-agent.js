@@ -360,6 +360,8 @@ export class JoinUpProductAgent {
       };
     }
 
+    const taskSummary = session.pendingSpecSummary || technicalPrompt.slice(0, 300) + (technicalPrompt.length > 300 ? '...' : '');
+
     this.store.update(userId, { phase: 'executing' });
     this.onLog(`[joinup-telegram] executing for user=${userId}`);
 
@@ -387,6 +389,7 @@ export class JoinUpProductAgent {
           ok: true,
           vercel: execResult?.vercel,
           staging: execResult?.staging,
+          taskSummary,
         }),
         phase: 'completed',
         dispatched: true,
@@ -408,6 +411,7 @@ export class JoinUpProductAgent {
             skipped: true,
             reason: 'execute_failed',
           },
+          taskSummary,
         }),
         phase: 'awaiting_confirmation',
         dispatched: false,

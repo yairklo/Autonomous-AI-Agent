@@ -180,6 +180,8 @@ async function triggerDispatch(clientId, req, res) {
     joinUpRoot,
   });
 
+  const notifyTelegram = Boolean(req.body?.notifyTelegram);
+
   setImmediate(() => {
     void (async () => {
       try {
@@ -195,6 +197,14 @@ async function triggerDispatch(clientId, req, res) {
           phase: execResult?.phase,
         });
         endRun(runId, { ok, text: reply });
+        
+        if (notifyTelegram && process.env.JOINUP_TELEGRAM_BOT_TOKEN) {
+          fetch(`https://api.telegram.org/bot${process.env.JOINUP_TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: userId, text: reply })
+          }).catch(e => console.error('[joinup-http] telegram notify error:', e.message));
+        }
       } catch (err) {
         const msg = err.message || String(err);
         console.error('[joinup-http] background dispatch failed:', msg);
@@ -214,6 +224,14 @@ async function triggerDispatch(clientId, req, res) {
           /* ignore */
         }
         endRun(runId, { ok: false, text: reply });
+        
+        if (notifyTelegram && process.env.JOINUP_TELEGRAM_BOT_TOKEN) {
+          fetch(`https://api.telegram.org/bot${process.env.JOINUP_TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: userId, text: reply })
+          }).catch(e => console.error('[joinup-http] telegram notify error:', e.message));
+        }
       }
     })();
   });
