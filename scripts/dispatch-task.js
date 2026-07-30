@@ -185,9 +185,72 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
   process.exit(0);
 }
 
-const cursorLaunch = resolveCursorLaunch();
-console.log(`Running headless Cursor agent in: ${resolvedPath}`);
-console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
+let cursorLaunch = resolveCursorLaunch();
+if (requestedMode === 'claude') {
+  ensureGraphCache(resolvedPath);
+  console.log(`Running Claude Planner (claude-3-5-sonnet)...`);
+  
+  const plannerLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
+  const plannerPrompt = `Read .claude/rules/L1_architecture.md. Output ONLY a valid JSON array of tasks to plan.json based on this task: ${taskDescription}`;
+  
+  try {
+    await runCursorAgent(plannerLaunch, resolvedPath, plannerPrompt);
+  } catch (err) {
+    console.error(`✗ Claude Planner failed: ${err.message}`);
+    process.exit(1);
+  }
+
+  let plan;
+  try {
+    plan = JSON.parse(fs.readFileSync(path.join(resolvedPath, 'plan.json'), 'utf8'));
+    console.log(`[dispatch] Claude Planner generated ${plan.length} sub-tasks.`);
+  } catch (err) {
+    console.error(`✗ Failed to parse plan.json from Claude Planner`);
+    process.exit(1);
+  }
+
+  let haikuLaunch = resolveClaudeLaunch('claude-3-5-haiku-20241022');
+  
+  for (const step of plan) {
+    console.log(`[dispatch] Executing step ${step.id}...`);
+    const stepPrompt = `Read .claude/rules/L2_execution.md. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}`;
+    
+    let stepSuccess = false;
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        await runCursorAgent(haikuLaunch, resolvedPath, stepPrompt);
+      } catch (err) {
+        console.warn(`✗ Step ${step.id} execution error: ${err.message}`);
+      }
+      
+      const gateResult = runQualityGates(resolvedPath, { onLog: console.log });
+      if (gateResult.ok) {
+        stepSuccess = true;
+        break;
+      }
+      console.warn(`[dispatch] Quality gates failed for step ${step.id}, retry ${retry+1}/3`);
+    }
+
+    if (!stepSuccess) {
+      console.error(`[dispatch] Nuclear Escalation for step ${step.id}! Rolling back and escalating to Sonnet.`);
+      execSync('git reset --hard', { cwd: resolvedPath, stdio: 'ignore' });
+      const escalateLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
+      const escalatePrompt = `Read .claude/rules/L2_execution.md. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}`;
+      await runCursorAgent(escalateLaunch, resolvedPath, escalatePrompt);
+      
+      const escalateGates = runQualityGates(resolvedPath, { onLog: console.log });
+      if (!escalateGates.ok) {
+        console.error(`✗ Escalation failed. Halting pipeline.`);
+        process.exit(1);
+      }
+    }
+  }
+
+  console.log('✓ Claude execution completed. Falling through to final pushes.');
+  cursorLaunch = resolveClaudeLaunch('claude-3-5-haiku'); 
+} else {
+  console.log(`Running headless Cursor agent in: ${resolvedPath}`);
+  console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
 
 fs.writeFileSync(
   runLogPath,
@@ -219,6 +282,7 @@ try {
   console.warn(
     '[dispatch] Continuing to local quality-gate / fix loop (agent may have already committed).'
   );
+}
 }
 
 // Re-assert prompt files exist for E2E (Cursor sometimes removes them).
@@ -350,7 +414,7 @@ function applyRegistryPolicyForPath(cwd) {
 
 function resolveClaudeLaunch(model) {
   return {
-    bin: 'npx',
+    bin: process.platform === 'win32' ? 'npx.cmd' : 'npx',
     display: 'claude code',
     kind: 'cmd',
     buildArgs: (prompt, cwd) => [
@@ -443,7 +507,7 @@ Use Graphify (.graph-context.xml) for high-level structure and ast-grep for targ
   }
 }
 
-let lastGraphKey = '';
+var lastGraphKey = '';
 function ensureGraphCache(cwd) {
   const currentKey = getGraphCacheKey(cwd);
   if (currentKey !== lastGraphKey) {
