@@ -396,10 +396,10 @@ You are the Planner (Claude 3.5 Sonnet). Your goal is to analyze the user's task
 2. **Layer Isolation Rule:** Never mix Database schema changes and UI/Frontend edits in the same sub-task. Separate them into distinct atomic steps.
 
 ## Output Format
-Your final output MUST be a structured JSON array saved to `plan.json` in the workspace root. Do NOT execute the tasks yourself.
+Your final output MUST be a structured JSON array saved to \`plan.json\` in the workspace root. Do NOT execute the tasks yourself.
 
 Format:
-```json
+\`\`\`json
 [
   {
     "id": "STEP_1",
@@ -407,7 +407,7 @@ Format:
     "instruction": "Add the new column status to the Users table."
   }
 ]
-````, 'utf8');
+\`\`\``, 'utf8');
   }
 
   if (!fs.existsSync(l2Path)) {
