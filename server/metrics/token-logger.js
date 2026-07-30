@@ -6,6 +6,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { Langfuse } from 'langfuse';
+
+let langfuseClient = null;
+if (process.env.LANGFUSE_SECRET_KEY && process.env.LANGFUSE_PUBLIC_KEY) {
+  langfuseClient = new Langfuse({
+    secretKey: process.env.LANGFUSE_SECRET_KEY,
+    publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+    baseUrl: process.env.LANGFUSE_HOST || process.env.LANGFUSE_BASE_URL || "https://cloud.langfuse.com"
+  });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -147,6 +157,36 @@ export function appendTokenUsage(entry, { filePath, env = process.env } = {}) {
       durationMs: Number(entry.durationMs || 0) || 0,
       source: String(entry.source || 'unknown'),
     };
+
+    if (langfuseClient) {
+      try {
+        const trace = langfuseClient.trace({
+          id: row.runId,
+          name: row.source,
+          sessionId: row.runId,
+          tags: [row.provider, row.model || 'unknown'],
+          input: entry.taskText,
+          output: entry.outputText,
+        });
+
+        trace.generation({
+          name: "agent-execution",
+          model: row.model || row.provider,
+          input: entry.taskText,
+          output: entry.outputText,
+          usage: {
+            input: row.inputTokens,
+            output: row.outputTokens,
+            total: row.totalTokens
+          },
+          startTime: new Date(Date.now() - row.durationMs),
+          endTime: new Date(),
+        });
+        langfuseClient.flushAsync().catch(() => {});
+      } catch (err) {
+        console.warn('[token-logger] Langfuse trace failed:', err.message);
+      }
+    }
 
     const logPath = filePath || defaultLogPath(env);
     fs.mkdirSync(path.dirname(logPath), { recursive: true });

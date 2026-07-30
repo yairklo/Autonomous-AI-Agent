@@ -345,6 +345,8 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
           durationMs: Date.now() - dispatchStartedAt,
           source: 'mcp_dispatch',
           runId: activeRunId,
+          taskText: task || '',
+          outputText: stdout || stderr || (ok ? 'Success' : 'Failed'),
         });
       } catch (err) {
         log(`[cli-auth] token log skipped: ${err.message}`);
