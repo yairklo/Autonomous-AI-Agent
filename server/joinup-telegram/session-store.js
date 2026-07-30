@@ -162,14 +162,15 @@ export function claimsSendingToBuild(text) {
 }
 
 /**
- * Detect explicit cancel / start over.
+ * Detect explicit cancel / start over commands.
+ * Used as a fast-path bypass for LLM intent classification.
  * @param {string} text
  */
 export function isCancelOrReset(text) {
   const t = String(text || '').trim().toLowerCase();
-  return /^(cancel|reset|start over|nevermind|never mind|stop)\b/i.test(t) ||
-    /^(בטל|איפוס|התחל מחדש|עצור)$/i.test(t);
+  return t === '/stop' || t === '/cancel' || t === '/reset';
 }
+
 
 /**
  * Extract READY_TO_BUILD payload from agent reply, if present.

@@ -43,6 +43,7 @@ export class JoinUpProductAgent {
         : { provider: 'unknown', model: 'unknown' };
     this.llmProvider = info.provider;
     this.llmModel = info.model;
+    this.activeDispatches = new Map();
     this.onLog(
       `[joinup-telegram] product agent llm=${this.llmProvider}/${this.llmModel} mock=${this.mock}`
     );
@@ -58,6 +59,13 @@ export class JoinUpProductAgent {
    * @returns {Promise<{ reply: string, phase: string, dispatched?: boolean, needsDispatch?: boolean, pendingBuild?: boolean }>}
    */
   async handleMessage({ userId, text, signal, deferDispatch = false }) {
+    const sessionRaw = this.store.get(userId);
+    const lastUpdate = new Date(sessionRaw.updatedAt || 0).getTime();
+    if (Date.now() - lastUpdate > 12 * 60 * 60 * 1000) {
+      this.onLog(`[joinup-telegram] session expired for ${userId}, resetting`);
+      this.resetUser(userId);
+    }
+
     const cleaned = String(text || '').trim();
     if (!cleaned) {
       return {
@@ -67,17 +75,29 @@ export class JoinUpProductAgent {
       };
     }
 
-    if (isCancelOrReset(cleaned)) {
-      this.claude.reset(this.clientIdFor(userId));
-      this.store.reset(userId);
-      this.store.update(userId, {
-        phase: 'idle',
-        pendingTechnicalPrompt: '',
-        pendingSpecSummary: '',
-      });
+    // 1. Fast path: explicit hard-reset bypass (/stop, /cancel, /reset)
+    let isStop = isCancelOrReset(cleaned);
+    
+    // 2. LLM Intent Classification (if not fast-path)
+    if (!isStop) {
+      const intent = await this._classifyIntent(cleaned, signal);
+      if (intent === 'TASK_COMPLETED_OR_CANCELLED') {
+        isStop = true;
+      }
+    }
+
+    if (isStop) {
+      // Actively kill running child process if any
+      const controller = this.activeDispatches.get(String(userId));
+      if (controller) {
+        this.onLog(`[joinup-telegram] Aborting active dispatch for user=${userId}`);
+        controller.abort();
+        this.activeDispatches.delete(String(userId));
+      }
+
+      this.resetUser(userId);
       return {
-        reply:
-          'Okay — I cleared our conversation. Tell me a new joinUp idea whenever you are ready.',
+        reply: 'מעולה! המשימה נעצרה/הסתיימה. ניקיתי את ההיסטוריה ואני מוכן לרעיון הבא שלך.',
         phase: 'idle',
         pendingBuild: false,
       };
@@ -332,9 +352,16 @@ export class JoinUpProductAgent {
     this.store.update(userId, { phase: 'executing' });
     this.onLog(`[joinup-telegram] executing for user=${userId}`);
 
+    const controller = new AbortController();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', () => controller.abort());
+    }
+    this.activeDispatches.set(String(userId), controller);
+
     try {
       const execResult = await this.executor.execute(technicalPrompt, {
-        signal,
+        signal: controller.signal,
         onLog: this.onLog,
       });
       this.store.update(userId, {
@@ -374,6 +401,45 @@ export class JoinUpProductAgent {
         phase: 'awaiting_confirmation',
         dispatched: false,
       };
+    } finally {
+      this.activeDispatches.delete(String(userId));
     }
+  }
+
+  async _classifyIntent(text, signal) {
+    if (this.mock) {
+      const t = text.toLowerCase();
+      if (t === '/stop' || t === '/cancel' || t === 'done') return 'TASK_COMPLETED_OR_CANCELLED';
+      if (t.includes('bug') || t.includes('fix')) return 'NEW_TASK';
+      return 'GENERAL_CONVERSATION';
+    }
+
+    const prompt = `Classify the following user message into exactly one of these intents:
+TASK_COMPLETED_OR_CANCELLED (user indicates the feature/bug is resolved, expresses satisfaction, or explicitly asks to stop/cancel)
+NEW_TASK (a new feature request, bug fix, or code modification)
+GENERAL_CONVERSATION (clarifications, questions, or general chat)
+
+Message: "${text}"
+
+Reply with ONLY the intent name (e.g. TASK_COMPLETED_OR_CANCELLED). Do not add any other text.`;
+
+    const clientId = `intent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let result = '';
+    
+    try {
+      for await (const event of this.claude.ask(clientId, prompt, { signal })) {
+        if (event.type === 'text' && event.text) result += event.text;
+      }
+    } catch (err) {
+      this.onLog(`[joinup-telegram] intent classification failed: ${err.message}`);
+      return 'GENERAL_CONVERSATION';
+    } finally {
+      this.claude.reset(clientId);
+    }
+    
+    const intent = result.trim().toUpperCase();
+    if (intent.includes('TASK_COMPLETED_OR_CANCELLED')) return 'TASK_COMPLETED_OR_CANCELLED';
+    if (intent.includes('NEW_TASK')) return 'NEW_TASK';
+    return 'GENERAL_CONVERSATION';
   }
 }
