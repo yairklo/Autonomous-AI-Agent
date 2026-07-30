@@ -1,0 +1,14 @@
+# Cursor Task Execution Instruction
+{{task}}
+
+# Cursor Agent Rules
+- You MUST read PROMPT.md, AGENTS.md, and .cursor/rules/ immediately.
+- Create and switch to a new git branch before editing code
+- Run in non-interactive/auto-approve mode to execute the task fully. Do NOT prompt for permission on file edits or terminal commands.
+- ALWAYS run local quality gates
+- Commit and push the feature branch when done.
+
+# Agent memory
+## Always
+- Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/.
+- Run local production build/tests after code changes; fix until green.

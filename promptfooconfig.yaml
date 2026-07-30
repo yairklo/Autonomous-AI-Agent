@@ -1,0 +1,42 @@
+description: "Monolithic vs L1/L2 Architecture Evaluation"
+
+providers:
+  - id: "exec:node promptfoo_exec.js"
+    config:
+      temperature: 0.0
+
+prompts:
+  - "file://prompt_monolithic.txt"
+  - "file://prompt_l1.txt"
+
+tests:
+  - description: "Add database column and update UI"
+    vars:
+      task: "Add a 'status' column to the Users table and display it in the UserList component."
+    assert:
+      - type: javascript
+        value: |
+          if (context.prompt.id.includes('prompt_l1')) {
+            try {
+              const json = JSON.parse(output);
+              return Array.isArray(json) && json.length >= 2;
+            } catch (e) {
+              return false;
+            }
+          }
+          return true; // Monolithic will just output text, which is fine for token counting
+  - description: "Complex refactor with auth"
+    vars:
+      task: "Migrate the login endpoint to use the new Clerk SDK and update the frontend login form to handle the new response format."
+    assert:
+      - type: javascript
+        value: |
+          if (context.prompt.id.includes('prompt_l1')) {
+            try {
+              const json = JSON.parse(output);
+              return Array.isArray(json) && json.some(step => step.instruction.includes('Clerk'));
+            } catch (e) {
+              return false;
+            }
+          }
+          return true;

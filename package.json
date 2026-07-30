@@ -9,6 +9,7 @@
     "start": "node scripts/start-with-bootstrap.js",
     "start:joinup-telegram": "node scripts/start-joinup-telegram.js",
     "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
+    "build:graph": "repomix --output .graph-context.xml && graphifyy --output .graph-context-py.json",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",
@@ -66,6 +67,7 @@
     "whatsapp-web.js": "^1.31.0"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3"
+    "cross-env": "^7.0.3",
+    "promptfoo": "^0.121.19"
   }
 }

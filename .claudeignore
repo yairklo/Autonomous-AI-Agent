@@ -1,0 +1,6 @@
+.wwebjs_auth/
+.wwebjs_cache/
+sessions.json
+.graph-context.xml
+node_modules/
+.git/
