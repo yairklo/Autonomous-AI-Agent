@@ -382,8 +382,8 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
     const dispatchEnv = applyWorkspaceDispatchPolicy(ws, {
       env: {
         ...process.env,
-        // Prefer a reliable headless runner for automation; Claude/Cursor CLI still tried first in auto mode.
-        DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'auto',
+        // Prefer Claude CLI for automation, previously was 'auto' (which defaulted to Cursor).
+        DISPATCH_AGENT: process.env.DISPATCH_AGENT || 'claude',
         DISPATCH_RUN_ID: activeRunId,
       },
       // JoinUp (and any workspace with hard merge policy) must win over ambient env.

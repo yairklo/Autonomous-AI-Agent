@@ -457,6 +457,7 @@ function ensureGraphCache(cwd) {
   }
 }
 
+
 function resolveCursorLaunch() {
   const override = process.env.CURSOR_BIN?.trim();
   const localDir = path.join(process.env.LOCALAPPDATA || '', 'cursor-agent');
