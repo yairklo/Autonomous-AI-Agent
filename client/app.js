@@ -1014,6 +1014,10 @@ async function loadHistoryDetail(activityId) {
     head.innerHTML = `
       <h3 class="history-detail-title"></h3>
       <p class="history-detail-meta"></p>
+      <div class="history-detail-actions" style="margin-top:10px; display:none; gap:8px;">
+        <button type="button" class="send" id="guiStartTask">🚀 Start Cursor</button>
+        <button type="button" class="ghost danger" id="guiStopTask">🛑 Stop Cursor</button>
+      </div>
       <div class="history-timeline"></div>
     `;
     head.querySelector('.history-detail-title').textContent = a.title || activityId;
@@ -1028,6 +1032,46 @@ async function loadHistoryDetail(activityId) {
     ]
       .filter(Boolean)
       .join(' · ');
+      
+    if (a.platform === 'telegram' || a.source === 'joinup-telegram') {
+      const actionsDiv = head.querySelector('.history-detail-actions');
+      actionsDiv.style.display = 'flex';
+      
+      const clientId = \`telegram-\${a.actorId || ''}\`;
+      head.querySelector('#guiStartTask').addEventListener('click', async () => {
+        try {
+          els.historyDetail.insertAdjacentHTML('afterbegin', '<p class="history-alert">Starting task...</p>');
+          const res = await fetch(api('/api/gui/joinup/dispatch'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Failed to start');
+          alert('Task started successfully!');
+          void loadHistoryList();
+        } catch(err) {
+          alert('Start error: ' + err.message);
+        }
+      });
+      
+      head.querySelector('#guiStopTask').addEventListener('click', async () => {
+        try {
+          const res = await fetch(api('/api/gui/joinup/stop'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Failed to stop');
+          alert('Task stopped successfully!');
+          void loadHistoryList();
+        } catch(err) {
+          alert('Stop error: ' + err.message);
+        }
+      });
+    }
+
     const timeline = head.querySelector('.history-timeline');
     if (!events.length) {
       timeline.innerHTML = '<p class="history-empty">No events in this activity.</p>';

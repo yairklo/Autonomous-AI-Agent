@@ -53,6 +53,33 @@ export function requireJoinUpBotSecret(req, res, next) {
  * @param {import('express').Express} app
  */
 export function mountJoinUpRoutes(app) {
+  // GUI-facing routes (no secret required, expected to be called from the local web GUI)
+  app.post('/api/gui/joinup/dispatch', async (req, res) => {
+    try {
+      const clientId = String(req.body?.clientId || '').trim();
+      if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+      await triggerDispatch(clientId, req, res);
+    } catch (err) {
+      console.error('[joinup-http] gui dispatch error:', err);
+      if (!res.headersSent) res.status(500).json({ error: err.message || String(err) });
+    }
+  });
+
+  app.post('/api/gui/joinup/stop', async (req, res) => {
+    try {
+      const clientId = String(req.body?.clientId || '').trim();
+      if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+      const userId = userIdFromClientId(clientId);
+      const { agent } = getJoinUpService();
+      agent.stopExecution(userId);
+      res.json({ ok: true, status: 'stopped' });
+    } catch (err) {
+      console.error('[joinup-http] gui stop error:', err);
+      res.status(500).json({ error: err.message || String(err) });
+    }
+  });
+
+  // Telegram bot routes (protected by secret)
   app.use('/api/joinup', requireJoinUpBotSecret);
 
   app.post('/api/joinup/chat', async (req, res) => {
@@ -102,89 +129,91 @@ export function mountJoinUpRoutes(app) {
       if (!clientId) {
         return res.status(400).json({ error: 'clientId is required' });
       }
-      const userId = userIdFromClientId(clientId);
-      const { agent, store, joinUpRoot } = getJoinUpService();
-      const session = store.get(userId);
-      const technicalPrompt = String(
-        req.body?.technicalPrompt || session.pendingTechnicalPrompt || ''
-      ).trim();
-      if (!technicalPrompt) {
-        return res.status(409).json({
-          error: 'No pending technical prompt — grill and confirm first',
-        });
-      }
-
-      // Ensure store has the prompt for executePending
-      if (!session.pendingTechnicalPrompt) {
-        store.update(userId, {
-          pendingTechnicalPrompt: technicalPrompt,
-          phase: 'awaiting_confirmation',
-        });
-      }
-
-      const runId = startRun({
-        source: 'joinup-telegram',
-        project: joinUpRoot,
-        title: technicalPrompt.slice(0, 120),
-      });
-      setJoinUpRunExtras(runId, {
-        status: 'running',
-        clientId,
-        userId,
-        joinUpRoot,
-      });
-      store.update(userId, { phase: 'executing', lastRunId: runId });
-
-      res.status(202).json({
-        runId,
-        status: 'running',
-        clientId,
-        joinUpRoot,
-      });
-
-      // Background build — do not await (avoids proxy 504).
-      setImmediate(() => {
-        void (async () => {
-          try {
-            const execResult = await agent.executePending(userId);
-            const reply = execResult?.reply || '';
-            const ok = Boolean(execResult?.dispatched) || execResult?.phase === 'completed';
-            setJoinUpRunExtras(runId, {
-              status: ok ? 'completed' : 'failed',
-              ok,
-              result: reply,
-              vercelUrl: execResult?.vercelUrl || '',
-              stagingUrl: execResult?.stagingUrl || '',
-              phase: execResult?.phase,
-            });
-            endRun(runId, { ok, text: reply });
-          } catch (err) {
-            const msg = err.message || String(err);
-            console.error('[joinup-http] background dispatch failed:', msg);
-            const reply = formatCompletionMessage({
-              ok: false,
-              error: msg,
-            });
-            setJoinUpRunExtras(runId, {
-              status: 'failed',
-              ok: false,
-              result: reply,
-              error: msg,
-            });
-            try {
-              store.update(userId, { phase: 'awaiting_confirmation' });
-            } catch {
-              /* ignore */
-            }
-            endRun(runId, { ok: false, text: reply });
-          }
-        })();
-      });
+      await triggerDispatch(clientId, req, res);
     } catch (err) {
       console.error('[joinup-http] dispatch error:', err);
-      return res.status(500).json({ error: err.message || String(err) });
+      if (!res.headersSent) res.status(500).json({ error: err.message || String(err) });
     }
   });
+
+async function triggerDispatch(clientId, req, res) {
+  const userId = userIdFromClientId(clientId);
+  const { agent, store, joinUpRoot } = getJoinUpService();
+  const session = store.get(userId);
+  const technicalPrompt = String(
+    req.body?.technicalPrompt || session.pendingTechnicalPrompt || ''
+  ).trim();
+  if (!technicalPrompt) {
+    return res.status(409).json({
+      error: 'No pending technical prompt — grill and confirm first',
+    });
+  }
+
+  if (!session.pendingTechnicalPrompt) {
+    store.update(userId, {
+      pendingTechnicalPrompt: technicalPrompt,
+      phase: 'awaiting_confirmation',
+    });
+  }
+
+  const runId = startRun({
+    source: 'joinup-telegram',
+    project: joinUpRoot,
+    title: technicalPrompt.slice(0, 120),
+  });
+  setJoinUpRunExtras(runId, {
+    status: 'running',
+    clientId,
+    userId,
+    joinUpRoot,
+  });
+  store.update(userId, { phase: 'executing', lastRunId: runId });
+
+  res.status(202).json({
+    runId,
+    status: 'running',
+    clientId,
+    joinUpRoot,
+  });
+
+  setImmediate(() => {
+    void (async () => {
+      try {
+        const execResult = await agent.executePending(userId);
+        const reply = execResult?.reply || '';
+        const ok = Boolean(execResult?.dispatched) || execResult?.phase === 'completed';
+        setJoinUpRunExtras(runId, {
+          status: ok ? 'completed' : 'failed',
+          ok,
+          result: reply,
+          vercelUrl: execResult?.vercelUrl || '',
+          stagingUrl: execResult?.stagingUrl || '',
+          phase: execResult?.phase,
+        });
+        endRun(runId, { ok, text: reply });
+      } catch (err) {
+        const msg = err.message || String(err);
+        console.error('[joinup-http] background dispatch failed:', msg);
+        const reply = formatCompletionMessage({
+          ok: false,
+          error: msg,
+        });
+        setJoinUpRunExtras(runId, {
+          status: 'failed',
+          ok: false,
+          result: reply,
+          error: msg,
+        });
+        try {
+          store.update(userId, { phase: 'awaiting_confirmation' });
+        } catch {
+          /* ignore */
+        }
+        endRun(runId, { ok: false, text: reply });
+      }
+    })();
+  });
+}
 
   app.get('/api/joinup/runs/:runId', (req, res) => {
     const runId = String(req.params.runId || '').trim();

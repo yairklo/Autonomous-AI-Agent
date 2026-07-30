@@ -87,15 +87,7 @@ export class JoinUpProductAgent {
     }
 
     if (isStop) {
-      // Actively kill running child process if any
-      const controller = this.activeDispatches.get(String(userId));
-      if (controller) {
-        this.onLog(`[joinup-telegram] Aborting active dispatch for user=${userId}`);
-        controller.abort();
-        this.activeDispatches.delete(String(userId));
-      }
-
-      this.resetUser(userId);
+      this.stopExecution(userId);
       return {
         reply: 'מעולה! המשימה נעצרה/הסתיימה. ניקיתי את ההיסטוריה ואני מוכן לרעיון הבא שלך.',
         phase: 'idle',
@@ -222,6 +214,16 @@ export class JoinUpProductAgent {
       pendingSpecSummary: '',
       lastAgentReply: '',
     });
+  }
+
+  stopExecution(userId) {
+    const controller = this.activeDispatches.get(String(userId));
+    if (controller) {
+      this.onLog(`[joinup-telegram] Aborting active dispatch for user=${userId}`);
+      controller.abort();
+      this.activeDispatches.delete(String(userId));
+    }
+    this.resetUser(userId);
   }
 
   /**
