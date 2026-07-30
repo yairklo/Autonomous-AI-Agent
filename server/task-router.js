@@ -336,8 +336,8 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
       try {
         const { appendTokenUsage } = await import('./metrics/token-logger.js');
         appendTokenUsage({
-          provider: 'cursor',
-          model: 'cursor-agent',
+          provider: 'claude',
+          model: 'claude-cli',
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
@@ -356,7 +356,7 @@ export function runDispatchTask({ project, task }, { onLog, signal, runId } = {}
       // Skip live CLI probe for dry-run dispatches (tests / dry pipelines).
       if (String(process.env.DISPATCH_DRY_RUN || '').trim() !== '1') {
         const { assertCliAuthReady } = await import('./cli-auth/gate.js');
-        await assertCliAuthReady('cursor', {
+        await assertCliAuthReady('claude', {
           onLog: log,
           env: process.env,
           project,
