@@ -857,7 +857,7 @@ async function ensureLiveRunBackend() {
         state._liveRunStaleWarned = true;
         appendLiveRunEvent({
           type: 'error',
-          text: `Cannot open Cursor Live (/api/runs → HTTP ${probe.status}). Restart npm start.`,
+          text: `Cannot open Agent Live (/api/runs → HTTP ${probe.status}). Restart npm start.`,
         });
       }
       return false;
@@ -935,7 +935,7 @@ function renderHistoryList() {
   const items = state.historyItems || [];
   if (!items.length) {
     els.historyList.innerHTML =
-      '<p class="history-empty">אין עדיין היסטוריה שמורה. אחרי שיחות / Cursor יופיע כאן.</p>';
+      '<p class="history-empty">אין עדיין היסטוריה שמורה. אחרי שיחות / Agent יופיע כאן.</p>';
     return;
   }
   els.historyList.innerHTML = '';
@@ -1015,8 +1015,8 @@ async function loadHistoryDetail(activityId) {
       <h3 class="history-detail-title"></h3>
       <p class="history-detail-meta"></p>
       <div class="history-detail-actions" style="margin-top:10px; display:none; flex-wrap:wrap; gap:8px; align-items:center;">
-        <button type="button" class="send" id="guiStartTask">🚀 Start Cursor</button>
-        <button type="button" class="ghost danger" id="guiStopTask">🛑 Stop Cursor</button>
+        <button type="button" class="send" id="guiStartTask">🚀 Start Agent</button>
+        <button type="button" class="ghost danger" id="guiStopTask">🛑 Stop Agent</button>
         <label style="font-size:0.8rem; display:flex; align-items:center; gap:4px; margin-left:auto;">
           <input type="checkbox" id="guiNotifyTelegram" checked>
           <span>עדכן בטלגרם בסיום</span>
@@ -1091,7 +1091,7 @@ async function loadHistoryDetail(activityId) {
               <span class="history-event-kind"></span>
               <span class="history-event-time"></span>
             </div>
-            ${isTelegram ? `<div style="display:flex; align-items:center; gap:8px;"><label style="font-size:0.75rem;"><input type="checkbox" class="inline-notify-telegram" checked> עדכן</label><button type="button" class="ghost history-event-run-btn" style="font-size: 0.75rem; padding: 2px 6px; min-height: 0;" title="Run Cursor using this message as the technical prompt">🚀 Run</button></div>` : ''}
+            ${isTelegram ? `<div style="display:flex; align-items:center; gap:8px;"><label style="font-size:0.75rem;"><input type="checkbox" class="inline-notify-telegram" checked> עדכן</label><button type="button" class="ghost history-event-run-btn" style="font-size: 0.75rem; padding: 2px 6px; min-height: 0;" title="Run Agent using this message as the technical prompt">🚀 Run Agent</button></div>` : ''}
           </div>
           <div class="history-event-text"></div>
         `;
