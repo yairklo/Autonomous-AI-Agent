@@ -1037,7 +1037,7 @@ async function loadHistoryDetail(activityId) {
       const actionsDiv = head.querySelector('.history-detail-actions');
       actionsDiv.style.display = 'flex';
       
-      const clientId = \`telegram-\${a.actorId || ''}\`;
+      const clientId = `telegram-${a.actorId || ''}`;
       head.querySelector('#guiStartTask').addEventListener('click', async () => {
         try {
           els.historyDetail.insertAdjacentHTML('afterbegin', '<p class="history-alert">Starting task...</p>');
