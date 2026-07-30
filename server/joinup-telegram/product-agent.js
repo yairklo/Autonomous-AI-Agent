@@ -257,6 +257,17 @@ export class JoinUpProductAgent {
     const summary = String(cleanReply || session.lastAgentReply || '').slice(0, 1800);
     if (!summary && !history) return null;
 
+    // If it already looks like a fully formed technical prompt from a previous run, use it directly without re-wrapping
+    if (summary.includes('Product-confirmed joinUp fix from Telegram collaborator.')) {
+      this.store.update(userId, {
+        phase: 'awaiting_confirmation',
+        pendingTechnicalPrompt: summary,
+        pendingSpecSummary: summary,
+        lastAgentReply: summary,
+      });
+      return summary;
+    }
+
     const technicalPrompt = [
       'Product-confirmed joinUp fix from Telegram collaborator.',
       'Stay strictly inside the joinUp repository. Do not touch other projects.',
