@@ -69,7 +69,7 @@ export function parseDeployIdFromHookBody(body) {
  * @param {string} projectRoot
  * @param {string} [sinceRef] e.g. origin/Dev~1
  */
-export function detectServerCodeChanges(projectRoot, sinceRef = 'HEAD~5') {
+export function detectServerCodeChanges(projectRoot, sinceRef = 'HEAD~1') {
   try {
     const root = path.resolve(projectRoot);
     if (!fs.existsSync(path.join(root, '.git'))) return true;

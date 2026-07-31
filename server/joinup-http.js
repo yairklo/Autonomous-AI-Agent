@@ -180,7 +180,7 @@ async function triggerDispatch(clientId, req, res) {
     joinUpRoot,
   });
 
-  const notifyTelegram = Boolean(req.body?.notifyTelegram);
+  const notifyTelegram = req.body?.notifyTelegram !== false;
 
   setImmediate(() => {
     void (async () => {
