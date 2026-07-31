@@ -14,7 +14,7 @@ import {
   applyWorkspaceDispatchPolicy,
   findWorkspaceByRoot,
 } from '../server/workspaces.js';
-import { buildAgentEnv } from '../server/cli-auth/cursor-env.js';
+import { buildCursorAgentEnv as buildAgentEnv } from '../server/cli-auth/cursor-env.js';
 import {
   extractAuthUrl,
   looksLikeAuthFailure,
