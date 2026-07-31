@@ -191,7 +191,7 @@ if (requestedMode === 'claude') {
   console.log(`Running Claude Planner (claude-3-5-sonnet)...`);
   
   const plannerLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
-  const plannerPrompt = `Read .claude/rules/L1_architecture.md. Output ONLY a valid JSON array of tasks to plan.json based on this task: ${taskDescription}`;
+  const plannerPrompt = `Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/. Create a file named plan.json containing ONLY a valid JSON array of tasks to implement this feature: ${taskDescription}. You MUST write to plan.json using your file tools. Do not ask for confirmation.`;
   
   try {
     await runCursorAgent(plannerLaunch, resolvedPath, plannerPrompt);
@@ -213,7 +213,7 @@ if (requestedMode === 'claude') {
   
   for (const step of plan) {
     console.log(`[dispatch] Executing step ${step.id}...`);
-    const stepPrompt = `Read .claude/rules/L2_execution.md. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}`;
+    const stepPrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}. Complete the task and do not ask for confirmation.`;
     
     let stepSuccess = false;
     for (let retry = 0; retry < 3; retry++) {
@@ -235,7 +235,7 @@ if (requestedMode === 'claude') {
       console.error(`[dispatch] Nuclear Escalation for step ${step.id}! Rolling back and escalating to Sonnet.`);
       execSync('git reset --hard', { cwd: resolvedPath, stdio: 'ignore' });
       const escalateLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
-      const escalatePrompt = `Read .claude/rules/L2_execution.md. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}`;
+      const escalatePrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}. Complete the task and do not ask for confirmation.`;
       await runCursorAgent(escalateLaunch, resolvedPath, escalatePrompt);
       
       const escalateGates = runQualityGates(resolvedPath, { onLog: console.log });
