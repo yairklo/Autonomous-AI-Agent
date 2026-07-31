@@ -749,8 +749,7 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     const childEnv = buildAgentEnv(env);
     console.log(
       `[spawn] HOME=${childEnv.HOME || '(unset)'} ` +
-        `CURSOR_API_KEY=${childEnv.CURSOR_API_KEY ? '(set)' : '(unset)'} ` +
-        `agentDir=${path.join(childEnv.HOME || '', '.cursor')}`
+        `agentDir=${path.join(childEnv.HOME || '', '.claude')}`
     );
     const child = spawn(command, spawnArgs, {
       cwd,
