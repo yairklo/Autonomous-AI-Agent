@@ -513,7 +513,7 @@ function ensureGraphCache(cwd) {
   if (currentKey !== lastGraphKey) {
     console.log('[dispatch] Building fresh Graphify/AST-grep index...');
     try {
-      execSync('npm run build:graph', { cwd, stdio: 'inherit' });
+      execSync('npm run build:graph', { cwd, stdio: 'ignore' });
     } catch (e) {
       console.warn('[dispatch] Warning: build:graph failed or missing.');
     }
