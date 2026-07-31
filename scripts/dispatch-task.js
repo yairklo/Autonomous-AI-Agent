@@ -421,6 +421,8 @@ function resolveClaudeLaunch(model) {
       '-y',
       '@anthropic-ai/claude-code',
       '--print',
+      '--permission-mode',
+      'bypassPermissions',
       prompt
     ] // model passing might require specific flags or env vars for claude CLI
   };
