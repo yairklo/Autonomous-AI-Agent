@@ -190,7 +190,8 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
   console.log(`Running Claude Planner (claude-3-5-sonnet)...`);
   
   const plannerLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
-  const plannerPrompt = `Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/. Create a file named plan.json containing ONLY a valid JSON array of tasks to implement this feature: ${taskDescription}. You MUST write to plan.json using your file tools. Do not ask for confirmation.`;
+  const planFileName = `plan-${Date.now()}.json`;
+  const plannerPrompt = `Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/. Create a file named ${planFileName} containing ONLY a valid JSON array of tasks to implement this feature: ${taskDescription}. You MUST write to ${planFileName} using your file tools. Do not ask for confirmation.`;
   
   try {
     await runAgentProcess(plannerLaunch, resolvedPath, plannerPrompt);
@@ -201,19 +202,20 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
 
   let plan;
   try {
-    plan = JSON.parse(fs.readFileSync(path.join(resolvedPath, 'plan.json'), 'utf8'));
+    plan = JSON.parse(fs.readFileSync(path.join(resolvedPath, planFileName), 'utf8'));
     console.log(`[dispatch] Claude Planner generated ${plan.length} sub-tasks.`);
   } catch (err) {
-    console.error(`✗ Failed to parse plan.json from Claude Planner`);
+    console.error(`✗ Failed to parse ${planFileName} from Claude Planner`);
     process.exit(1);
   }
 
   let haikuLaunch = resolveClaudeLaunch('claude-3-5-haiku-20241022');
   
   for (const step of plan) {
-    console.log(`[dispatch] Executing step ${step.id}...`);
+    console.log(`[dispatch] Executing step ${step.id || 'unknown'}...`);
     const filesStr = (step.target_files || []).join(', ');
-    const stepPrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${step.instruction}" on files: ${filesStr}. Complete the task and do not ask for confirmation.`;
+    const instructionStr = step.instruction || step.task || step.description || 'Implement step according to plan';
+    const stepPrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${instructionStr}" on files: ${filesStr}. Complete the task and do not ask for confirmation.`;
     
     let stepSuccess = false;
     for (let retry = 0; retry < 3; retry++) {
@@ -236,7 +238,8 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
       execSync('git reset --hard', { cwd: resolvedPath, stdio: 'ignore' });
       const escalateLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
       const escalateFilesStr = (step.target_files || []).join(', ');
-      const escalatePrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${step.instruction}" on files: ${escalateFilesStr}. Complete the task and do not ask for confirmation.`;
+      const escalateInstruction = step.instruction || step.task || step.description || 'Implement step according to plan';
+      const escalatePrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${escalateInstruction}" on files: ${escalateFilesStr}. Complete the task and do not ask for confirmation.`;
       await runAgentProcess(escalateLaunch, resolvedPath, escalatePrompt);
       
       const escalateGates = runQualityGates(resolvedPath, { onLog: console.log });
