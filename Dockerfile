@@ -41,15 +41,10 @@ RUN npm install -g @anthropic-ai/claude-code
 
 ENV PATH="/root/.local/bin:${PATH}"
 ENV HOME=/root
-RUN curl -fsSL https://cursor.com/install | bash \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/agent \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/cursor-agent \
-  && ln -sf /root/.local/bin/agent /usr/local/bin/cursor \
-  && agent --version || /root/.local/bin/agent --version
 
 COPY . .
 
-RUN mkdir -p /root/.claude /root/.cursor /root/.git-config-data /root/.local/bin /workspaces \
+RUN mkdir -p /root/.claude /root/.git-config-data /root/.local/bin /workspaces \
   && mkdir -p /app/data /app/assets /app/.wwebjs_auth
 
 ENV NODE_ENV=production \
@@ -60,7 +55,6 @@ ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome \
     CLAUDE_BIN=claude \
-    CURSOR_BIN=agent \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
     NO_OPEN_BROWSER=1 \
     JOINUP_PROJECT_ROOT=/workspaces/JoinUpApp \

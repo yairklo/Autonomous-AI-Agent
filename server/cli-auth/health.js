@@ -211,74 +211,14 @@ export function classifyCursorProbeResult(result) {
  * @param {(cmd: string, args: string[], env: NodeJS.ProcessEnv) => Promise<{code:number|null,stdout:string,stderr:string,timedOut?:boolean}>} [opts.runCommand]
  * @returns {Promise<CliAuthHealthResult>}
  */
-export async function checkCursorAuth({
-  env = process.env,
-  timeoutMs = Number(env.CLI_AUTH_PROBE_TIMEOUT_MS || DEFAULT_PROBE_TIMEOUT_MS),
-  spawnImpl = spawn,
-  runCommand,
-} = {}) {
-  const started = Date.now();
-  const childEnv = buildCursorAgentEnv(env);
-
-  // Phase A short-circuit: API key path does not need browser session.
-  if (String(childEnv.CURSOR_API_KEY || '').trim()) {
-    return {
-      ok: true,
-      tool: 'cursor',
-      status: 'ok',
-      reason: 'CURSOR_API_KEY is set (skipping agent status)',
-      elapsedMs: Date.now() - started,
-    };
-  }
-
-  const candidates = resolveCursorBinCandidates(childEnv);
-  let last = /** @type {CliAuthHealthResult|null} */ (null);
-
-  for (const bin of candidates) {
-    const base = path.basename(bin).toLowerCase();
-    if (base === 'claude' || base.startsWith('claude.')) continue;
-
-    let probe;
-    if (runCommand) {
-      probe = await runCommand(bin, ['status'], childEnv);
-    } else if (/\.ps1$/i.test(bin)) {
-      probe = await runProbeCommand({
-        command: 'powershell.exe',
-        args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', bin, 'status'],
-        env: childEnv,
-        timeoutMs,
-        spawnImpl,
-      });
-    } else {
-      probe = await runProbeCommand({
-        command: bin,
-        args: ['status'],
-        env: childEnv,
-        timeoutMs,
-        spawnImpl,
-      });
-    }
-
-    const classified = classifyCursorProbeResult(probe);
-    last = {
-      ...classified,
-      tool: 'cursor',
-      elapsedMs: Date.now() - started,
-    };
-
-    if (classified.status === 'binary_missing') continue;
-    return last;
-  }
-
-  return (
-    last || {
-      ok: false,
-      tool: 'cursor',
-      status: 'binary_missing',
-      reason: 'No Cursor Agent CLI binary found',
-      elapsedMs: Date.now() - started,
-    }
-  );
+export async function checkCursorAuth(opts = {}) {
+  return {
+    ok: true,
+    tool: 'cursor',
+    status: 'ok',
+    reason: 'Cursor retired; using Claude',
+    elapsedMs: 0,
+  };
 }
 
 /**

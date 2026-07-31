@@ -14,7 +14,7 @@ import {
   applyWorkspaceDispatchPolicy,
   findWorkspaceByRoot,
 } from '../server/workspaces.js';
-import { buildCursorAgentEnv } from '../server/cli-auth/cursor-env.js';
+import { buildAgentEnv } from '../server/cli-auth/cursor-env.js';
 import {
   extractAuthUrl,
   looksLikeAuthFailure,
@@ -175,18 +175,17 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
   }
   const afterDry = captureGit(resolvedPath);
   console.log(`✓ Post-agent git: branch=${afterDry.branch} commit=${afterDry.commit}`);
-  console.log('✓ Headless agent finished (engine=cursor).');
+  console.log('✓ Headless agent finished (engine=claude).');
   fs.appendFileSync(
     runLogPath,
-    `finishedAt=${new Date().toISOString()}\nengine=cursor\nbranch=${afterDry.branch}\ncommit=${afterDry.commit}\n`,
+    `finishedAt=${new Date().toISOString()}\nengine=claude\nbranch=${afterDry.branch}\ncommit=${afterDry.commit}\n`,
     'utf8'
   );
   console.log('✓ Headless Cursor agent execution completed successfully!');
   process.exit(0);
 }
 
-let cursorLaunch = resolveCursorLaunch();
-if (requestedMode === 'claude') {
+
   ensureGraphCache(resolvedPath);
   console.log(`Running Claude Planner (claude-3-5-sonnet)...`);
   
@@ -194,7 +193,7 @@ if (requestedMode === 'claude') {
   const plannerPrompt = `Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/. Create a file named plan.json containing ONLY a valid JSON array of tasks to implement this feature: ${taskDescription}. You MUST write to plan.json using your file tools. Do not ask for confirmation.`;
   
   try {
-    await runCursorAgent(plannerLaunch, resolvedPath, plannerPrompt);
+    await runAgentProcess(plannerLaunch, resolvedPath, plannerPrompt);
   } catch (err) {
     console.error(`✗ Claude Planner failed: ${err.message}`);
     process.exit(1);
@@ -218,7 +217,7 @@ if (requestedMode === 'claude') {
     let stepSuccess = false;
     for (let retry = 0; retry < 3; retry++) {
       try {
-        await runCursorAgent(haikuLaunch, resolvedPath, stepPrompt);
+        await runAgentProcess(haikuLaunch, resolvedPath, stepPrompt);
       } catch (err) {
         console.warn(`✗ Step ${step.id} execution error: ${err.message}`);
       }
@@ -236,7 +235,7 @@ if (requestedMode === 'claude') {
       execSync('git reset --hard', { cwd: resolvedPath, stdio: 'ignore' });
       const escalateLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
       const escalatePrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${step.instruction}" on files: ${step.target_files.join(', ')}. Complete the task and do not ask for confirmation.`;
-      await runCursorAgent(escalateLaunch, resolvedPath, escalatePrompt);
+      await runAgentProcess(escalateLaunch, resolvedPath, escalatePrompt);
       
       const escalateGates = runQualityGates(resolvedPath, { onLog: console.log });
       if (!escalateGates.ok) {
@@ -247,55 +246,18 @@ if (requestedMode === 'claude') {
   }
 
   console.log('✓ Claude execution completed. Falling through to final pushes.');
-  cursorLaunch = resolveClaudeLaunch('claude-3-5-haiku'); 
-} else {
-  console.log(`Running headless Cursor agent in: ${resolvedPath}`);
-  console.log(`✓ Cursor executor resolved: ${cursorLaunch.display}`);
-
-fs.writeFileSync(
-  runLogPath,
-  [
-    `executor=${cursorLaunch.display}`,
-    `bin=${cursorLaunch.bin}`,
-    `args=${JSON.stringify(cursorLaunch.buildArgs(agentPrompt, resolvedPath))}`,
-    `startedAt=${new Date().toISOString()}`,
-    `requestedMode=${requestedMode}`,
-  ].join('\n') + '\n',
-  'utf8'
-);
-
-try {
-  await runCursorAgent(cursorLaunch, resolvedPath, agentPrompt);
-} catch (err) {
-  console.error(`✗ Cursor agent reported failure: ${err.message}`);
-  fs.appendFileSync(runLogPath, `agentError=${err.message}\n`, 'utf8');
-
-  // Never soft-continue past auth failures — that caused false success on stale commits.
-  if (err.code === 'CLI_AUTH_REQUIRED' || looksLikeAuthFailure(err.message)) {
-    console.error(
-      '[dispatch] Aborting: Cursor CLI authentication failure (no soft-continue).'
-    );
-    process.exit(1);
-  }
-
-  // Soft-continue into quality gates: agent may have committed before timeout.
-  console.warn(
-    '[dispatch] Continuing to local quality-gate / fix loop (agent may have already committed).'
-  );
-}
-}
-
+  const agentLaunch = resolveClaudeLaunch('claude-3-5-haiku'); 
 // Re-assert prompt files exist for E2E (Cursor sometimes removes them).
 if (!fs.existsSync(promptPath)) fs.writeFileSync(promptPath, promptContent, 'utf8');
 if (!fs.existsSync(cursorrulesPath)) fs.writeFileSync(cursorrulesPath, cursorrulesContent, 'utf8');
 
 let after = captureGit(resolvedPath);
 console.log(`✓ Post-agent git: branch=${after.branch} commit=${after.commit}`);
-console.log('✓ Headless agent finished (engine=cursor) — entering quality-gate loop.');
+console.log('✓ Headless agent finished (engine=claude) — entering quality-gate loop.');
 
 if (process.env.DISPATCH_SKIP_QUALITY_GATES !== '1') {
   const gateResult = await enforceQualityGatesWithFixLoop({
-    cursorLaunch,
+    agentLaunch,
     projectRoot: resolvedPath,
     featureBranchHint: branchName,
     maxFixLoops,
@@ -351,7 +313,7 @@ if (mergeTarget && process.env.DISPATCH_SKIP_MERGE !== '1') {
 after = captureGit(resolvedPath);
 fs.appendFileSync(
   runLogPath,
-  `finishedAt=${new Date().toISOString()}\nengine=cursor\nbranch=${after.branch}\ncommit=${after.commit}\n`,
+  `finishedAt=${new Date().toISOString()}\nengine=claude\nbranch=${after.branch}\ncommit=${after.commit}\n`,
   'utf8'
 );
 
@@ -360,7 +322,7 @@ fs.appendFileSync(
 if (!after.commit || after.commit === before.commit) {
   const dirty = isDirtyWorkTree(resolvedPath);
   console.error(
-    '✗ Cursor agent produced no new commit ' +
+    '✗ Agent produced no new commit ' +
       `(before=${before.commit || '(none)'} after=${after.commit || '(none)'} branch=${after.branch || '(none)'}).`
   );
   if (dirty) {
@@ -522,92 +484,7 @@ function ensureGraphCache(cwd) {
 }
 
 
-function resolveCursorLaunch() {
-  const override = process.env.CURSOR_BIN?.trim();
-  const localDir = path.join(process.env.LOCALAPPDATA || '', 'cursor-agent');
-  const localAgentPs1 = path.join(localDir, 'cursor-agent.ps1');
-  const localAgentCmd = path.join(localDir, 'cursor-agent.cmd');
-  const localAgent = path.join(localDir, 'agent.cmd');
-  const linuxLocalAgent = path.join(
-    process.env.HOME || '/root',
-    '.local',
-    'bin',
-    'agent'
-  );
-
-  const candidates = [
-    override,
-    fs.existsSync(localAgentPs1) ? localAgentPs1 : null,
-    fs.existsSync(linuxLocalAgent) ? linuxLocalAgent : null,
-    'agent',
-    'cursor-agent',
-    fs.existsSync(localAgentCmd) ? localAgentCmd : null,
-    fs.existsSync(localAgent) ? localAgent : null,
-    'cursor',
-  ].filter(Boolean);
-
-  for (const bin of candidates) {
-    const base = path.basename(bin).toLowerCase();
-    if (base === 'claude' || base.startsWith('claude.')) continue;
-
-    // Non-interactive / headless flags for Coolify + local Docker:
-    //   -p / --print   print mode (no TTY chat)
-    //   --force        auto-approve edits
-    //   --trust        trust workspace without prompt
-    const headlessArgs = (prompt, cwd) => [
-      '-p',
-      '--force',
-      '--trust',
-      '--workspace',
-      cwd,
-      prompt,
-    ];
-
-    if (base === 'cursor' || base === 'cursor.cmd' || base === 'cursor.exe') {
-      return {
-        bin,
-        display: 'cursor agent',
-        kind: 'cursor-ide',
-        buildArgs: (prompt, cwd) => [
-          'agent',
-          ...headlessArgs(prompt, cwd),
-        ],
-      };
-    }
-
-    if (base.endsWith('.ps1')) {
-      return {
-        bin,
-        display: 'cursor-agent',
-        kind: 'powershell',
-        buildArgs: headlessArgs,
-      };
-    }
-
-    // Linux Coolify / Docker: `agent` binary from cursor.com/install
-    if (base === 'agent' || base === 'cursor-agent') {
-      return {
-        bin,
-        display: 'cursor-agent',
-        kind: 'cmd',
-        buildArgs: headlessArgs,
-      };
-    }
-
-    return {
-      bin,
-      display: 'cursor-agent',
-      kind: 'cmd',
-      buildArgs: headlessArgs,
-    };
-  }
-
-  throw new Error(
-    'Cursor Agent CLI not found. Install with: curl https://cursor.com/install -fsS | bash  (Linux) or irm https://cursor.com/install?win32=true | iex (Windows). Then run: npm run auth:cli'
-  );
-}
-
-async function runCursorAgent(launch, cwd, prompt) {
+async function runAgentProcess(launch, cwd, prompt) {
   const argv = launch.buildArgs(prompt, cwd);
   console.log(`$ cursor agent -p --force --trust --workspace ${cwd} <prompt-from-PROMPT.md>`);
   console.log(`$ ${launch.bin} ${summarizeArgs(argv)}`);
@@ -689,7 +566,7 @@ function git(cwd, command, { inherit = false } = {}) {
  * After Cursor returns: run local gates; on failure, re-invoke Cursor to fix; loop.
  */
 async function enforceQualityGatesWithFixLoop({
-  cursorLaunch,
+  agentLaunch,
   projectRoot,
   featureBranchHint,
   maxFixLoops,
@@ -745,7 +622,7 @@ async function enforceQualityGatesWithFixLoop({
     ].join('\n');
 
     try {
-      await runCursorAgent(cursorLaunch, projectRoot, fixPrompt);
+      await runAgentProcess(agentLaunch, projectRoot, fixPrompt);
     } catch (err) {
       console.warn(`[dispatch] fix-loop agent error (will re-check gates): ${err.message}`);
       fs.appendFileSync(runLogPath, `fixLoopError=${err.message}\n`, 'utf8');
@@ -867,11 +744,11 @@ function run(launch, argsList, { cwd, timeoutMs = agentTimeoutMs, env = process.
     }
 
     console.log(`[spawn] ${command} ${spawnArgs.map(windowsQuote).join(' ')}`);
-    const childEnv = buildCursorAgentEnv(env);
+    const childEnv = buildAgentEnv(env);
     console.log(
       `[spawn] HOME=${childEnv.HOME || '(unset)'} ` +
         `CURSOR_API_KEY=${childEnv.CURSOR_API_KEY ? '(set)' : '(unset)'} ` +
-        `cursorDir=${path.join(childEnv.HOME || '', '.cursor')}`
+        `agentDir=${path.join(childEnv.HOME || '', '.cursor')}`
     );
     const child = spawn(command, spawnArgs, {
       cwd,
@@ -958,7 +835,7 @@ if (!looksLikeAuthFailure(chunkText) && !extractAuthUrl(chunkText) && !chunkText
   });
 }
 
-// buildCursorAgentEnv lives in server/cli-auth/cursor-env.js (shared with health gate).
+// buildAgentEnv lives in server/cli-auth/cursor-env.js (shared with health gate).
 
 function windowsQuote(arg) {
   const s = String(arg);
