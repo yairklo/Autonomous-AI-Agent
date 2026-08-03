@@ -35,11 +35,16 @@ export async function initGdriveMcp(onLog) {
         onLog?.("[mcp-gdrive] Wrote GDRIVE_TOKENS_JSON to data/gdrive-tokens.json");
       }
 
+      const credPath = path.join(dataDir, 'gdrive-credentials.json');
+      const tokenPath = path.join(dataDir, 'gdrive-tokens.json');
+
       const transport = new StdioClientTransport({
         command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
         args: ["-y", "dylancaponi/gdrive-mcp-server"],
         env: {
-          ...process.env
+          ...process.env,
+          GDRIVE_OAUTH_PATH: credPath,
+          GDRIVE_CREDENTIALS_PATH: tokenPath,
         }
       });
 
