@@ -180,6 +180,7 @@ export class GeminiSessionManager extends EventEmitter {
 
         let turnText = '';
         let functionCalls = [];
+        let allParts = [];
 
         for await (const chunk of stream) {
           if (signal?.aborted) {
@@ -189,14 +190,15 @@ export class GeminiSessionManager extends EventEmitter {
           if (chunk?.usageMetadata) {
             lastUsage = chunk.usageMetadata;
           }
-          if (chunk?.functionCalls?.length) {
+          
+          const parts = chunk?.candidates?.[0]?.content?.parts;
+          if (Array.isArray(parts)) {
+            allParts.push(...parts);
+            const fc = parts.map(p => p.functionCall).filter(Boolean);
+            if (fc.length) functionCalls.push(...fc);
+          } else if (chunk?.functionCalls?.length) {
             functionCalls.push(...chunk.functionCalls);
-          } else {
-            const parts = chunk?.candidates?.[0]?.content?.parts;
-            if (Array.isArray(parts)) {
-              const fc = parts.map(p => p.functionCall).filter(Boolean);
-              if (fc.length) functionCalls.push(...fc);
-            }
+            allParts.push(...chunk.functionCalls.map(fc => ({ functionCall: fc })));
           }
 
           const text = extractChunkText(chunk);
@@ -211,8 +213,10 @@ export class GeminiSessionManager extends EventEmitter {
           // Append the model's turn
           const modelParts = [];
           if (turnText) modelParts.push({ text: turnText });
-          for (const fc of functionCalls) {
-             modelParts.push({ functionCall: fc });
+          for (const part of allParts) {
+             if (part.functionCall || part.executableCode) {
+                 modelParts.push(part);
+             }
           }
           contents.push({ role: 'model', parts: modelParts });
 
