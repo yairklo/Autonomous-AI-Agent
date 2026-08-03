@@ -23,3 +23,10 @@ data/cli-auth-queue.json
 data/token-usage.jsonl
 .wwebjs_auth/
 .wwebjs_cache/
+
+# Google OAuth Credentials & Tokens
+data/*.json
+gdrive-credentials.json
+gdrive-tokens.json
+*.pem
+*.key

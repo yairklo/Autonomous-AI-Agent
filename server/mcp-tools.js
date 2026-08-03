@@ -11,6 +11,7 @@ import { startWhatsappJobWatcher } from './jobs/whatsapp-live.js';
 import { loadJobsConfig } from './jobs/jobs-config.js';
 import { resolveDispatchScript, runDispatchTask } from './task-router.js';
 import { scanWhatsappJobs } from './whatsapp-job-scanner.js';
+import { getGdriveTools, executeGdriveTool, initGdriveMcp } from './gdrive-mcp-client.js';
 
 /**
  * Local MCP tool registry for the voice-agent orchestration layer.
@@ -260,11 +261,12 @@ export function getMcpTool(name) {
 }
 
 export function listMcpTools() {
-  return MCP_TOOLS.map(({ name, description, inputSchema }) => ({
+  const localTools = MCP_TOOLS.map(({ name, description, inputSchema }) => ({
     name,
     description,
     inputSchema,
   }));
+  return [...localTools, ...getGdriveTools()];
 }
 
 /**
@@ -273,10 +275,17 @@ export function listMcpTools() {
  */
 export async function executeMcpTool(name, args = {}, { onLog, signal } = {}) {
   const tool = getMcpTool(name);
-  if (!tool) {
+  const isGdrive = name.startsWith('gdrive_');
+  if (!tool && !isGdrive) {
     const err = new Error(`Unknown MCP tool: ${name}`);
     err.code = 'MCP_UNKNOWN_TOOL';
     throw err;
+  }
+
+  if (isGdrive) {
+    // Ensure initialized lazily if not done at startup
+    await initGdriveMcp(onLog);
+    return executeGdriveTool(name, args, { onLog });
   }
 
   if (name === 'dispatch_coding_task') {

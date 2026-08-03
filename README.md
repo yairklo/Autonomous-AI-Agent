@@ -159,6 +159,14 @@ The MCP tool `scan_whatsapp_jobs` scores Hebrew/English hiring signals and retur
 
 Copy [.env.example](./.env.example) as a checklist (export vars in your shell; no dotenv required).
 
+## Google Drive Integration
+
+The voice agent natively supports Google Drive capabilities via the Model Context Protocol (MCP). It can autonomously detect intents (e.g., "summarize this document from Drive", "list my files") and sequentially execute Drive tools (read, write, create).
+
+1. Ensure the Google Drive setup script is authorized. Download your Google Cloud OAuth 2.0 Client ID JSON and save it at `data/gdrive-credentials.json`.
+2. Run `npm run auth:gdrive` in your terminal. This will guide you through the manual OAuth consent flow and save tokens to `data/gdrive-tokens.json` (and instruct you on `.env` variables).
+3. The agent will autonomously load these tokens via standard `.env` variables (`GDRIVE_CLIENT_ID`, `GDRIVE_CLIENT_SECRET`, `GDRIVE_REFRESH_TOKEN`) and interact with your Drive.
+
 ## Tailscale
 
 1. Install Tailscale on the PC and phone.

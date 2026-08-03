@@ -285,7 +285,9 @@ test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () =>
   );
 
   const prev = process.env.DISPATCH_TASK_SCRIPT;
+  const prevDryRun = process.env.DISPATCH_DRY_RUN;
   process.env.DISPATCH_TASK_SCRIPT = stubPath;
+  process.env.DISPATCH_DRY_RUN = '1';
   const logs = [];
   try {
     const result = await executeMcpTool(
@@ -304,6 +306,8 @@ test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () =>
   } finally {
     if (prev === undefined) delete process.env.DISPATCH_TASK_SCRIPT;
     else process.env.DISPATCH_TASK_SCRIPT = prev;
+    if (prevDryRun === undefined) delete process.env.DISPATCH_DRY_RUN;
+    else process.env.DISPATCH_DRY_RUN = prevDryRun;
     try {
       fs.unlinkSync(stubPath);
     } catch {

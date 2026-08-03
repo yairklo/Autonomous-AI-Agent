@@ -10,6 +10,26 @@ import {
   getSharedGeminiRateLimiter,
   isRateLimitError,
 } from './gemini-rate-limit.js';
+import { executeMcpTool, listMcpTools } from './mcp-tools.js';
+
+function getGeminiTools() {
+  const mcpTools = listMcpTools();
+  if (!mcpTools.length) return undefined;
+  return [{
+    functionDeclarations: mcpTools.map(t => {
+      const params = t.inputSchema ? {
+        type: 'OBJECT',
+        properties: t.inputSchema.properties || {},
+        required: t.inputSchema.required || []
+      } : { type: 'OBJECT', properties: {} };
+      return {
+        name: t.name,
+        description: t.description || t.name,
+        parameters: params
+      };
+    })
+  }];
+}
 
 /**
  * Gemini chat sessions with the same event shape as ClaudeSessionManager:
@@ -148,31 +168,85 @@ export class GeminiSessionManager extends EventEmitter {
     let fullText = '';
     let lastUsage = null;
     const startedAt = Date.now();
-    try {
-      const stream = await this.rateLimiter.schedule(
-        () => this._openStream(contents, signal),
-        { signal }
-      );
+    let maxTurns = 10;
+    let finalError = null;
 
-      for await (const chunk of stream) {
-        if (signal?.aborted) {
-          yield { type: 'error', error: 'Aborted' };
-          return;
+    try {
+      while (maxTurns-- > 0) {
+        const stream = await this.rateLimiter.schedule(
+          () => this._openStream(contents, signal),
+          { signal }
+        );
+
+        let turnText = '';
+        let functionCalls = [];
+
+        for await (const chunk of stream) {
+          if (signal?.aborted) {
+            yield { type: 'error', error: 'Aborted' };
+            return;
+          }
+          if (chunk?.usageMetadata) {
+            lastUsage = chunk.usageMetadata;
+          }
+          if (chunk?.functionCalls?.length) {
+            functionCalls.push(...chunk.functionCalls);
+          } else {
+            const parts = chunk?.candidates?.[0]?.content?.parts;
+            if (Array.isArray(parts)) {
+              const fc = parts.map(p => p.functionCall).filter(Boolean);
+              if (fc.length) functionCalls.push(...fc);
+            }
+          }
+
+          const text = extractChunkText(chunk);
+          if (text) {
+            turnText += text;
+            fullText += text;
+            yield { type: 'text', text };
+          }
         }
-        if (chunk?.usageMetadata) {
-          lastUsage = chunk.usageMetadata;
+
+        if (functionCalls.length > 0) {
+          // Append the model's turn
+          const modelParts = [];
+          if (turnText) modelParts.push({ text: turnText });
+          for (const fc of functionCalls) {
+             modelParts.push({ functionCall: fc });
+          }
+          contents.push({ role: 'model', parts: modelParts });
+
+          // Execute tools sequentially and collect responses
+          const responseParts = [];
+          for (const call of functionCalls) {
+            try {
+               const result = await executeMcpTool(call.name, call.args || {}, { onLog: console.log, signal });
+               responseParts.push({
+                 functionResponse: {
+                   name: call.name,
+                   response: { result }
+                 }
+               });
+            } catch (err) {
+               responseParts.push({
+                 functionResponse: {
+                   name: call.name,
+                   response: { error: err.message }
+                 }
+               });
+            }
+          }
+          contents.push({ role: 'user', parts: responseParts });
+          continue; // Loop to let the model react to the tool responses
         }
-        const text = extractChunkText(chunk);
-        if (text) {
-          fullText += text;
-          yield { type: 'text', text };
-        }
+        
+        break; // No function calls, we are done
       }
 
-      if (!fullText) {
+      if (!fullText && !lastUsage) {
         yield {
           type: 'error',
-          error: 'Empty response from Gemini (no text parts)',
+          error: 'Empty response from Gemini (no text parts and no function calls processed)',
         };
         return;
       }
@@ -262,6 +336,7 @@ export class GeminiSessionManager extends EventEmitter {
       config: {
         systemInstruction: this.systemPrompt,
         abortSignal: combined,
+        tools: getGeminiTools(),
       },
     });
   }
