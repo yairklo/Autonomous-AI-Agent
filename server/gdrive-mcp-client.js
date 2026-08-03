@@ -85,7 +85,8 @@ export function getGdriveTools() {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Name of the file to create' },
-          content: { type: 'string', description: 'Text content to write into the file' }
+          content: { type: 'string', description: 'Text, CSV, or HTML content to write into the file' },
+          targetMimeType: { type: 'string', description: 'Optional. Google Workspace format to convert to (e.g., application/vnd.google-apps.document, application/vnd.google-apps.spreadsheet, application/vnd.google-apps.presentation). Omit to keep as plain text.' }
         },
         required: ['name', 'content']
       },
@@ -110,6 +111,9 @@ export async function executeGdriveTool(name, args, { onLog }) {
     const client = new OAuth2Client(creds.installed?.client_id || creds.web?.client_id, creds.installed?.client_secret || creds.web?.client_secret);
     client.setCredentials(tokens);
     const metadata = { name: args.name };
+    if (args.targetMimeType) {
+      metadata.mimeType = args.targetMimeType;
+    }
     const boundary = 'foo_bar_baz';
     const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/plain\r\n\r\n${args.content}\r\n--${boundary}--`;
     
