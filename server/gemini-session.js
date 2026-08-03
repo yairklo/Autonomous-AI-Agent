@@ -12,8 +12,8 @@ import {
 } from './gemini-rate-limit.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
 
-function getGeminiTools() {
-  const mcpTools = listMcpTools();
+async function getGeminiTools() {
+  const mcpTools = await listMcpTools();
   if (!mcpTools.length) return undefined;
   return [{
     functionDeclarations: mcpTools.map(t => {
@@ -330,13 +330,15 @@ export class GeminiSessionManager extends EventEmitter {
           : signal
         : signal || timeout;
 
+    const tools = await getGeminiTools();
+
     return ai.models.generateContentStream({
       model: this.model,
       contents,
       config: {
         systemInstruction: this.systemPrompt,
         abortSignal: combined,
-        tools: getGeminiTools(),
+        tools,
       },
     });
   }

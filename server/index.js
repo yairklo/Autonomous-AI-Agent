@@ -10,6 +10,12 @@ import { config } from './config.js';
 import { createLlmSessionManager, normalizeLlmProvider } from './llm-session.js';
 import { guessExtension, transcribeAudio, whisperConfigured } from './stt.js';
 import { executeMcpTool, listMcpTools } from './mcp-tools.js';
+import { initGdriveMcp } from './gdrive-mcp-client.js';
+
+// Pre-warm the Google Drive MCP Client connection in the background so tools are ready.
+initGdriveMcp(console.log).catch((err) => {
+  console.error('[mcp-gdrive] Failed to initialize on startup:', err);
+});
 import {
   buildSpecMarkdown,
   detectGrillMePack,
@@ -80,7 +86,7 @@ mountTokenMetricsRoutes(app);
 mountWhatsappRoutes(app);
 mountJobsEngineRoutes(app);
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
   const nets = os.networkInterfaces();
   const addresses = [];
   for (const list of Object.values(nets)) {
@@ -111,7 +117,7 @@ app.get('/api/health', (_req, res) => {
     geminiModel: llmProvider === 'gemini' ? config.geminiModel : undefined,
     llmModel,
     grillMePacks: listGrillMePacks().map((p) => p.id),
-    mcpTools: listMcpTools().map((t) => t.name),
+    mcpTools: (await listMcpTools()).map((t) => t.name),
     whatsappExportsDir: config.whatsappExportsDir,
     cvApplicationsDir: config.cvApplicationsDir,
     time: new Date().toISOString(),
@@ -130,6 +136,8 @@ app.get('/api/health', (_req, res) => {
  * POST /api/jobs/whatsapp-groups  { group: string }  — add one
  * DELETE /api/jobs/whatsapp-groups { group: string } — remove one
  */
+
+
 app.get('/api/jobs/whatsapp-groups', (_req, res) => {
   try {
     const jobs = loadJobsConfig();
@@ -1046,7 +1054,7 @@ async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
   });
 }
 
-const server = app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, async () => {
   console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
   console.log(
     `[voice-agent] llmProvider=${llmProvider} llmModel=${llmModel} mock=${config.mock}`
@@ -1055,8 +1063,9 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
   console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
   console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
+  const mcpToolsList = await listMcpTools();
   console.log(
-    `[voice-agent] mcpTools=${listMcpTools()
+    `[voice-agent] mcpTools=${mcpToolsList
       .map((t) => t.name)
       .join(',')}`
   );

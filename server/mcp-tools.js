@@ -260,12 +260,18 @@ export function getMcpTool(name) {
   return MCP_TOOLS.find((t) => t.name === name) || null;
 }
 
-export function listMcpTools() {
+export async function listMcpTools() {
   const localTools = MCP_TOOLS.map(({ name, description, inputSchema }) => ({
     name,
     description,
     inputSchema,
   }));
+  // Ensure GDrive MCP is fully initialized before returning the tool list.
+  try {
+    await initGdriveMcp();
+  } catch (err) {
+    console.error('[mcp-tools] Error initializing GDrive MCP tools during listMcpTools:', err);
+  }
   return [...localTools, ...getGdriveTools()];
 }
 
