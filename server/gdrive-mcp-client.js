@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OAuth2Client } from 'google-auth-library';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -76,15 +77,61 @@ export async function initGdriveMcp(onLog) {
 }
 
 export function getGdriveTools() {
-  return gdriveTools.map(t => ({
+  const customTools = [
+    {
+      name: 'gdrive_create_file',
+      description: 'Creates a new text file in Google Drive.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the file to create' },
+          content: { type: 'string', description: 'Text content to write into the file' }
+        },
+        required: ['name', 'content']
+      },
+      isExternal: true
+    }
+  ];
+  return [...gdriveTools.map(t => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
     isExternal: true
-  }));
+  })), ...customTools];
 }
 
 export async function executeGdriveTool(name, args, { onLog }) {
+  if (name === 'gdrive_create_file') {
+    onLog?.(`[mcp-gdrive] custom tool=${name} args=${JSON.stringify(args)}`);
+    const credPath = path.join(dataDir, 'gdrive-credentials.json');
+    const tokenPath = path.join(dataDir, 'gdrive-tokens.json');
+    const creds = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+    const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+    const client = new OAuth2Client(creds.installed?.client_id || creds.web?.client_id, creds.installed?.client_secret || creds.web?.client_secret);
+    client.setCredentials(tokens);
+    const metadata = { name: args.name };
+    const boundary = 'foo_bar_baz';
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/plain\r\n\r\n${args.content}\r\n--${boundary}--`;
+    
+    try {
+      const res = await client.request({
+        url: 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+        data: body
+      });
+      return {
+        content: [{ type: 'text', text: `Successfully created file: ${JSON.stringify(res.data)}` }],
+        isError: false
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Failed to create file: ${err.message}` }],
+        isError: true
+      };
+    }
+  }
+
   if (!mcpClient) {
     throw new Error("GDrive MCP client is not initialized. Run initGdriveMcp() first.");
   }
@@ -95,7 +142,6 @@ export async function executeGdriveTool(name, args, { onLog }) {
       name,
       arguments: args
     });
-    // MCP tool responses are typically { content: [{ type: 'text', text: '...' }], isError: boolean }
     return result;
   } catch (err) {
     onLog?.(`[mcp-gdrive] error calling tool ${name}: ${err.message}`);
