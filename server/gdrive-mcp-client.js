@@ -1,5 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..');
+const dataDir = path.join(root, 'data');
 
 let mcpClient = null;
 let gdriveTools = [];
@@ -10,6 +17,24 @@ export async function initGdriveMcp(onLog) {
 
   initPromise = (async () => {
     try {
+      // Helper: If environment variables for JSON credentials/tokens exist, write them to disk.
+      // This provides a fallback for external SDKs that strictly require physical files.
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      
+      if (process.env.GDRIVE_CREDENTIALS_JSON) {
+        const credPath = path.join(dataDir, 'gdrive-credentials.json');
+        fs.writeFileSync(credPath, process.env.GDRIVE_CREDENTIALS_JSON, 'utf8');
+        onLog?.("[mcp-gdrive] Wrote GDRIVE_CREDENTIALS_JSON to data/gdrive-credentials.json");
+      }
+      
+      if (process.env.GDRIVE_TOKENS_JSON) {
+        const tokenPath = path.join(dataDir, 'gdrive-tokens.json');
+        fs.writeFileSync(tokenPath, process.env.GDRIVE_TOKENS_JSON, 'utf8');
+        onLog?.("[mcp-gdrive] Wrote GDRIVE_TOKENS_JSON to data/gdrive-tokens.json");
+      }
+
       const transport = new StdioClientTransport({
         command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
         args: ["-y", "dylancaponi/gdrive-mcp-server"],

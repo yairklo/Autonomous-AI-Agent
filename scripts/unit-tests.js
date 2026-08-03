@@ -1124,3 +1124,53 @@ test('GeminiSessionManager uses injected stream + rate limiter', async () => {
     /* ignore */
   }
 });
+
+test('GDrive Auth - reads from process.env.GDRIVE_CREDENTIALS_JSON', async () => {
+  const { execSync } = await import('node:child_process');
+  const validJson = JSON.stringify({
+    installed: {
+      client_id: 'test-client-id',
+      client_secret: 'test-secret',
+      redirect_uris: ['urn:ietf:wg:oauth:2.0:oob']
+    }
+  });
+
+  try {
+    const output = execSync('node scripts/setup-gdrive-auth.js', {
+      env: { ...process.env, GDRIVE_CREDENTIALS_JSON: validJson },
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+    // It should log that it loaded from process.env
+    assert.match(output, /Loaded credentials from process\.env\.GDRIVE_CREDENTIALS_JSON/);
+  } catch (err) {
+    // It might fail on reading stdin or missing token path, but we just check the log.
+    assert.match(err.stdout || err.stderr, /Loaded credentials from process\.env\.GDRIVE_CREDENTIALS_JSON/);
+  }
+});
+
+test('GDrive Auth - fails gracefully when env var and file are missing', async () => {
+  const { execSync } = await import('node:child_process');
+  
+  // Temporarily rename data/gdrive-credentials.json if it exists so we test the fallback failure
+  const credPath = path.join(process.cwd(), 'data', 'gdrive-credentials.json');
+  const backupPath = credPath + '.bak';
+  if (fs.existsSync(credPath)) {
+    fs.renameSync(credPath, backupPath);
+  }
+
+  try {
+    execSync('node scripts/setup-gdrive-auth.js', {
+      env: { ...process.env, GDRIVE_CREDENTIALS_JSON: '' },
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+    assert.fail('Should have exited with error');
+  } catch (err) {
+    assert.match(err.stderr || err.stdout, /GDRIVE_CREDENTIALS_JSON is not set/);
+  } finally {
+    if (fs.existsSync(backupPath)) {
+      fs.renameSync(backupPath, credPath);
+    }
+  }
+});

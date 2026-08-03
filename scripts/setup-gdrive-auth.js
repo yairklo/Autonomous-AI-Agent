@@ -16,14 +16,26 @@ const SCOPES = [
 ];
 
 async function authorize() {
-  if (!fs.existsSync(CREDENTIALS_PATH)) {
-    console.error(`[GDrive Setup] Credentials file not found at ${CREDENTIALS_PATH}`);
-    console.error('Please download your OAuth 2.0 Client ID JSON file from the Google Cloud Console and save it there.');
+  let credentials;
+
+  if (process.env.GDRIVE_CREDENTIALS_JSON) {
+    try {
+      credentials = JSON.parse(process.env.GDRIVE_CREDENTIALS_JSON);
+      console.log('[GDrive Setup] Loaded credentials from process.env.GDRIVE_CREDENTIALS_JSON');
+    } catch (err) {
+      console.error('[GDrive Setup] Error parsing process.env.GDRIVE_CREDENTIALS_JSON:', err.message);
+      process.exit(1);
+    }
+  } else if (fs.existsSync(CREDENTIALS_PATH)) {
+    const content = fs.readFileSync(CREDENTIALS_PATH, 'utf8');
+    credentials = JSON.parse(content);
+    console.log(`[GDrive Setup] Loaded credentials from ${CREDENTIALS_PATH}`);
+  } else {
+    console.error(`[GDrive Setup] Credentials file not found at ${CREDENTIALS_PATH} and GDRIVE_CREDENTIALS_JSON is not set.`);
+    console.error('Please download your OAuth 2.0 Client ID JSON file from the Google Cloud Console and save it there, or set the GDRIVE_CREDENTIALS_JSON environment variable.');
     process.exit(1);
   }
 
-  const content = fs.readFileSync(CREDENTIALS_PATH, 'utf8');
-  const credentials = JSON.parse(content);
   const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
   
   // Use first redirect URI or standard OOB (out of band) for headless
