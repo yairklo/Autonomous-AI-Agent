@@ -2,13 +2,16 @@
  * chatId → { isGroup, name } cache so ingest does not call getChat() on every event.
  */
 
+import { isGroupLikeJid } from '../whatsapp/groups.js';
+
 const TTL_MS = 30 * 60 * 1000;
 const cache = new Map();
 
 export function groupChatIdFromMessage(msg = {}) {
-  if (msg.chatId && String(msg.chatId).includes('@g.us')) return String(msg.chatId);
-  if (msg.from && String(msg.from).includes('@g.us')) return String(msg.from);
-  if (msg.to && String(msg.to).includes('@g.us')) return String(msg.to);
+  const candidates = [msg.chatId, msg.from, msg.to];
+  for (const c of candidates) {
+    if (isGroupLikeJid(c)) return String(c);
+  }
   return String(msg.from || msg.chatId || '');
 }
 
@@ -28,7 +31,7 @@ export function setCachedChat(chatId, info) {
   const id = String(chatId || '');
   if (!id) return;
   cache.set(id, {
-    isGroup: Boolean(info?.isGroup || id.includes('@g.us')),
+    isGroup: Boolean(info?.isGroup || isGroupLikeJid(id)),
     name: String(info?.name || ''),
     at: Date.now(),
   });
@@ -62,7 +65,7 @@ export async function resolveChatInfo(msg, client, onLog = () => {}) {
     }
   }
 
-  const isGroup = Boolean(chat?.isGroup || chatId.includes('@g.us'));
+  const isGroup = Boolean(chat?.isGroup || isGroupLikeJid(chatId));
   const name = String(chat?.name || msg.groupName || '').trim();
   const info = { isGroup, name, chatId };
   if (chatId) setCachedChat(chatId, info);

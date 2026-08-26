@@ -3,12 +3,18 @@
  *
  * GET  /api/whatsapp/status
  * GET  /api/whatsapp/qr
+ * GET  /api/whatsapp/groups
+ * GET  /api/whatsapp/ingest-coverage
  * POST /api/whatsapp/start
  * POST /api/whatsapp/stop
  */
 
 import { getSharedWhatsappSession } from './session.js';
+import { listJoinedWhatsappGroups } from './groups.js';
 import { createTelegramClient } from '../jobs/telegram.js';
+import { isAllowedGroup, loadJobsConfig } from '../jobs/jobs-config.js';
+import { isTrackedGroupName, mongoReady } from '../jobs-engine/group-store.js';
+import { listCapturedChatStats } from '../jobs-engine/ingest-coverage.js';
 
 async function notifyQrViaTelegram({ qr, at }) {
   const botToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -59,6 +65,85 @@ export function mountWhatsappRoutes(app, deps = {}) {
 
   app.get('/api/whatsapp/status', (_req, res) => {
     res.json({ ok: true, ...session.snapshot() });
+  });
+
+  app.get('/api/whatsapp/groups', async (_req, res) => {
+    const snap = session.snapshot();
+    const client = session.getClient?.();
+    if (!client || snap.state !== 'authenticated') {
+      return res.status(409).json({
+        ok: false,
+        error: 'WhatsApp is not connected',
+        code: 'WA_NOT_READY',
+        state: snap.state,
+      });
+    }
+    try {
+      const jobsConfig = loadJobsConfig();
+      const joined = await listJoinedWhatsappGroups(client);
+      const groups = [];
+      for (const g of joined) {
+        let tracked = false;
+        if (mongoReady()) {
+          try {
+            tracked = await isTrackedGroupName(g.name);
+          } catch {
+            tracked = false;
+          }
+        }
+        const allowListed = isAllowedGroup(g.name, jobsConfig);
+        groups.push({
+          ...g,
+          tracked: Boolean(tracked || allowListed),
+          allowListed,
+        });
+      }
+      const readOnlyCount = groups.filter((g) => g.isReadOnly).length;
+      const trackedCount = groups.filter((g) => g.tracked).length;
+      return res.json({
+        ok: true,
+        count: groups.length,
+        trackedCount,
+        readOnlyCount,
+        newsletterCount: groups.filter((g) => g.isNewsletter).length,
+        note: 'Raw ingest captures all group/newsletter chats. Job matching uses tracked/allow-list names.',
+        groups,
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: err.message,
+        code: err.code || 'WA_GROUPS_FAILED',
+        state: snap.state,
+      });
+    }
+  });
+
+  app.get('/api/whatsapp/ingest-coverage', async (req, res) => {
+    if (!mongoReady()) {
+      return res.status(503).json({
+        ok: false,
+        error: 'MongoDB is not connected',
+        code: 'MONGO_UNAVAILABLE',
+      });
+    }
+    try {
+      const since = req.query.since ? String(req.query.since) : undefined;
+      const captured = await listCapturedChatStats({ since });
+      return res.json({
+        ok: true,
+        chatCount: captured.length,
+        messageCount: captured.reduce((n, c) => n + c.count, 0),
+        since: since || null,
+        chats: captured,
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: err.message,
+        code: err.code || 'WA_COVERAGE_FAILED',
+      });
+    }
   });
 
   app.get('/api/whatsapp/qr', async (_req, res) => {

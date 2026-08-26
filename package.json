@@ -43,6 +43,8 @@
     "test:cli-auth": "node scripts/test-cli-auth-health.js",
     "whatsapp:connect": "node scripts/connect-whatsapp.js",
     "whatsapp:groups": "node scripts/connect-whatsapp.js --list-groups --keep-alive",
+    "whatsapp:inspect": "node scripts/whatsapp-inspect-groups.js",
+    "whatsapp:ingest-coverage": "node scripts/whatsapp-ingest-coverage.js",
     "test:whatsapp-session": "node scripts/test-whatsapp-session.js",
     "test:whatsapp-ingest": "node scripts/test-whatsapp-ingest.js",
     "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js"

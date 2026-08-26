@@ -246,6 +246,36 @@ test('handleWhatsappMessage buffers when mongo is down', async () => {
   }
 });
 
+test('handleWhatsappMessage captures newsletter/announcement chat ids as groups', async () => {
+  resetIngestTestState();
+  const result = await handleWhatsappMessage(
+    {
+      body: 'Hiring Backend engineer Node.js apply https://jobs.example.com/be',
+      hasMedia: false,
+      author: 'recruiter',
+      from: '120363-news@newsletter',
+      to: '120363-news@newsletter',
+      id: { _serialized: 'wamid-news-1', fromMe: false },
+      getChat: async () => ({
+        isGroup: false,
+        name: 'Hiring Channel',
+        id: { _serialized: '120363-news@newsletter' },
+      }),
+    },
+    {
+      jobsConfig: JOBS_CONFIG,
+      mongoReady: () => true,
+      isTrackedGroupName: async () => true,
+      ...silentNotify,
+      upsertDiscoveredJob: async (matched) => ({
+        job: { jobId: 'news1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+      }),
+    }
+  );
+  assert.ok(result.results?.length >= 1);
+});
+
 test('attachMessageIngest listens on message_create', async () => {
   resetIngestTestState();
   const client = new EventEmitter();

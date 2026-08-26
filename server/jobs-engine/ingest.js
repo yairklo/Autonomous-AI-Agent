@@ -27,7 +27,7 @@ import {
 import { notifyLiveJob } from './notify-job.js';
 
 const ATTACHED = Symbol('waMessageIngestAttached');
-const SKIP_FROM = /status@broadcast|@newsletter/i;
+const SKIP_FROM = /status@broadcast/i;
 const SKIP_TYPES = new Set([
   'e2e_notification',
   'notification_template',
@@ -275,7 +275,9 @@ export function attachMessageIngest(client, deps = {}) {
     delete client[ATTACHED];
   };
   client[ATTACHED] = { detach, queue };
-  onLog('[whatsapp-ingest] message_create listener attached (queued)');
+  onLog(
+    '[whatsapp-ingest] message_create listener attached (queued); captures all group/newsletter chats; job matching still uses tracked/allow-list'
+  );
   return { detach, queue };
 }
 
@@ -308,6 +310,15 @@ export function startIngestWhenReady(session, deps = {}) {
       }
       const attached = attachMessageIngest(client, { ...deps, session });
       detachIngest = attached.detach;
+      try {
+        const { listJoinedWhatsappGroups } = await import('../whatsapp/groups.js');
+        const joined = await listJoinedWhatsappGroups(client);
+        onLog(
+          `[whatsapp-ingest] session sees ${joined.length} group/newsletter chat(s)`
+        );
+      } catch (err) {
+        onLog(`[whatsapp-ingest] group list skipped: ${err.message}`);
+      }
       try {
         await drainIngestBuffer({ ...deps, client, session });
       } catch (err) {
