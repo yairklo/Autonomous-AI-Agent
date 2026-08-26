@@ -32,13 +32,40 @@ RUN npm install
 ENV NODE_ENV=production
 
 ENV PUPPETEER_SKIP_DOWNLOAD=false \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
-RUN npx puppeteer browsers install chrome \
-  && CHROME="$(find /root/.cache/puppeteer -type f \( -path '*/chrome-linux64/chrome' -o -path '*/chrome-linux/chrome' \) 2>/dev/null | head -n 1)" \
-  && test -n "$CHROME" \
-  && test -x "$CHROME" \
-  && ln -sf "$CHROME" /usr/local/bin/wa-chrome \
-  && /usr/local/bin/wa-chrome --version
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false \
+    PUPPETEER_CACHE_DIR=/opt/puppeteer-cache
+RUN set -eux; \
+  mkdir -p "$PUPPETEER_CACHE_DIR"; \
+  PP=""; \
+  if [ -x /app/node_modules/.bin/puppeteer ]; then \
+    PP=/app/node_modules/.bin/puppeteer; \
+  elif [ -x /app/node_modules/whatsapp-web.js/node_modules/.bin/puppeteer ]; then \
+    PP=/app/node_modules/whatsapp-web.js/node_modules/.bin/puppeteer; \
+  fi; \
+  if [ -z "$PP" ]; then \
+    echo "puppeteer CLI missing — installing puppeteer@24.38.0"; \
+    npm install puppeteer@24.38.0 --no-save --no-fund --no-audit; \
+    PP=/app/node_modules/.bin/puppeteer; \
+  fi; \
+  echo "using $PP"; \
+  "$PP" browsers install chrome \
+    || { sleep 4; "$PP" browsers install chrome; } \
+    || PUPPETEER_DOWNLOAD_BASE_URL=https://cdn.npmmirror.com/binaries/chrome-for-testing \
+      "$PP" browsers install chrome; \
+  echo "=== puppeteer cache files ==="; \
+  find "$PUPPETEER_CACHE_DIR" /root/.cache/puppeteer -type f \( -name chrome -o -name chrome-headless-shell \) 2>/dev/null || true; \
+  CHROME="$(find "$PUPPETEER_CACHE_DIR" /root/.cache/puppeteer -type f -path '*/chrome-linux64/chrome' 2>/dev/null | head -n 1)"; \
+  if [ -z "$CHROME" ]; then \
+    CHROME="$(find "$PUPPETEER_CACHE_DIR" /root/.cache/puppeteer -type f -path '*/chrome-linux/chrome' 2>/dev/null | head -n 1)"; \
+  fi; \
+  if [ -z "$CHROME" ]; then \
+    CHROME="$(find "$PUPPETEER_CACHE_DIR" /root/.cache/puppeteer -type f -name chrome 2>/dev/null | head -n 1)"; \
+  fi; \
+  echo "CHROME=${CHROME:-MISSING}"; \
+  test -n "$CHROME"; \
+  test -x "$CHROME"; \
+  ln -sf "$CHROME" /usr/local/bin/wa-chrome; \
+  /usr/local/bin/wa-chrome --no-sandbox --version
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
@@ -58,6 +85,7 @@ ENV NODE_ENV=production \
     HEADLESS_BROWSER=true \
     CI=1 \
     PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_CACHE_DIR=/opt/puppeteer-cache \
     PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome \
     CLAUDE_BIN=claude \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
