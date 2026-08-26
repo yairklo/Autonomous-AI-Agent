@@ -5,12 +5,27 @@ import { config as appConfig } from '../config.js';
 
 const TRACKER_FILE = path.join(appConfig.root, 'data', 'job_applications.xlsx');
 
+const COLUMNS = [
+  { header: 'ID', key: 'id', width: 10 },
+  { header: 'Submission Date', key: 'date', width: 25 },
+  { header: 'Status', key: 'status', width: 20 },
+  { header: 'Job Title & Target Role', key: 'role', width: 30 },
+  { header: 'Company Name', key: 'company', width: 25 },
+  { header: 'Source / Group', key: 'source', width: 30 },
+  { header: 'Original Description', key: 'description', width: 60 },
+  { header: 'Job URL', key: 'url', width: 40 },
+  { header: 'Cover Letter', key: 'coverLetter', width: 60 },
+  { header: 'Match Score / Keywords', key: 'score', width: 25 },
+  { header: 'Error Log', key: 'error', width: 40 },
+];
+
 /**
  * Initializes or loads the workbook and worksheet.
  */
 async function getWorkbook() {
   const workbook = new ExcelJS.Workbook();
   let worksheet;
+  let isNewSheet = false;
 
   if (fs.existsSync(TRACKER_FILE)) {
     await workbook.xlsx.readFile(TRACKER_FILE);
@@ -26,21 +41,17 @@ async function getWorkbook() {
     worksheet = workbook.addWorksheet('Applications', {
       views: [{ rightToLeft: true }] // RTL for Hebrew
     });
-    
-    worksheet.columns = [
-      { header: 'ID', key: 'id', width: 10 },
-      { header: 'Submission Date', key: 'date', width: 25 },
-      { header: 'Status', key: 'status', width: 20 },
-      { header: 'Job Title & Target Role', key: 'role', width: 30 },
-      { header: 'Company Name', key: 'company', width: 25 },
-      { header: 'Source / Group', key: 'source', width: 30 },
-      { header: 'Original Description', key: 'description', width: 60 },
-      { header: 'Job URL', key: 'url', width: 40 },
-      { header: 'Cover Letter', key: 'coverLetter', width: 60 },
-      { header: 'Match Score / Keywords', key: 'score', width: 25 },
-      { header: 'Error Log', key: 'error', width: 40 }
-    ];
+    isNewSheet = true;
+  }
 
+  // ExcelJS's key->column mapping (used by row.getCell(key) below) lives only
+  // in memory — it isn't part of the .xlsx format, so a worksheet reloaded
+  // from disk loses it and every lookup after the very first write would
+  // throw "Invalid column letter: id". Re-applying the same column defs is
+  // idempotent (same headers/order) and restores the mapping on every load.
+  worksheet.columns = COLUMNS;
+
+  if (isNewSheet) {
     // Style the header row
     worksheet.getRow(1).font = { bold: true };
     worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
@@ -71,11 +82,25 @@ function displayTrackerStatus(status) {
   return s;
 }
 
+// pipeline.js fires updateJobInTracker without awaiting it. Two concurrent
+// calls would each read the same on-disk .xlsx, mutate their own in-memory
+// copy, and write it back — the loser's write can corrupt the zip container
+// entirely ("Corrupted zip or bug"), not just lose an update. Serialize all
+// writes through one chain so each read-modify-write cycle completes before
+// the next one starts.
+let writeChain = Promise.resolve();
+
 /**
  * Update or insert a job into the Excel tracker.
  * @param {object} job The job object from the local DB.
  */
-export async function updateJobInTracker(job) {
+export function updateJobInTracker(job) {
+  const run = writeChain.then(() => updateJobInTrackerNow(job));
+  writeChain = run.catch(() => {});
+  return run;
+}
+
+async function updateJobInTrackerNow(job) {
   try {
     const { workbook, worksheet } = await getWorkbook();
 

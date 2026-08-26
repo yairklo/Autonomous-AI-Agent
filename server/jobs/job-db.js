@@ -141,6 +141,20 @@ export class JobDb {
   }
 }
 
+// One JobDb instance per resolved path per process. Multiple independent
+// instances pointed at the same file could each hold a stale in-memory copy
+// and clobber each other's writes when async callers (e.g. the ingest queue,
+// concurrency:2) interleave; a shared instance makes every read/write go
+// through the same in-memory state, and each method body runs synchronously
+// to completion so there is no interleaving within a single mutation.
+const sharedInstances = new Map();
+
 export function openJobDb(dbPath) {
-  return new JobDb(dbPath);
+  const resolved = path.resolve(dbPath);
+  let instance = sharedInstances.get(resolved);
+  if (!instance) {
+    instance = new JobDb(resolved);
+    sharedInstances.set(resolved, instance);
+  }
+  return instance;
 }

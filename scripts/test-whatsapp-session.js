@@ -12,7 +12,7 @@ import { mountWhatsappRoutes } from '../server/whatsapp/http.js';
 
 test('Job model exports status and source enums', () => {
   assert.ok(JOB_STATUSES.includes('discovered'));
-  assert.ok(JOB_STATUSES.includes('requires_human'));
+  assert.ok(JOB_STATUSES.includes('requires_manual_action'));
   assert.ok(JOB_SOURCES.includes('whatsapp_group'));
   assert.equal(typeof Job, 'function');
   assert.equal(typeof TrackedGroup, 'function');

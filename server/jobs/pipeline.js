@@ -12,6 +12,8 @@ import { submitJobFormWithPlaywright } from './playwright-submitter.js';
 import { createTelegramClient } from './telegram.js';
 import { analyzeRealtimeMessage } from './whatsapp-live.js';
 import { updateJobInTracker } from './tracker.js';
+import { buildCoverLetterLlmGenerate } from './llm-cover-letter.js';
+import { syncMongoJobStatus } from '../jobs-engine/job-store.js';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,6 +25,7 @@ function sleep(ms) {
  */
 export async function scanAndEnqueueJobs({
   configPath,
+  jobsConfig: preloadedJobsConfig,
   exportPath,
   messages,
   notifyTelegram = true,
@@ -31,7 +34,11 @@ export async function scanAndEnqueueJobs({
   onLog,
   telegramFetch,
 } = {}) {
-  const jobsConfig = loadJobsConfig(configPath);
+  // Reuse the caller's already-loaded config when given (e.g. the ingest
+  // worker that just matched this message) instead of reloading config.json
+  // here — a config.json edit landing between the two loads could otherwise
+  // make this second matching pass disagree with the first.
+  const jobsConfig = preloadedJobsConfig || loadJobsConfig(configPath);
   const db = openJobDb(jobsConfig.storage.jobsDbPath);
 
   let candidates = [];
@@ -103,9 +110,15 @@ export async function scanAndEnqueueJobs({
       ...db.get(job.id),
       telegram: telegramResult,
     });
-    
-    // Update tracker
-    updateJobInTracker(db.get(job.id)).catch(() => {});
+
+    updateJobInTracker(db.get(job.id)).catch((e) =>
+      onLog?.(`[pipeline] tracker update failed job=${job.id}: ${e.message}`)
+    );
+    if (telegramResult) {
+      syncMongoJobStatus(job.fingerprint, 'awaiting_approval', {
+        message: 'Telegram approval requested',
+      }).catch(() => {});
+    }
 
     onLog?.(
       `[pipeline] enqueued job=${job.id} group=${job.groupName} telegram=${telegramResult ? 'yes' : 'no'}`
@@ -170,9 +183,13 @@ export function resolveJobApproval({
     approvalStatus,
     status: approvalStatus === 'approved' ? 'approved' : 'rejected',
   });
-  
-  // Update tracker
-  updateJobInTracker(updated).catch(() => {});
+
+  updateJobInTracker(updated).catch((e) =>
+    onLog?.(`[pipeline] tracker update failed job=${resolved.jobId}: ${e.message}`)
+  );
+  syncMongoJobStatus(updated.fingerprint, approvalStatus, {
+    message: `Telegram ${resolved.action}`,
+  }).catch(() => {});
 
   onLog?.(
     `[pipeline] job=${resolved.jobId} approval=${approvalStatus}`
@@ -273,7 +290,13 @@ export async function submitApprovedJob({
     jobText: job.text,
     coverNote,
     useLlm: jobsConfig.submission.llmCoverLetter,
-    llmGenerate,
+    // Callers (tests, mcp-tools) can still inject their own llmGenerate;
+    // otherwise default to the real Gemini one-shot generator for a REAL
+    // submit only — dry runs must stay side-effect-free and never reach a
+    // live external API just to preview a cover letter. Returns null when
+    // GEMINI_API_KEY isn't set, so buildCoverLetter falls back to the
+    // template exactly as before.
+    llmGenerate: llmGenerate || (dryRun ? undefined : buildCoverLetterLlmGenerate({ onLog })),
   });
 
   if (
@@ -331,7 +354,12 @@ export async function submitApprovedJob({
         submittedAt: record.createdAt,
         submitResult: { ok: true, dryRun: true, applicationId, jsonPath, ats: result.ats },
       });
-      updateJobInTracker(updated).catch(() => {});
+      updateJobInTracker(updated).catch((e) =>
+        onLog?.(`[pipeline] tracker update failed job=${job.id}: ${e.message}`)
+      );
+      syncMongoJobStatus(updated.fingerprint, 'dry_run_submitted', {
+        message: 'Dry-run Playwright submit',
+      }).catch(() => {});
       return { ok: true, job: updated, application: record, files: { json: jsonPath } };
     }
 
@@ -367,7 +395,15 @@ export async function submitApprovedJob({
           coverLetter: cover.text,
         },
       });
-      updateJobInTracker(updated).catch(() => {});
+      updateJobInTracker(updated).catch((e) =>
+        onLog?.(`[pipeline] tracker update failed job=${job.id}: ${e.message}`)
+      );
+      syncMongoJobStatus(updated.fingerprint, 'submitted', {
+        message: 'Playwright submit confirmed',
+      }).catch(() => {});
+      telegram
+        .sendSuccessAlert(job, { ats: result.ats }, { dryRun: !telegram.configured })
+        .catch((e) => onLog?.(`[pipeline] telegram success alert error: ${e.message}`));
       onLog?.(`[pipeline] submitted job=${job.id} via Playwright form (confirmed)`);
       return { ok: true, job: updated, application: record, files: { json: jsonPath } };
     }
@@ -415,7 +451,14 @@ export async function submitApprovedJob({
         coverLetter: cover.text,
       },
     });
-    updateJobInTracker(updated).catch(() => {});
+    updateJobInTracker(updated).catch((e) =>
+      onLog?.(`[pipeline] tracker update failed job=${job.id}: ${e.message}`)
+    );
+    syncMongoJobStatus(updated.fingerprint, dbStatus, {
+      ok: false,
+      message: result?.message || displayStatus,
+      screenshotPath: result?.screenshotPath || '',
+    }).catch(() => {});
 
     if (jobsConfig.submission.notifyTelegramOnFailure) {
       const alertFn = needsHuman
@@ -447,9 +490,14 @@ export async function submitApprovedJob({
       status: 'submit_failed',
       submitResult: { ok: false, error: err.message, code: err.code },
     });
-    
-    // Update tracker
-    updateJobInTracker(failedJob).catch(() => {});
+
+    updateJobInTracker(failedJob).catch((e) =>
+      onLog?.(`[pipeline] tracker update failed job=${job.id}: ${e.message}`)
+    );
+    syncMongoJobStatus(failedJob.fingerprint, 'submit_failed', {
+      ok: false,
+      message: err.message,
+    }).catch(() => {});
 
     if (jobsConfig.submission.notifyTelegramOnFailure) {
       await telegram

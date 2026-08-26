@@ -1,12 +1,18 @@
 import mongoose from 'mongoose';
 
+// Mirrors the local JobDb status vocabulary (server/jobs/job-db.js) so a
+// job's Mongo record and its JSON approval/submission record never disagree.
+// jobs-engine/job-store.js:syncMongoJobStatus keeps this field current as the
+// job moves through Telegram approval and Playwright submission.
 export const JOB_STATUSES = [
   'discovered',
-  'parsing',
-  'ready_to_apply',
-  'applied',
-  'requires_human',
-  'failed',
+  'awaiting_approval',
+  'approved',
+  'rejected',
+  'submitted',
+  'requires_manual_action',
+  'submit_failed',
+  'dry_run_submitted',
 ];
 
 export const JOB_SOURCES = ['whatsapp_group', 'direct_link', 'manual'];
