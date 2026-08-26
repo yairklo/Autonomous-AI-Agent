@@ -164,4 +164,67 @@ test('whatsapp HTTP status and qr routes', async () => {
   );
 });
 
+test('GET /api/whatsapp/groups lists joined groups including read-only and newsletters', async () => {
+  const client = new EventEmitter();
+  client.initialize = async () => {};
+  client.destroy = async () => {};
+  client.getChats = async () => [
+    {
+      isGroup: true,
+      name: 'Jobs Israel',
+      id: { _serialized: '120363-jobs@g.us' },
+      isReadOnly: false,
+    },
+    {
+      isGroup: true,
+      name: 'Jobs Announce',
+      id: { _serialized: '120363-ann@g.us' },
+      announce: true,
+    },
+    { isGroup: false, name: 'Alice', id: { _serialized: 'alice@c.us' } },
+    {
+      isGroup: false,
+      name: 'Hiring Channel',
+      id: { _serialized: '120363-news@newsletter' },
+    },
+  ];
+
+  const session = createWhatsappSession({
+    onLog: () => {},
+    autoReconnect: false,
+    createClient: async () => client,
+  });
+  session._setStateForTests('authenticated', '', { client, emitReady: true });
+
+  const app = express();
+  mountWhatsappRoutes(app, { session });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const { port } = server.address();
+
+  const notReady = await fetch(`http://127.0.0.1:${port}/api/whatsapp/groups`);
+  // session is authenticated with client
+  assert.equal(notReady.status, 200);
+  const body = await notReady.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.count, 3);
+  assert.ok(body.groups.some((g) => g.name === 'Jobs Israel' && g.tracked));
+  assert.ok(body.groups.some((g) => g.name === 'Jobs Announce' && g.isReadOnly));
+  assert.ok(body.groups.some((g) => g.isNewsletter && g.id.includes('@newsletter')));
+  assert.ok(!body.groups.some((g) => g.name === 'Alice'));
+
+  const coverage = await fetch(
+    `http://127.0.0.1:${port}/api/whatsapp/ingest-coverage`
+  );
+  assert.equal(coverage.status, 503);
+  const covBody = await coverage.json();
+  assert.equal(covBody.code, 'MONGO_UNAVAILABLE');
+
+  await session.stop();
+  await new Promise((resolve, reject) =>
+    server.close((err) => (err ? reject(err) : resolve()))
+  );
+});
+
 console.log('whatsapp-session tests: ok');
