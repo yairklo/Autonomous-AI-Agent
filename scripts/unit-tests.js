@@ -14,7 +14,7 @@ import {
   wantsExplicitDispatch,
   wantsSkipGrillMe,
 } from '../server/task-router.js';
-import { executeMcpTool, getMcpTool, listMcpTools } from '../server/mcp-tools.js';
+import { executeMcpTool, getMcpTool } from '../server/mcp-tools.js';
 import {
   buildSpecMarkdown,
   detectGrillMePack,
@@ -99,8 +99,6 @@ test('ClaudeSessionManager - Ask (mock mode)', async (t) => {
 });
 
 test('MCP tools - dispatch_coding_task registration', () => {
-  const tools = listMcpTools();
-  assert.ok(tools.some((t) => t.name === 'dispatch_coding_task'));
   const tool = getMcpTool('dispatch_coding_task');
   assert.ok(tool);
   assert.match(
@@ -317,8 +315,6 @@ test('executeMcpTool dispatch_coding_task invokes dispatch-task.js', async () =>
 });
 
 test('MCP tools - scan_whatsapp_jobs registration', () => {
-  const tools = listMcpTools();
-  assert.ok(tools.some((t) => t.name === 'scan_whatsapp_jobs'));
   const tool = getMcpTool('scan_whatsapp_jobs');
   assert.ok(tool);
   assert.match(tool.description, /WhatsApp/i);
@@ -410,8 +406,6 @@ test('extractApplyContacts finds emails in job posts', () => {
 });
 
 test('MCP tools - submit_whatsapp_job_cv registration', () => {
-  const tools = listMcpTools();
-  assert.ok(tools.some((t) => t.name === 'submit_whatsapp_job_cv'));
   const tool = getMcpTool('submit_whatsapp_job_cv');
   assert.ok(tool);
   assert.match(tool.description, /CV|mailto|draft/i);
@@ -554,7 +548,7 @@ test('connect-whatsapp script exists and documents QR login', () => {
   assert.match(src, /qrcode-terminal/);
   assert.match(src, /LocalAuth/);
   assert.match(src, /\.wwebjs_auth/);
-  assert.match(src, /buildWhatsappPuppeteerOpts/);
+  assert.match(src, /buildWhatsappClientOptions/);
 });
 
 test('whatsapp puppeteer opts honor executable path env', async () => {
@@ -600,6 +594,13 @@ test('JobDb dedupes by fingerprint', async () => {
     });
     assert.strictEqual(b.isNew, false);
     assert.strictEqual(b.job.id, a.job.id);
+    const c = db.upsertJob({
+      text: 'Hiring Backend Engineer apply https://x.test/a',
+      groupName: 'Other Group',
+      author: 'Mike',
+      contacts: { emails: [], phones: [], urls: ['https://x.test/a'] },
+    });
+    assert.strictEqual(c.isNew, false, 'same text+url+author must dedupe across groups');
   } finally {
     try {
       fs.unlinkSync(dbPath);
@@ -722,14 +723,13 @@ test('pipeline scan → approve → playwright dry-run', async () => {
 });
 
 test('MCP tools register Telegram + Playwright pipeline tools', () => {
-  const names = listMcpTools().map((t) => t.name);
   for (const n of [
     'start_whatsapp_job_watcher',
     'request_job_telegram_approval',
     'resolve_job_approval',
     'submit_job_form',
   ]) {
-    assert.ok(names.includes(n), `missing MCP tool ${n}`);
+    assert.ok(getMcpTool(n), `missing MCP tool ${n}`);
   }
 });
 

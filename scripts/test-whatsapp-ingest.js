@@ -3,6 +3,9 @@
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
 import {
@@ -14,6 +17,8 @@ import { createWhatsappSession } from '../server/whatsapp/session.js';
 import { mountJobsEngineRoutes } from '../server/jobs-engine/http.js';
 import { groupIdFromName } from '../server/jobs-engine/group-store.js';
 import { fingerprintFromMatchedJob } from '../server/jobs-engine/job-store.js';
+import { clearChatCache } from '../server/jobs-engine/chat-cache.js';
+import { isPermanentDisconnect } from '../server/whatsapp/session.js';
 
 const JOBS_CONFIG = {
   roles: ['Full Stack', 'Backend'],
@@ -25,16 +30,36 @@ const JOBS_CONFIG = {
   safety: { neverSendWhatsappGroupMessages: true },
 };
 
-function makeMsg({ body, groupName = 'Jobs Israel', hasMedia = false }) {
+function makeMsg({
+  body,
+  groupName = 'Jobs Israel',
+  hasMedia = false,
+  from = 'someone@lid',
+  to = '120363@g.us',
+  messageId = `wamid-${Math.random().toString(16).slice(2)}`,
+} = {}) {
   return {
     body,
     hasMedia,
     author: 'recruiter@lid',
+    from,
+    to,
+    id: { _serialized: messageId, fromMe: false },
     getChat: async () => ({ isGroup: true, name: groupName }),
   };
 }
 
-test('fingerprintFromMatchedJob is stable', () => {
+const silentNotify = {
+  notifyTelegram: false,
+  notifyLiveJob: async () => {},
+  persistRawWhatsappMessage: async () => ({ stored: true, isNew: true }),
+};
+
+function resetIngestTestState() {
+  clearChatCache();
+}
+
+test('fingerprintFromMatchedJob is stable and ignores group', () => {
   const a = fingerprintFromMatchedJob({
     text: 'Backend Node.js developer needed',
     groupName: 'Jobs Israel',
@@ -43,7 +68,7 @@ test('fingerprintFromMatchedJob is stable', () => {
   });
   const b = fingerprintFromMatchedJob({
     text: 'Backend Node.js developer needed',
-    groupName: 'Jobs Israel',
+    groupName: 'Other Group',
     author: 'x',
     applyUrl: 'https://example.com/jobs/1',
   });
@@ -55,7 +80,15 @@ test('groupIdFromName normalizes', () => {
   assert.equal(groupIdFromName('Jobs Israel'), 'name:jobs israel');
 });
 
+test('isPermanentDisconnect detects logout vs drop', () => {
+  assert.equal(isPermanentDisconnect('LOGOUT'), true);
+  assert.equal(isPermanentDisconnect('UNPAIRED'), true);
+  assert.equal(isPermanentDisconnect('timeout'), false);
+  assert.equal(isPermanentDisconnect('NAVIGATION'), true);
+});
+
 test('handleWhatsappMessage upserts discovered job for tracked group', async () => {
+  resetIngestTestState();
   const upserts = [];
   const result = await handleWhatsappMessage(
     makeMsg({
@@ -65,6 +98,7 @@ test('handleWhatsappMessage upserts discovered job for tracked group', async () 
       jobsConfig: JOBS_CONFIG,
       mongoReady: () => true,
       isTrackedGroupName: async () => true,
+      ...silentNotify,
       upsertDiscoveredJob: async (matched, meta) => {
         const row = {
           job: {
@@ -92,6 +126,7 @@ test('handleWhatsappMessage upserts discovered job for tracked group', async () 
       jobsConfig: JOBS_CONFIG,
       mongoReady: () => true,
       isTrackedGroupName: async () => true,
+      ...silentNotify,
       upsertDiscoveredJob: async (matched, meta) => {
         const row = {
           job: { jobId: 'j1', status: 'discovered', rawText: matched.text },
@@ -107,6 +142,7 @@ test('handleWhatsappMessage upserts discovered job for tracked group', async () 
 });
 
 test('handleWhatsappMessage skips untracked groups', async () => {
+  resetIngestTestState();
   const result = await handleWhatsappMessage(
     makeMsg({
       body: 'Hiring Backend engineer Node.js',
@@ -116,6 +152,7 @@ test('handleWhatsappMessage skips untracked groups', async () => {
       jobsConfig: JOBS_CONFIG,
       mongoReady: () => true,
       isTrackedGroupName: async () => false,
+      ...silentNotify,
       upsertDiscoveredJob: async () => {
         throw new Error('should not upsert');
       },
@@ -124,25 +161,100 @@ test('handleWhatsappMessage skips untracked groups', async () => {
   assert.equal(result.skipped, 'group_not_tracked');
 });
 
-test('handleWhatsappMessage skips media when textOnly', async () => {
+test('handleWhatsappMessage keeps media when caption/body present', async () => {
+  resetIngestTestState();
   const result = await handleWhatsappMessage(
-    makeMsg({ body: 'Backend', hasMedia: true }),
+    makeMsg({
+      body: 'דרוש מפתח Backend / Full Stack עם Node.js — https://jobs.example.com/x',
+      hasMedia: true,
+    }),
     {
       jobsConfig: JOBS_CONFIG,
       mongoReady: () => true,
       isTrackedGroupName: async () => true,
+      ...silentNotify,
+      upsertDiscoveredJob: async (matched) => ({
+        job: { jobId: 'media1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+      }),
+    }
+  );
+  assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage skips media without caption when textOnly', async () => {
+  const result = await handleWhatsappMessage(
+    makeMsg({ body: '', hasMedia: true }),
+    {
+      jobsConfig: JOBS_CONFIG,
+      mongoReady: () => true,
+      isTrackedGroupName: async () => true,
+      ...silentNotify,
     }
   );
   assert.equal(result.skipped, 'media');
 });
 
-test('attachMessageIngest listens and calls handler path', async () => {
+test('handleWhatsappMessage does not drop @lid group senders', async () => {
+  resetIngestTestState();
+  const result = await handleWhatsappMessage(
+    makeMsg({
+      body: 'Hiring Backend engineer Node.js apply https://jobs.example.com/be',
+      from: '12345@lid',
+      to: '120363-jobs@g.us',
+    }),
+    {
+      jobsConfig: JOBS_CONFIG,
+      mongoReady: () => true,
+      isTrackedGroupName: async () => true,
+      ...silentNotify,
+      upsertDiscoveredJob: async (matched) => ({
+        job: { jobId: 'lid1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+      }),
+    }
+  );
+  assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage buffers when mongo is down', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-buf-'));
+  const bufferPath = path.join(dir, 'wa.jsonl');
+  try {
+    const result = await handleWhatsappMessage(
+      makeMsg({
+        body: 'Hiring Backend engineer Node.js apply https://jobs.example.com/be',
+      }),
+      {
+        jobsConfig: JOBS_CONFIG,
+        mongoReady: () => false,
+        isTrackedGroupName: async () => true,
+        bufferPath,
+        ...silentNotify,
+        upsertDiscoveredJob: async () => {
+          throw new Error('should not upsert');
+        },
+      }
+    );
+    assert.equal(result.skipped, 'mongo_unavailable');
+    assert.equal(result.buffered, true);
+    assert.ok(fs.existsSync(bufferPath));
+    const lines = fs.readFileSync(bufferPath, 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('attachMessageIngest listens on message_create', async () => {
+  resetIngestTestState();
   const client = new EventEmitter();
   const upserts = [];
   attachMessageIngest(client, {
     jobsConfig: JOBS_CONFIG,
     mongoReady: () => true,
     isTrackedGroupName: async () => true,
+    ...silentNotify,
     upsertDiscoveredJob: async (matched) => {
       const row = { job: { jobId: 'x', status: 'discovered' }, isNew: true };
       upserts.push(matched);
@@ -152,21 +264,23 @@ test('attachMessageIngest listens and calls handler path', async () => {
   });
 
   client.emit(
-    'message',
+    'message_create',
     makeMsg({
       body: 'Looking for a Full Stack developer with React and Node.js apply https://jobs.example.com/fs',
     })
   );
-  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 80));
   assert.ok(upserts.length >= 1);
 });
 
 test('startIngestWhenReady seeds and attaches on session ready', async () => {
+  resetIngestTestState();
   const client = new EventEmitter();
   let seeded = false;
   let attached = false;
   const session = createWhatsappSession({
     onLog: () => {},
+    autoReconnect: false,
     createClient: async () => client,
   });
 
@@ -179,6 +293,7 @@ test('startIngestWhenReady seeds and attaches on session ready', async () => {
     jobsConfig: JOBS_CONFIG,
     mongoReady: () => true,
     isTrackedGroupName: async () => true,
+    ...silentNotify,
     upsertDiscoveredJob: async () => {
       attached = true;
       return { job: { jobId: 'z', status: 'discovered' }, isNew: true };
@@ -186,16 +301,16 @@ test('startIngestWhenReady seeds and attaches on session ready', async () => {
   });
 
   session._setStateForTests('authenticated', '', { client, emitReady: true });
-  await new Promise((r) => setTimeout(r, 30));
+  await new Promise((r) => setTimeout(r, 40));
   assert.equal(seeded, true);
 
   client.emit(
-    'message',
+    'message_create',
     makeMsg({
       body: 'Backend NestJS role — email hr@example.com',
     })
   );
-  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 80));
   assert.equal(attached, true);
 });
 

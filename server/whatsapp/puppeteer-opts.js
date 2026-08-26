@@ -10,7 +10,8 @@ export function buildWhatsappPuppeteerOpts(env = process.env) {
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
-    '--disable-features=site-per-process',
+    '--no-first-run',
+    '--disable-extensions',
   ];
   const opts = {
     headless: true,

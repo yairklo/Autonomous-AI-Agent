@@ -1,5 +1,6 @@
 /**
- * WhatsApp → Mongo job ingest on the shared session client (listen-only).
+ * WhatsApp → queue → raw persist → matcher → Mongo Job + Telegram.
+ * Event handler only enqueues; heavy work runs on a bounded worker.
  */
 
 import { filterTargetJobs } from '../jobs/job-matcher.js';
@@ -11,9 +12,68 @@ import {
   isTrackedGroupName,
   mongoReady,
 } from './group-store.js';
-import { upsertDiscoveredJob } from './job-store.js';
+import {
+  persistRawWhatsappMessage,
+  upsertDiscoveredJob,
+  waMessageIdFromMsg,
+} from './job-store.js';
+import { groupChatIdFromMessage, resolveChatInfo } from './chat-cache.js';
+import { createIngestQueue } from './ingest-queue.js';
+import {
+  appendIngestBuffer,
+  defaultBufferPath,
+  readAndClearIngestBuffer,
+} from './ingest-buffer.js';
+import { notifyLiveJob } from './notify-job.js';
 
 const ATTACHED = Symbol('waMessageIngestAttached');
+const SKIP_FROM = /status@broadcast|@newsletter/i;
+const SKIP_TYPES = new Set([
+  'e2e_notification',
+  'notification_template',
+  'gp2',
+  'protocol',
+  'ciphertext',
+]);
+
+function extractBody(msg) {
+  const caption = String(msg?.caption || msg?._data?.caption || '').trim();
+  return String(msg?.body || msg?.text || caption || '').trim();
+}
+
+export function serializeWhatsappMessage(msg) {
+  const chatId = groupChatIdFromMessage(msg);
+  const ts = msg?.timestamp
+    ? msg.timestamp > 1e12
+      ? msg.timestamp
+      : msg.timestamp * 1000
+    : Date.now();
+  return {
+    messageId: waMessageIdFromMsg(msg),
+    chatId,
+    from: msg?.from || '',
+    to: msg?.to || '',
+    body: extractBody(msg),
+    text: extractBody(msg),
+    hasMedia: Boolean(msg?.hasMedia),
+    caption: String(msg?.caption || msg?._data?.caption || ''),
+    author: msg?.author || msg?.notifyName || '',
+    notifyName: msg?.notifyName || '',
+    fromMe: Boolean(msg?.fromMe || msg?.id?.fromMe),
+    timestamp: ts,
+    type: String(msg?.type || 'chat'),
+    groupName: msg?.groupName || '',
+    isStatus: Boolean(msg?.isStatus),
+  };
+}
+
+function shouldIgnoreSerialized(msg) {
+  const from = String(msg.from || '');
+  if (msg.isStatus) return 'status';
+  if (SKIP_FROM.test(from)) return 'status';
+  if (SKIP_TYPES.has(msg.type) && !msg.body) return 'protocol';
+  return null;
+}
 
 /**
  * Process one inbound WhatsApp message (group text → optional Job upsert).
@@ -24,45 +84,76 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   const jobsConfig = deps.jobsConfig || loadJobsConfig();
   const upsert = deps.upsertDiscoveredJob || upsertDiscoveredJob;
   const isTracked = deps.isTrackedGroupName || isTrackedGroupName;
+  const persistRaw = deps.persistRawWhatsappMessage || persistRawWhatsappMessage;
+  const notify = deps.notifyLiveJob || notifyLiveJob;
+  const mongoIsReady =
+    typeof deps.mongoReady === 'function' ? deps.mongoReady() : mongoReady();
 
-  if (jobsConfig.whatsapp?.textOnly && msg?.hasMedia) {
+  const liveGetChat = typeof msg?.getChat === 'function' ? msg.getChat.bind(msg) : null;
+  const serialized =
+    typeof msg?.getChat === 'function' || msg?.id
+      ? {
+          ...serializeWhatsappMessage(msg),
+          getChat: liveGetChat || undefined,
+          chat: msg.chat,
+        }
+      : { ...msg, body: extractBody(msg), text: extractBody(msg) };
+  const ignore = shouldIgnoreSerialized(serialized);
+  if (ignore) return { skipped: ignore };
+
+  const body = extractBody(serialized);
+  const hasMedia = Boolean(serialized.hasMedia);
+  if (jobsConfig.whatsapp?.textOnly && hasMedia && !body) {
     return { skipped: 'media' };
   }
 
-  let chat;
-  const chatId = msg.from?.includes('@g.us') ? msg.from : (msg.to?.includes('@g.us') ? msg.to : msg.from);
-  try {
-    chat = typeof msg.getChat === 'function' ? await msg.getChat() : msg.chat;
-  } catch (err) {
-    if (deps.client && typeof deps.client.getChatById === 'function' && chatId) {
-      try {
-        chat = await deps.client.getChatById(chatId);
-      } catch (err2) {
-        onLog(`[whatsapp-ingest] getChatById also failed, falling back to raw ID (chatId: ${chatId})`);
-        chat = null;
-      }
-    } else {
-      onLog(`[whatsapp-ingest] getChat failed, falling back to raw ID (chatId: ${chatId})`);
-      chat = null;
-    }
-  }
+  const chatInfo = await resolveChatInfo(serialized, deps.client, onLog);
+  const isGroup = Boolean(chatInfo.isGroup);
+  const groupName = String(chatInfo.name || serialized.groupName || chatInfo.chatId || '').trim();
+  const chatId = chatInfo.chatId || serialized.chatId;
 
-  const isGroup = Boolean(chat?.isGroup || chatId?.includes('@g.us'));
-  // If we couldn't get the chat name, fallback to the raw chatId!
-  const groupName = String(chat?.name || msg.groupName || chatId || '').trim();
-  const body = String(msg.body || msg.text || '').trim();
-
-  // Log incoming message to debug
-  onLog(`[whatsapp-ingest] MSG RECV | groupName="${groupName}" | isGroup=${isGroup} | from=${msg.from} | bodyPreview="${body.substring(0, 30)}"`);
+  onLog(
+    `[whatsapp-ingest] MSG RECV | groupName="${groupName}" | isGroup=${isGroup} | from=${serialized.from} | bodyPreview="${body.substring(0, 30)}"`
+  );
 
   if (!isGroup) {
-    onLog(`[whatsapp-ingest] skipped: not_group (from: ${msg.from})`);
+    onLog(`[whatsapp-ingest] skipped: not_group (from: ${serialized.from})`);
     return { skipped: 'not_group' };
   }
 
   if (!groupName) {
-    onLog(`[whatsapp-ingest] skipped: no_group_name (from: ${msg.from})`);
+    onLog(`[whatsapp-ingest] skipped: no_group_name (from: ${serialized.from})`);
     return { skipped: 'no_group_name' };
+  }
+
+  if (!mongoIsReady) {
+    const buf = deps.bufferPath || defaultBufferPath();
+    appendIngestBuffer(
+      { ...serialized, groupName, chatId, body, text: body },
+      buf
+    );
+    onLog('[whatsapp-ingest] mongo unavailable — buffered to disk');
+    return { skipped: 'mongo_unavailable', buffered: true };
+  }
+
+  const raw = await persistRaw({
+    messageId: serialized.messageId,
+    chatId,
+    chatName: groupName,
+    fromMe: serialized.fromMe,
+    timestamp: serialized.timestamp,
+    type: serialized.type,
+    body,
+    hasMedia,
+    author: serialized.author,
+    raw: {
+      from: serialized.from,
+      to: serialized.to,
+      type: serialized.type,
+    },
+  });
+  if (raw.stored && raw.isNew === false) {
+    return { skipped: 'duplicate_message' };
   }
 
   let tracked = false;
@@ -72,7 +163,6 @@ export async function handleWhatsappMessage(msg, deps = {}) {
     tracked = false;
   }
   if (!tracked) {
-    // Fallback while Mongo empty/unavailable: config.json allow-list
     if (!isAllowedGroup(groupName, jobsConfig)) {
       onLog(`[whatsapp-ingest] skipped: group_not_tracked (groupName: "${groupName}")`);
       return { skipped: 'group_not_tracked' };
@@ -89,11 +179,9 @@ export async function handleWhatsappMessage(msg, deps = {}) {
       {
         body,
         text: body,
-        author: msg.author || msg.notifyName || 'unknown',
+        author: serialized.author || serialized.notifyName || 'unknown',
         groupName,
-        timestamp: msg.timestamp
-          ? new Date(msg.timestamp * 1000).toISOString()
-          : new Date().toISOString(),
+        timestamp: new Date(serialized.timestamp || Date.now()).toISOString(),
       },
     ],
     { roles: jobsConfig.roles || [] }
@@ -101,10 +189,6 @@ export async function handleWhatsappMessage(msg, deps = {}) {
 
   if (!matched.length) {
     return { skipped: 'not_target_job' };
-  }
-
-  if (typeof deps.mongoReady === 'function' ? !deps.mongoReady() : !mongoReady()) {
-    return { skipped: 'mongo_unavailable', matchedCount: matched.length };
   }
 
   const results = [];
@@ -117,21 +201,42 @@ export async function handleWhatsappMessage(msg, deps = {}) {
     onLog(
       `[whatsapp-ingest] ${upserted.isNew ? 'new' : 'dup'} job=${upserted.job.jobId} group=${groupName}`
     );
+    if (upserted.isNew && deps.notifyTelegram !== false) {
+      await notify(job, { groupName, onLog });
+    }
   }
+  deps.session?.markEvent?.();
   return { results };
+}
+
+export async function drainIngestBuffer(deps = {}) {
+  const onLog = deps.onLog || (() => {});
+  const items = readAndClearIngestBuffer(deps.bufferPath || defaultBufferPath());
+  if (!items.length) return { drained: 0 };
+  onLog(`[whatsapp-ingest] draining ${items.length} buffered message(s)`);
+  let drained = 0;
+  for (const item of items) {
+    try {
+      await handleWhatsappMessage(item, deps);
+      drained += 1;
+    } catch (err) {
+      onLog(`[whatsapp-ingest] buffer drain error: ${err.message}`);
+    }
+  }
+  return { drained };
 }
 
 /**
  * Attach a single message listener to the shared WA client.
- * @returns {{ detach: () => void }}
+ * @returns {{ detach: () => void, queue: ReturnType<typeof createIngestQueue> }}
  */
 export function attachMessageIngest(client, deps = {}) {
   const onLog = deps.onLog || ((line) => console.log(line));
   if (!client || typeof client.on !== 'function') {
-    return { detach: () => {} };
+    return { detach: () => {}, queue: null };
   }
   if (client[ATTACHED]) {
-    return { detach: client[ATTACHED].detach };
+    return { detach: client[ATTACHED].detach, queue: client[ATTACHED].queue };
   }
 
   try {
@@ -140,20 +245,27 @@ export function attachMessageIngest(client, deps = {}) {
     /* ignore */
   }
 
+  const queue = createIngestQueue({
+    concurrency: Number(process.env.WHATSAPP_INGEST_CONCURRENCY || 2),
+    handler: (payload) =>
+      handleWhatsappMessage(payload, { ...deps, client }).catch((err) => {
+        onLog(`[whatsapp-ingest] handler error: ${err.message}`);
+      }),
+    onLog,
+  });
+
   const handler = (msg) => {
-    // Suppress noisy internal whatsapp messages (like status/linked devices)
-    // ONLY if they are not explicitly sent to a group.
-    if (msg?.from?.includes('@lid') || msg?.from?.includes('@broadcast')) {
-      if (!msg?.to?.includes('@g.us')) {
-        return;
-      }
+    const serialized = serializeWhatsappMessage(msg);
+    if (typeof msg?.getChat === 'function') {
+      serialized.getChat = msg.getChat.bind(msg);
+      serialized.chat = msg.chat;
     }
-    void handleWhatsappMessage(msg, { ...deps, client }).catch((err) => {
-      onLog(`[whatsapp-ingest] handler error: ${err.message}`);
-    });
+    if (msg?.groupName) serialized.groupName = msg.groupName;
+    const ignore = shouldIgnoreSerialized(serialized);
+    if (ignore) return;
+    queue.push(serialized);
   };
 
-  // Use 'message_create' to also capture messages sent by the user themselves (e.g. forwarding a job to "Me")
   client.on('message_create', handler);
   const detach = () => {
     if (typeof client.off === 'function') client.off('message_create', handler);
@@ -162,9 +274,9 @@ export function attachMessageIngest(client, deps = {}) {
     }
     delete client[ATTACHED];
   };
-  client[ATTACHED] = { detach };
-  onLog('[whatsapp-ingest] message listener attached');
-  return { detach };
+  client[ATTACHED] = { detach, queue };
+  onLog('[whatsapp-ingest] message_create listener attached (queued)');
+  return { detach, queue };
 }
 
 /**
@@ -194,8 +306,13 @@ export function startIngestWhenReady(session, deps = {}) {
       } catch (err) {
         onLog(`[whatsapp-ingest] seed failed: ${err.message}`);
       }
-      const attached = attachMessageIngest(client, deps);
+      const attached = attachMessageIngest(client, { ...deps, session });
       detachIngest = attached.detach;
+      try {
+        await drainIngestBuffer({ ...deps, client, session });
+      } catch (err) {
+        onLog(`[whatsapp-ingest] drain failed: ${err.message}`);
+      }
     })();
   });
 

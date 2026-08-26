@@ -1,9 +1,10 @@
 /**
- * Mongo Job upsert helpers for WhatsApp ingest (status: discovered).
+ * Mongo Job + raw WhatsApp message upsert helpers.
  */
 
 import mongoose from 'mongoose';
 import { Job } from '../models/Job.js';
+import { WhatsappMessage } from '../models/WhatsappMessage.js';
 import { JobDb } from '../jobs/job-db.js';
 
 export function mongoReady() {
@@ -13,10 +14,53 @@ export function mongoReady() {
 export function fingerprintFromMatchedJob(job) {
   return JobDb.fingerprint({
     text: job.text || job.body || job.rawText || '',
-    groupName: job.groupName || '',
     author: job.author || '',
     formUrl: job.formUrl || job.contacts?.urls?.[0] || job.applyUrl || '',
   });
+}
+
+export function waMessageIdFromMsg(msg = {}) {
+  if (msg.messageId) return String(msg.messageId);
+  const id = msg.id;
+  if (id && typeof id === 'object') {
+    return String(id._serialized || id.id || '');
+  }
+  return String(id || '');
+}
+
+/**
+ * Insert raw WA message. Duplicate (chatId+messageId) returns isNew: false.
+ * @returns {Promise<{ stored: boolean, isNew: boolean, reason?: string }>}
+ */
+export async function persistRawWhatsappMessage(doc) {
+  if (!mongoReady()) {
+    return { stored: false, isNew: false, reason: 'mongo_unavailable' };
+  }
+  const messageId = String(doc.messageId || '').trim();
+  const chatId = String(doc.chatId || '').trim();
+  if (!messageId || !chatId) {
+    return { stored: false, isNew: true, reason: 'missing_id' };
+  }
+  try {
+    await WhatsappMessage.create({
+      messageId,
+      chatId,
+      chatName: doc.chatName || '',
+      fromMe: Boolean(doc.fromMe),
+      timestamp: doc.timestamp ? new Date(doc.timestamp) : new Date(),
+      type: doc.type || 'chat',
+      body: doc.body || '',
+      hasMedia: Boolean(doc.hasMedia),
+      author: doc.author || '',
+      raw: doc.raw || {},
+    });
+    return { stored: true, isNew: true };
+  } catch (err) {
+    if (err?.code === 11000) {
+      return { stored: true, isNew: false };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -44,51 +88,71 @@ export async function upsertDiscoveredJob(
     fingerprintFromMatchedJob({
       ...matched,
       text: rawText,
-      groupName: groupName || matched.groupName,
       applyUrl,
     });
 
-  const existing = await Job.findOne({ fingerprint }).lean();
-  if (existing) {
-    return { job: existing, isNew: false, duplicateOf: existing.jobId };
-  }
-
-  const jobId = fingerprint;
   const title =
     String(matched.title || '').trim() ||
     rawText.split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 120) ||
     'WhatsApp job';
 
-  const doc = await Job.create({
-    jobId,
-    source: 'whatsapp_group',
-    groupId: groupId || '',
-    title,
-    company: String(matched.company || '').trim(),
-    description: rawText.slice(0, 4000),
-    applyUrl,
-    status: 'discovered',
-    fingerprint,
-    rawText,
-    parsedData: {
-      score: matched.score ?? null,
-      rolesMatched: matched.rolesMatched || [],
-      matchedSignals: matched.matchedSignals || [],
-      contacts: matched.contacts || {},
-      groupName: groupName || matched.groupName || '',
-      author: matched.author || '',
-    },
-    applicationLog: [
-      {
-        at: new Date(),
-        action: 'discovered',
-        ok: true,
-        detail: `Ingested from WhatsApp group ${groupName || groupId || 'unknown'}`,
-      },
-    ],
-  });
+  try {
+    const existing = await Job.findOne({ fingerprint });
+    if (existing) {
+      const seen = existing.parsedData?.seenInGroups || [];
+      if (groupName && !seen.includes(groupName)) {
+        existing.parsedData = {
+          ...(existing.parsedData || {}),
+          seenInGroups: [...seen, groupName],
+        };
+        existing.markModified('parsedData');
+        await existing.save();
+      }
+      return {
+        job: existing.toObject(),
+        isNew: false,
+        duplicateOf: existing.jobId,
+      };
+    }
 
-  return { job: doc.toObject(), isNew: true };
+    const doc = await Job.create({
+      jobId: fingerprint,
+      source: 'whatsapp_group',
+      groupId: groupId || '',
+      title,
+      company: String(matched.company || '').trim(),
+      description: rawText.slice(0, 4000),
+      applyUrl,
+      status: 'discovered',
+      fingerprint,
+      rawText,
+      parsedData: {
+        score: matched.score ?? null,
+        rolesMatched: matched.rolesMatched || [],
+        matchedSignals: matched.matchedSignals || [],
+        contacts: matched.contacts || {},
+        groupName: groupName || matched.groupName || '',
+        author: matched.author || '',
+        seenInGroups: groupName ? [groupName] : [],
+      },
+      applicationLog: [
+        {
+          at: new Date(),
+          action: 'discovered',
+          ok: true,
+          detail: `Ingested from WhatsApp group ${groupName || groupId || 'unknown'}`,
+        },
+      ],
+    });
+
+    return { job: doc.toObject(), isNew: true };
+  } catch (err) {
+    if (err?.code === 11000) {
+      const dup = await Job.findOne({ fingerprint }).lean();
+      if (dup) return { job: dup, isNew: false, duplicateOf: dup.jobId };
+    }
+    throw err;
+  }
 }
 
 export async function listRecentJobs({ limit = 50, status } = {}) {

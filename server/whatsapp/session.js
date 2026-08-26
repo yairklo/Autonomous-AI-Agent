@@ -1,13 +1,17 @@
 /**
  * Non-blocking WhatsApp Web session (whatsapp-web.js + LocalAuth).
  * Never blocks HTTP boot — start() kicks initialize in the background.
+ *
+ * Reconnect: exponential backoff + jitter on transient drops.
+ * Permanent logout (LOGOUT / UNPAIRED / NAVIGATION) does not loop — waits for QR.
+ * After any disconnect, the Client is destroyed and a new instance is created.
  */
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import { buildWhatsappPuppeteerOpts } from './puppeteer-opts.js';
+import { buildWhatsappClientOptions } from './client-opts.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,11 +25,29 @@ export const WA_STATES = [
   'disconnected',
 ];
 
+const LOGOUT_RE = /LOGOUT|UNPAIRED|NAVIGATION|LOGGED.?OUT|CONFLICT/i;
+
+export function isPermanentDisconnect(reason) {
+  return LOGOUT_RE.test(String(reason || ''));
+}
+
 function defaultAuthPath() {
   return (
     String(process.env.WHATSAPP_AUTH_PATH || '').trim() ||
     path.join(root, '.wwebjs_auth')
   );
+}
+
+function unlinkSingletonLock(authPath, onLog) {
+  const lockPath = path.join(authPath, 'session', 'SingletonLock');
+  try {
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+      onLog(`[whatsapp-session] Removed stale SingletonLock at ${lockPath}`);
+    }
+  } catch (err) {
+    onLog(`[whatsapp-session] Could not remove SingletonLock: ${err.message}`);
+  }
 }
 
 /**
@@ -36,17 +58,31 @@ export function createWhatsappSession(opts = {}) {
   const authPath = opts.authPath || defaultAuthPath();
   const createClientImpl = opts.createClient || null;
   const notifyQr = opts.notifyQr || null;
+  const reconnectBaseMs = Number(opts.reconnectBaseMs ?? 1000);
+  const reconnectMaxMs = Number(opts.reconnectMaxMs ?? 30000);
+  const autoReconnect = opts.autoReconnect !== false;
 
   let state = 'uninitialized';
   let lastQr = '';
   let lastQrAt = null;
   let authenticatedAt = null;
+  let lastEventAt = null;
   let error = '';
   let client = null;
   let starting = false;
   let ready = false;
+  let stopping = false;
+  let haltReconnect = false;
+  let reconnectAttempt = 0;
+  let reconnectTimer = null;
+  let wired = false;
   /** @type {Set<(client: object, snap: object) => void>} */
   const readyListeners = new Set();
+
+  function touch(detail = '') {
+    lastEventAt = new Date().toISOString();
+    if (detail) onLog(`[whatsapp-session] event ${detail}`);
+  }
 
   function setState(next, detail = '') {
     state = next;
@@ -55,11 +91,14 @@ export function createWhatsappSession(opts = {}) {
     if (next === 'disconnected' || next === 'connecting' || next === 'qr_required') {
       ready = false;
     }
+    touch();
     onLog(`[whatsapp-session] state=${state}${detail ? ` ${detail}` : ''}`);
   }
 
   function emitReady() {
     ready = true;
+    reconnectAttempt = 0;
+    haltReconnect = false;
     const snap = snapshot();
     for (const fn of readyListeners) {
       try {
@@ -93,9 +132,13 @@ export function createWhatsappSession(opts = {}) {
       hasQr: Boolean(lastQr),
       lastQrAt,
       authenticatedAt,
+      lastEventAt,
       error,
       authPath,
       starting,
+      ready,
+      reconnectAttempt,
+      haltReconnect,
     };
   }
 
@@ -106,6 +149,59 @@ export function createWhatsappSession(opts = {}) {
       at: lastQrAt,
       state,
     };
+  }
+
+  function clearReconnectTimer() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  function scheduleReconnect(reason) {
+    if (!autoReconnect || stopping || haltReconnect) return;
+    clearReconnectTimer();
+    const exp = reconnectBaseMs * 2 ** Math.min(reconnectAttempt, 8);
+    const jitter = Math.floor(Math.random() * Math.min(400, reconnectBaseMs));
+    const delay = Math.min(reconnectMaxMs, exp) + jitter;
+    reconnectAttempt += 1;
+    onLog(
+      `[whatsapp-session] reconnect in ${delay}ms attempt=${reconnectAttempt} reason=${reason}`
+    );
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void start().catch((err) =>
+        onLog(`[whatsapp-session] reconnect failed: ${err.message}`)
+      );
+    }, delay);
+  }
+
+  async function destroyClient() {
+    const current = client;
+    client = null;
+    wired = false;
+    ready = false;
+    if (!current) return;
+    try {
+      if (typeof current.destroy === 'function') await current.destroy();
+    } catch (err) {
+      onLog(`[whatsapp-session] destroy: ${err.message}`);
+    }
+  }
+
+  async function handleDisconnect(reason) {
+    if (stopping) return;
+    const detail = String(reason || 'disconnected');
+    setState('disconnected', detail);
+    await destroyClient();
+    if (isPermanentDisconnect(detail)) {
+      haltReconnect = true;
+      lastQr = '';
+      setState('qr_required', `logged_out: ${detail}`);
+      onLog('[whatsapp-session] permanent disconnect — waiting for QR / POST /api/whatsapp/start');
+      return;
+    }
+    scheduleReconnect(detail);
   }
 
   async function buildClient() {
@@ -123,7 +219,6 @@ export function createWhatsappSession(opts = {}) {
       err.cause = cause;
       throw err;
     }
-    // ESM interop: LocalAuth lives on default export in current whatsapp-web.js.
     const wweb = wwebMod.default || wwebMod;
     const Client = wweb.Client || wwebMod.Client;
     const LocalAuth = wweb.LocalAuth || wwebMod.LocalAuth;
@@ -134,14 +229,12 @@ export function createWhatsappSession(opts = {}) {
       err.code = 'WA_CLIENT_EXPORT';
       throw err;
     }
-    return new Client({
-      authStrategy: new LocalAuth({ dataPath: authPath }),
-      puppeteer: buildWhatsappPuppeteerOpts(),
-    });
+    return new Client(buildWhatsappClientOptions({ LocalAuth, authPath }));
   }
 
   function wireClient(c) {
-    if (typeof c.on !== 'function') return;
+    if (typeof c.on !== 'function' || wired) return;
+    wired = true;
 
     c.on('qr', (qr) => {
       lastQr = String(qr || '');
@@ -174,45 +267,49 @@ export function createWhatsappSession(opts = {}) {
     });
 
     c.on('auth_failure', (msg) => {
-      setState('disconnected', `auth_failure: ${msg}`);
+      haltReconnect = true;
+      void handleDisconnect(`auth_failure: ${msg}`);
     });
 
     c.on('disconnected', (reason) => {
-      setState('disconnected', String(reason || 'disconnected'));
+      void handleDisconnect(reason);
     });
   }
 
   /**
    * Start session without blocking the caller on QR scan.
-   * initialize() runs in background.
+   * initialize() runs in background. Always builds a new Client after disconnect.
    */
   async function start() {
-    if (state === 'authenticated' && client) {
+    if (stopping) {
+      stopping = false;
+    }
+    if (state === 'authenticated' && client && ready) {
       return snapshot();
     }
     if (starting) {
       return snapshot();
     }
+    if (
+      client &&
+      (state === 'connecting' ||
+        state === 'qr_required' ||
+        (state === 'authenticated' && !ready))
+    ) {
+      return snapshot();
+    }
+    haltReconnect = false;
     starting = true;
     error = '';
     setState('connecting');
 
     try {
-      if (!client) {
-        // Clean up SingletonLock in case of a previous crash
-        const lockPath = path.join(authPath, 'session', 'SingletonLock');
-        try {
-          if (fs.existsSync(lockPath)) {
-            fs.unlinkSync(lockPath);
-            onLog(`[whatsapp-session] Removed stale SingletonLock at ${lockPath}`);
-          }
-        } catch (err) {
-          onLog(`[whatsapp-session] Could not remove SingletonLock: ${err.message}`);
-        }
-
-        client = await buildClient();
-        wireClient(client);
+      if (client) {
+        await destroyClient();
       }
+      unlinkSingletonLock(authPath, onLog);
+      client = await buildClient();
+      wireClient(client);
       const initPromise =
         typeof client.initialize === 'function'
           ? client.initialize()
@@ -221,9 +318,13 @@ export function createWhatsappSession(opts = {}) {
         .then(() => {
           starting = false;
         })
-        .catch((err) => {
+        .catch(async (err) => {
           starting = false;
           setState('disconnected', err.message || String(err));
+          await destroyClient();
+          if (!stopping && autoReconnect && !haltReconnect) {
+            scheduleReconnect(err.message || 'initialize_failed');
+          }
         });
     } catch (err) {
       starting = false;
@@ -235,15 +336,11 @@ export function createWhatsappSession(opts = {}) {
   }
 
   async function stop() {
+    stopping = true;
+    haltReconnect = true;
     starting = false;
-    try {
-      if (client && typeof client.destroy === 'function') {
-        await client.destroy();
-      }
-    } catch (err) {
-      onLog(`[whatsapp-session] destroy: ${err.message}`);
-    }
-    client = null;
+    clearReconnectTimer();
+    await destroyClient();
     lastQr = '';
     setState('disconnected', 'stopped');
     return snapshot();
@@ -253,8 +350,12 @@ export function createWhatsappSession(opts = {}) {
     return client;
   }
 
+  function markEvent() {
+    touch();
+  }
+
   /** Test helper: inject state without real WA. */
-  function _setStateForTests(next, qr = '', opts = {}) {
+  function _setStateForTests(next, qr = '', extra = {}) {
     state = next;
     if (qr) {
       lastQr = qr;
@@ -263,17 +364,22 @@ export function createWhatsappSession(opts = {}) {
     if (next === 'authenticated') {
       authenticatedAt = new Date().toISOString();
       lastQr = '';
+      ready = true;
     }
-    if (opts.client) {
-      client = opts.client;
+    if (extra.client) {
+      client = extra.client;
     }
-    if (opts.emitReady || (next === 'authenticated' && opts.client)) {
+    if (extra.emitReady || (next === 'authenticated' && extra.client)) {
       emitReady();
     }
+    if (extra.haltReconnect != null) haltReconnect = Boolean(extra.haltReconnect);
   }
 
   async function reset() {
     await stop();
+    stopping = false;
+    haltReconnect = false;
+    reconnectAttempt = 0;
     try {
       if (fs.existsSync(authPath)) {
         fs.rmSync(authPath, { recursive: true, force: true });
@@ -297,6 +403,7 @@ export function createWhatsappSession(opts = {}) {
     onReady,
     whenReady,
     isReady: () => ready,
+    markEvent,
     _setStateForTests,
   };
 }

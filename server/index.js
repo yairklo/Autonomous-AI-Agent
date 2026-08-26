@@ -121,6 +121,16 @@ app.get('/api/health', async (_req, res) => {
     whatsappExportsDir: config.whatsappExportsDir,
     cvApplicationsDir: config.cvApplicationsDir,
     time: new Date().toISOString(),
+    whatsapp: (() => {
+      const wa = getSharedWhatsappSession().snapshot();
+      return {
+        state: wa.state,
+        ready: Boolean(wa.ready || wa.state === 'authenticated'),
+        lastEventAt: wa.lastEventAt || null,
+        error: wa.error || '',
+        reconnectAttempt: wa.reconnectAttempt || 0,
+      };
+    })(),
   });
 });
 
@@ -1054,87 +1064,106 @@ async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
   });
 }
 
-const server = app.listen(config.port, config.host, async () => {
-  console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
-  console.log(
-    `[voice-agent] llmProvider=${llmProvider} llmModel=${llmModel} mock=${config.mock}`
-  );
-  console.log(`[voice-agent] claudeBin=${config.claudeBin}`);
-  console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
-  console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
-  console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
-  const mcpToolsList = await listMcpTools();
-  console.log(
-    `[voice-agent] mcpTools=${mcpToolsList
-      .map((t) => t.name)
-      .join(',')}`
-  );
-  console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
-  console.log(`[voice-agent] Terminal chat: npm run chat`);
-  console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
-  console.log(
-    `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
-  );
-  console.log(
-    `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`
-  );
-  startIngestWhenReady(getSharedWhatsappSession(), {
-    onLog: (line) => console.log(line),
-  });
-  maybeAutostartWhatsapp();
-
-  // joinUp Telegram is a separate Coolify app (Dockerfile.joinup-telegram).
-  // Coolify often still has JOINUP_TELEGRAM_AUTOSTART=1 from older deploys —
-  // that alone must NOT start the bot inside Dockerfile.app.
-  // Embedded mode requires BOTH flags (local combined process only).
-  const tgAutostart = process.env.JOINUP_TELEGRAM_AUTOSTART === '1';
-  const tgAllowEmbedded = process.env.JOINUP_TELEGRAM_ALLOW_EMBEDDED === '1';
-  if (tgAutostart && tgAllowEmbedded) {
-    console.log(
-      '[voice-agent] starting embedded joinUp Telegram (JOINUP_TELEGRAM_ALLOW_EMBEDDED=1)'
-    );
-    import('./joinup-telegram/index.js')
-      .then(({ startJoinUpTelegramService }) =>
-        startJoinUpTelegramService({
-          onLog: (line) => console.log(line),
-        })
-      )
-      .catch((err) => {
-        console.error('[joinup-telegram] autostart failed:', err.message);
-      });
-  } else {
-    console.log(
-      '[voice-agent] joinUp Telegram NOT started in this process ' +
-        `(autostart=${tgAutostart ? '1' : '0'} allowEmbedded=${tgAllowEmbedded ? '1' : '0'}). ` +
-        'Use Coolify app Dockerfile.joinup-telegram, or npm run joinup:telegram.'
-    );
-    if (tgAutostart && !tgAllowEmbedded) {
-      console.warn(
-        '[voice-agent] JOINUP_TELEGRAM_AUTOSTART=1 ignored without JOINUP_TELEGRAM_ALLOW_EMBEDDED=1. ' +
-          'Remove AUTOSTART from Coolify env on the voice-agent app.'
-      );
+async function boot() {
+  if (config.mongoUri) {
+    try {
+      await mongoose.connect(config.mongoUri);
+      console.log('[voice-agent] Connected to MongoDB');
+    } catch (err) {
+      console.error('[voice-agent] MongoDB connection error:', err.message);
     }
   }
-});
 
-server.on('error', (err) => {
-  console.error('[voice-agent] failed to start:', err.message);
+  const server = app.listen(config.port, config.host, async () => {
+    console.log(`[voice-agent] listening on http://${config.host}:${config.port}`);
+    console.log(
+      `[voice-agent] llmProvider=${llmProvider} llmModel=${llmModel} mock=${config.mock}`
+    );
+    console.log(`[voice-agent] claudeBin=${config.claudeBin}`);
+    console.log(`[voice-agent] autoDispatchCoding=${config.autoDispatchCoding}`);
+    console.log(`[voice-agent] autoScanWhatsappJobs=${config.autoScanWhatsappJobs}`);
+    console.log(`[voice-agent] autoSubmitWhatsappCv=${config.autoSubmitWhatsappCv}`);
+    const mcpToolsList = await listMcpTools();
+    console.log(
+      `[voice-agent] mcpTools=${mcpToolsList
+        .map((t) => t.name)
+        .join(',')}`
+    );
+    console.log(`[voice-agent] Grill-Me Mode is default for interactive chat`);
+    console.log(`[voice-agent] Terminal chat: npm run chat`);
+    console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
+    console.log(
+      `[voice-agent] WhatsApp: GET /api/whatsapp/status | POST /api/whatsapp/start (non-blocking)`
+    );
+    console.log(
+      `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`
+    );
+    startIngestWhenReady(getSharedWhatsappSession(), {
+      onLog: (line) => console.log(line),
+    });
+    maybeAutostartWhatsapp();
+
+    const tgAutostart = process.env.JOINUP_TELEGRAM_AUTOSTART === '1';
+    const tgAllowEmbedded = process.env.JOINUP_TELEGRAM_ALLOW_EMBEDDED === '1';
+    if (tgAutostart && tgAllowEmbedded) {
+      console.log(
+        '[voice-agent] starting embedded joinUp Telegram (JOINUP_TELEGRAM_ALLOW_EMBEDDED=1)'
+      );
+      import('./joinup-telegram/index.js')
+        .then(({ startJoinUpTelegramService }) =>
+          startJoinUpTelegramService({
+            onLog: (line) => console.log(line),
+          })
+        )
+        .catch((err) => {
+          console.error('[joinup-telegram] autostart failed:', err.message);
+        });
+    } else {
+      console.log(
+        '[voice-agent] joinUp Telegram NOT started in this process ' +
+          `(autostart=${tgAutostart ? '1' : '0'} allowEmbedded=${tgAllowEmbedded ? '1' : '0'}). ` +
+          'Use Coolify app Dockerfile.joinup-telegram, or npm run joinup:telegram.'
+      );
+      if (tgAutostart && !tgAllowEmbedded) {
+        console.warn(
+          '[voice-agent] JOINUP_TELEGRAM_AUTOSTART=1 ignored without JOINUP_TELEGRAM_ALLOW_EMBEDDED=1. ' +
+            'Remove AUTOSTART from Coolify env on the voice-agent app.'
+        );
+      }
+    }
+  });
+
+  server.on('error', (err) => {
+    console.error('[voice-agent] failed to start:', err.message);
+    process.exit(1);
+  });
+
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[voice-agent] ${signal} — shutting down`);
+    try {
+      await getSharedWhatsappSession().stop();
+    } catch (err) {
+      console.warn(`[voice-agent] whatsapp stop: ${err.message}`);
+    }
+    try {
+      if (mongoose.connection.readyState) {
+        await mongoose.connection.close();
+      }
+    } catch (err) {
+      console.warn(`[voice-agent] mongo close: ${err.message}`);
+    }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 8000).unref();
+  };
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+}
+
+boot().catch((err) => {
+  console.error('[voice-agent] boot failed:', err.message || err);
   process.exit(1);
 });
 
-// Initialize Mongoose before listening
-if (config.mongoUri) {
-  mongoose.connect(config.mongoUri)
-    .then(() => console.log('[voice-agent] Connected to MongoDB'))
-    .catch(err => console.error('[voice-agent] MongoDB connection error:', err));
-    
-  // Graceful shutdown
-  process.on('SIGINT', async () => {
-    await mongoose.connection.close();
-    process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await mongoose.connection.close();
-    process.exit(0);
-  });
-}

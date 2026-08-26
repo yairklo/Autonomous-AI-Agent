@@ -16,7 +16,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { buildWhatsappPuppeteerOpts } from '../server/whatsapp/puppeteer-opts.js';
+import { buildWhatsappClientOptions } from '../server/whatsapp/client-opts.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,10 +65,9 @@ async function main() {
   console.log(`[whatsapp] LocalAuth path: ${authPath}`);
   console.log('[whatsapp] Creating client (headless Chromium)…');
 
-  const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: authPath }),
-    puppeteer: buildWhatsappPuppeteerOpts(),
-  });
+  const client = new Client(
+    buildWhatsappClientOptions({ LocalAuth, authPath })
+  );
 
   let exiting = false;
   const shutdown = async (code = 0) => {

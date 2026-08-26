@@ -43,14 +43,14 @@ export class JobDb {
   /**
    * Stable fingerprint for dedupe across groups / near-identical text.
    */
-  static fingerprint({ text = '', groupName = '', author = '', formUrl = '' } = {}) {
+  static fingerprint({ text = '', author = '', formUrl = '' } = {}) {
     const normalized = String(text || '')
       .toLowerCase()
       .replace(/\s+/g, ' ')
       .replace(/[^\p{L}\p{N}@./:\- ]+/gu, '')
       .trim()
       .slice(0, 800);
-    const key = [groupName, author, formUrl, normalized].join('|');
+    const key = [author, formUrl, normalized].join('|');
     return createHash('sha256').update(key).digest('hex').slice(0, 32);
   }
 
