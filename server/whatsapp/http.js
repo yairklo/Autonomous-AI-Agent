@@ -16,25 +16,34 @@ async function notifyQrViaTelegram({ qr, at }) {
   if (!botToken || !chatId) return { delivered: false };
   const tg = createTelegramClient({ botToken, chatId });
   if (!tg.configured) return { delivered: false };
-  const text = [
-    'WhatsApp QR required',
+  const caption = [
+    'WhatsApp QR required — scan with Linked devices',
     `At: ${at || new Date().toISOString()}`,
-    '',
-    'Open GET /api/whatsapp/qr on the voice-agent, or scan the QR printed in server logs.',
-    'Raw QR payload (first 200 chars):',
-    String(qr || '').slice(0, 200),
+    'Also: GET /api/whatsapp/qr',
   ].join('\n');
-  await tg.sendManualActionAlert(
-    { id: 'whatsapp-qr', formUrl: '', groupName: 'whatsapp' },
-    {
-      ats: 'whatsapp',
-      step: 'qr_scan',
-      code: 'WA_QR_REQUIRED',
-      message: text,
-      manualUrl: 'GET /api/whatsapp/qr',
-    }
-  );
-  return { delivered: true };
+  try {
+    const QRCode = (await import('qrcode')).default;
+    const png = await QRCode.toBuffer(qr, {
+      width: 280,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      type: 'png',
+    });
+    await tg.sendPhotoPng(png, caption);
+    return { delivered: true, image: true };
+  } catch (err) {
+    await tg.sendManualActionAlert(
+      { id: 'whatsapp-qr', formUrl: '', groupName: 'whatsapp' },
+      {
+        ats: 'whatsapp',
+        step: 'qr_scan',
+        code: 'WA_QR_REQUIRED',
+        message: `${caption}\n(QR image failed: ${err.message})`,
+        manualUrl: 'GET /api/whatsapp/qr',
+      }
+    );
+    return { delivered: true, image: false };
+  }
 }
 
 /**

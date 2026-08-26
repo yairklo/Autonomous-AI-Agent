@@ -44,14 +44,13 @@ const JobSchema = new mongoose.Schema(
     },
     parsedData: { type: mongoose.Schema.Types.Mixed, default: {} },
     applicationLog: { type: [ApplicationLogSchema], default: [] },
-    fingerprint: { type: String, default: '', index: true },
+    fingerprint: { type: String, default: '', unique: true, sparse: true, index: true },
     rawText: { type: String, default: '' },
   },
   { timestamps: true }
 );
 
 JobSchema.index({ status: 1, updatedAt: -1 });
-JobSchema.index({ fingerprint: 1, source: 1 });
 
 export const Job =
   mongoose.models.Job || mongoose.model('Job', JobSchema);

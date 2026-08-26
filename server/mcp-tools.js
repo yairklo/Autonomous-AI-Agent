@@ -7,7 +7,6 @@ import {
   scanAndEnqueueJobs,
   submitApprovedJob,
 } from './jobs/pipeline.js';
-import { startWhatsappJobWatcher } from './jobs/whatsapp-live.js';
 import { loadJobsConfig } from './jobs/jobs-config.js';
 import { resolveDispatchScript, runDispatchTask } from './task-router.js';
 import { scanWhatsappJobs } from './whatsapp-job-scanner.js';
@@ -617,32 +616,22 @@ async function executeStartWhatsappWatcher(args = {}, { onLog } = {}) {
       groups: jobsConfig.whatsapp.groups,
       textOnly: jobsConfig.whatsapp.textOnly,
       neverSendMessages: true,
-      note: 'Pass dryRun=false with whatsapp-web.js installed to connect (QR). Sends remain blocked.',
+      note: 'Pass dryRun=false to start the shared HTTP WhatsApp session (one Chrome). Live ingest is already attached on ready.',
     };
   }
 
-  const watcher = await startWhatsappJobWatcher({
-    jobsConfig,
-    onLog,
-    onJob: async (job) => {
-      onLog?.(`[mcp] realtime job matched group=${job.groupName} score=${job.score}`);
-      await scanAndEnqueueJobs({
-        configPath: args.configPath,
-        messages: [job],
-        notifyTelegram: true,
-        dryRunTelegram: !jobsConfig.telegram.botToken,
-        onLog,
-      });
-    },
-  });
-
-  onLog?.(`[mcp] tool=start_whatsapp_job_watcher status=ok live=true`);
+  const { getSharedWhatsappSession } = await import('./whatsapp/session.js');
+  const session = getSharedWhatsappSession();
+  const snap = await session.start();
+  onLog?.('[mcp] tool=start_whatsapp_job_watcher status=ok sharedSession=true');
   return {
     ok: true,
     tool: 'start_whatsapp_job_watcher',
     dryRun: false,
+    sharedSession: true,
     groups: jobsConfig.whatsapp.groups,
-    stop: typeof watcher.stop === 'function' ? 'available' : null,
+    whatsapp: snap,
+    note: 'Using the shared voice-agent WhatsApp session (no second Chrome). Jobs persist via jobs-engine ingest (Mongo + Telegram).',
   };
 }
 

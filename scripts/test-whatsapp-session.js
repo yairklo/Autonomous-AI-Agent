@@ -56,6 +56,68 @@ test('whatsapp session start is non-blocking and surfaces QR', async () => {
   assert.ok(WA_STATES.includes('qr_required'));
 });
 
+test('whatsapp session rebuilds client after transient disconnect', async () => {
+  const logs = [];
+  let builds = 0;
+  let destroys = 0;
+
+  const session = createWhatsappSession({
+    onLog: (l) => logs.push(l),
+    autoReconnect: true,
+    reconnectBaseMs: 15,
+    reconnectMaxMs: 40,
+    createClient: async () => {
+      builds += 1;
+      const client = new EventEmitter();
+      client.initialize = async () => {
+        setTimeout(() => client.emit('ready'), 5);
+      };
+      client.destroy = async () => {
+        destroys += 1;
+      };
+      return client;
+    },
+  });
+
+  await session.start();
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(session.getState(), 'authenticated');
+  assert.equal(builds, 1);
+
+  session.getClient().emit('disconnected', 'timeout');
+  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(destroys >= 1);
+  assert.ok(builds >= 2);
+  await session.stop();
+});
+
+test('whatsapp session does not reconnect on LOGOUT', async () => {
+  let builds = 0;
+  const session = createWhatsappSession({
+    onLog: () => {},
+    autoReconnect: true,
+    reconnectBaseMs: 10,
+    reconnectMaxMs: 20,
+    createClient: async () => {
+      builds += 1;
+      const client = new EventEmitter();
+      client.initialize = async () => {
+        setTimeout(() => client.emit('ready'), 5);
+      };
+      client.destroy = async () => {};
+      return client;
+    },
+  });
+
+  await session.start();
+  await new Promise((r) => setTimeout(r, 40));
+  session.getClient().emit('disconnected', 'LOGOUT');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(builds, 1);
+  assert.equal(session.snapshot().haltReconnect, true);
+  await session.stop();
+});
+
 test('whatsapp HTTP status and qr routes', async () => {
   const session = createWhatsappSession({
     onLog: () => {},

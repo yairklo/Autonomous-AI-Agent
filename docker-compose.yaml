@@ -37,6 +37,7 @@ services:
       - JOINUP_TELEGRAM_AUTOSTART=0
       # Shared with joinup-telegram for /api/joinup/*
       - JOINUP_BOT_SHARED_SECRET=dev-shared-secret-change-me
+      - WHATSAPP_AUTOSTART=1
       # Inject secrets via Coolify / compose env file:
       # GITHUB_TOKEN (required for clone/push to all workspaces), TELEGRAM_*, JOINUP_TELEGRAM_*,
       # GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
@@ -49,6 +50,12 @@ services:
       - git_config:/root/.git-config-data
       - app_workspaces:/workspaces
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     # Interactive one-time login from Coolify terminal / SSH needs a TTY:
     #   docker compose exec -it app npm run auth:cli
 

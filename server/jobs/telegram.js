@@ -161,6 +161,31 @@ export function createTelegramClient({
       if (!m) return null;
       return { action: m[1], jobId: m[2] };
     },
+
+    async sendPhotoPng(pngBuffer, caption, { dryRun = false } = {}) {
+      if (dryRun || !token || !chat) {
+        return { ok: true, dryRun: true, caption };
+      }
+      const form = new FormData();
+      form.append('chat_id', chat);
+      form.append('caption', String(caption || '').slice(0, 1024));
+      form.append(
+        'photo',
+        new Blob([pngBuffer], { type: 'image/png' }),
+        'whatsapp-qr.png'
+      );
+      const url = `https://api.telegram.org/bot${token}/sendPhoto`;
+      const res = await fetchImpl(url, { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        const err = new Error(
+          data.description || `Telegram API sendPhoto failed (${res.status})`
+        );
+        err.code = 'TELEGRAM_API_ERROR';
+        throw err;
+      }
+      return { ok: true, dryRun: false, messageId: data.result?.message_id };
+    },
   };
 }
 

@@ -5,22 +5,8 @@
  * Groups must come from config.json allow-list (or data/whatsapp-groups.json override).
  */
 
-import { createRequire } from 'node:module';
 import { isAllowedGroup } from './jobs-config.js';
 import { filterTargetJobs } from './job-matcher.js';
-import { buildWhatsappPuppeteerOpts } from '../whatsapp/puppeteer-opts.js';
-
-const require = createRequire(import.meta.url);
-
-function printQrToTerminal(qr, onLog) {
-  onLog?.('[whatsapp] Scan this QR with WhatsApp → Linked devices:');
-  try {
-    const qrcode = require('qrcode-terminal');
-    qrcode.generate(qr, { small: true });
-  } catch {
-    onLog?.(`[whatsapp] QR (raw): ${qr}`);
-  }
-}
 
 /**
  * @param {object} opts
@@ -55,15 +41,15 @@ export async function startWhatsappJobWatcher({
 
   const client =
     injectedClient ||
-    (await (createClient || defaultCreateClient)({ onLog }));
+    (await (createClient || resolveSharedClient)({ onLog }));
 
   // Hard guard: wrap send APIs so they can never fire.
   sealClientAgainstSends(client, onLog);
 
   const handler = async (msg) => {
     try {
-      if (jobsConfig.whatsapp.textOnly && msg.hasMedia) {
-        onLog?.('[whatsapp] skipping media (textOnly=true)');
+      if (jobsConfig.whatsapp.textOnly && msg.hasMedia && !String(msg.body || msg.caption || '').trim()) {
+        onLog?.('[whatsapp] skipping media without caption (textOnly=true)');
         return;
       }
       const chat = await msg.getChat();
@@ -96,10 +82,11 @@ export async function startWhatsappJobWatcher({
   };
 
   if (typeof client.on === 'function') {
-    client.on('message', handler);
+    client.on('message_create', handler);
   }
 
-  if (typeof client.initialize === 'function') {
+  const ownClient = Boolean(injectedClient || createClient);
+  if (ownClient && typeof client.initialize === 'function') {
     await client.initialize();
   }
 
@@ -108,7 +95,7 @@ export async function startWhatsappJobWatcher({
     stop: async () => {
       if (typeof client.destroy === 'function') await client.destroy();
       else if (typeof client.removeAllListeners === 'function') {
-        client.removeAllListeners('message');
+        client.removeAllListeners('message_create');
       }
     },
   };
@@ -142,44 +129,21 @@ export function sealClientAgainstSends(client, onLog) {
   }
 }
 
-async function defaultCreateClient({ onLog } = {}) {
-  let wwebMod;
-  try {
-    wwebMod = await import('whatsapp-web.js');
-  } catch (cause) {
+async function resolveSharedClient({ onLog } = {}) {
+  const { getSharedWhatsappSession } = await import('../whatsapp/session.js');
+  const session = getSharedWhatsappSession();
+  if (!session.getClient()) {
+    await session.start();
+  }
+  const client = session.getClient();
+  if (!client) {
     const err = new Error(
-      'whatsapp-web.js is not installed. Run: npm install whatsapp-web.js'
+      'Shared WhatsApp session is not ready. POST /api/whatsapp/start and scan QR first (one Chrome only).'
     );
-    err.code = 'WA_CLIENT_MISSING';
-    err.cause = cause;
+    err.code = 'WA_NOT_READY';
     throw err;
   }
-  // ESM interop: LocalAuth lives on default export in current whatsapp-web.js.
-  const wweb = wwebMod.default || wwebMod;
-  const Client = wweb.Client || wwebMod.Client;
-  const LocalAuth = wweb.LocalAuth || wwebMod.LocalAuth;
-  if (typeof Client !== 'function' || typeof LocalAuth !== 'function') {
-    const err = new Error(
-      'whatsapp-web.js export shape unexpected (Client/LocalAuth missing)'
-    );
-    err.code = 'WA_CLIENT_EXPORT';
-    throw err;
-  }
-  onLog?.('[whatsapp] creating whatsapp-web.js Client (LocalAuth, local only)');
-  const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
-    puppeteer: buildWhatsappPuppeteerOpts(),
-  });
-  if (typeof client.on === 'function') {
-    client.on('qr', (qr) => printQrToTerminal(qr, onLog));
-    client.on('authenticated', () =>
-      onLog?.('[whatsapp] authenticated — session saved under .wwebjs_auth')
-    );
-    client.on('ready', () => onLog?.('[whatsapp] client ready (listen-only)'));
-    client.on('auth_failure', (msg) =>
-      onLog?.(`[whatsapp] auth failure: ${msg}`)
-    );
-  }
+  onLog?.('[whatsapp] using shared session client (refusing a second Chrome)');
   return client;
 }
 
@@ -191,7 +155,7 @@ export function analyzeRealtimeMessage(msg, jobsConfig) {
   if (!isAllowedGroup(groupName, jobsConfig)) {
     return { accepted: false, reason: 'group_not_in_config' };
   }
-  if (jobsConfig.whatsapp?.textOnly && msg.hasMedia) {
+  if (jobsConfig.whatsapp?.textOnly && msg.hasMedia && !String(msg.body || msg.text || msg.caption || '').trim()) {
     return { accepted: false, reason: 'media_skipped' };
   }
   const jobs = filterTargetJobs(

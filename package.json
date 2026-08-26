@@ -16,7 +16,7 @@
     "chat:mock": "node scripts/interactive-chat.js --mock",
     "chat:restart": "node scripts/interactive-chat.js --restart",
     "smoke": "node scripts/smoke-test.js",
-    "test": "node scripts/unit-tests.js",
+    "test": "node scripts/unit-tests.js && node scripts/test-whatsapp-session.js && node scripts/test-whatsapp-ingest.js",
     "test:ats": "node scripts/test-ats-submitter.js",
     "test:ats:workday": "cross-env RUN_WORKDAY_LIVE=1 HEADLESS_BROWSER=true node scripts/test-ats-submitter.js",
     "dispatch": "node scripts/dispatch-task.js",
@@ -68,7 +68,7 @@
   },
   "optionalDependencies": {
     "playwright": "^1.54.1",
-    "whatsapp-web.js": "^1.31.0"
+    "whatsapp-web.js": "^1.34.7"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
