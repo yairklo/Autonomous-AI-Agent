@@ -419,6 +419,32 @@ dialog::backdrop {
   border-color: rgba(125, 206, 160, 0.45);
 }
 
+.wa-messages-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.wa-messages-list li {
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(125, 206, 160, 0.18);
+  font-size: 0.82rem;
+}
+
+.wa-messages-list .wa-msg-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-bottom: 0.2rem;
+}
+  border-color: rgba(125, 206, 160, 0.45);
+}
+
 #waSessionHint[data-state='authenticated'] {
   color: #7dcea0;
 }

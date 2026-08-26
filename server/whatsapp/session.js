@@ -31,6 +31,11 @@ export function isPermanentDisconnect(reason) {
   return LOGOUT_RE.test(String(reason || ''));
 }
 
+/** Chrome never started — do not spawn more clients (process leak / Code 21). */
+export function isBrowserLaunchFailure(reason) {
+  return /Failed to launch the browser process/i.test(String(reason || ''));
+}
+
 function defaultAuthPath() {
   return (
     String(process.env.WHATSAPP_AUTH_PATH || '').trim() ||
@@ -320,10 +325,18 @@ export function createWhatsappSession(opts = {}) {
         })
         .catch(async (err) => {
           starting = false;
-          setState('disconnected', err.message || String(err));
+          const detail = err.message || String(err);
+          setState('disconnected', detail);
           await destroyClient();
+          if (isBrowserLaunchFailure(detail)) {
+            haltReconnect = true;
+            onLog(
+              '[whatsapp-session] Chrome launch failed — not retrying. Check PUPPETEER_EXECUTABLE_PATH / shm_size.'
+            );
+            return;
+          }
           if (!stopping && autoReconnect && !haltReconnect) {
-            scheduleReconnect(err.message || 'initialize_failed');
+            scheduleReconnect(detail || 'initialize_failed');
           }
         });
     } catch (err) {

@@ -17,7 +17,7 @@ import {
   upsertDiscoveredJob,
   waMessageIdFromMsg,
 } from './job-store.js';
-import { groupChatIdFromMessage, resolveChatInfo } from './chat-cache.js';
+import { groupChatIdFromMessage, resolveChatInfo, resolveDisplayName } from './chat-cache.js';
 import { createIngestQueue } from './ingest-queue.js';
 import {
   appendIngestBuffer,
@@ -109,17 +109,17 @@ export async function handleWhatsappMessage(msg, deps = {}) {
 
   const chatInfo = await resolveChatInfo(serialized, deps.client, onLog);
   const isGroup = Boolean(chatInfo.isGroup);
-  const groupName = String(chatInfo.name || serialized.groupName || chatInfo.chatId || '').trim();
+  const groupName = resolveDisplayName({
+    isGroup,
+    name: chatInfo.name || serialized.groupName,
+    chatId: chatInfo.chatId || serialized.chatId,
+    fromMe: serialized.fromMe,
+  });
   const chatId = chatInfo.chatId || serialized.chatId;
 
   onLog(
     `[whatsapp-ingest] MSG RECV | groupName="${groupName}" | isGroup=${isGroup} | from=${serialized.from} | bodyPreview="${body.substring(0, 30)}"`
   );
-
-  if (!isGroup) {
-    onLog(`[whatsapp-ingest] skipped: not_group (from: ${serialized.from})`);
-    return { skipped: 'not_group' };
-  }
 
   if (!groupName) {
     onLog(`[whatsapp-ingest] skipped: no_group_name (from: ${serialized.from})`);
@@ -267,16 +267,22 @@ export function attachMessageIngest(client, deps = {}) {
   };
 
   client.on('message_create', handler);
+  if (typeof client.on === 'function') {
+    client.on('message', handler);
+  }
   const detach = () => {
-    if (typeof client.off === 'function') client.off('message_create', handler);
-    else if (typeof client.removeListener === 'function') {
+    if (typeof client.off === 'function') {
+      client.off('message_create', handler);
+      client.off('message', handler);
+    } else if (typeof client.removeListener === 'function') {
       client.removeListener('message_create', handler);
+      client.removeListener('message', handler);
     }
     delete client[ATTACHED];
   };
   client[ATTACHED] = { detach, queue };
   onLog(
-    '[whatsapp-ingest] message_create listener attached (queued); captures all group/newsletter chats; job matching still uses tracked/allow-list'
+    '[whatsapp-ingest] message_create listener attached (queued); captures group/newsletter and 1:1 chats; job matching still uses tracked/allow-list'
   );
   return { detach, queue };
 }

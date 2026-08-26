@@ -589,6 +589,7 @@ test('whatsapp puppeteer opts honor executable path env', async () => {
   assert.equal(opts.executablePath, '/usr/bin/chromium');
   assert.ok(opts.args.includes('--no-sandbox'));
   assert.ok(opts.args.includes('--disable-dev-shm-usage'));
+  assert.ok(opts.args.includes('--no-zygote'));
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {

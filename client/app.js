@@ -90,6 +90,9 @@ const els = {
   waGroupsHint: document.getElementById('waGroupsHint'),
   waSessionHint: document.getElementById('waSessionHint'),
   waGroupSuggestions: document.getElementById('waGroupSuggestions'),
+  waMessagesList: document.getElementById('waMessagesList'),
+  waMessagesHint: document.getElementById('waMessagesHint'),
+  waMessagesRefresh: document.getElementById('waMessagesRefresh'),
 };
 
 const state = {
@@ -119,6 +122,7 @@ els.settingsBtn.addEventListener('click', () => {
   applySettingsToForm();
   els.settingsDialog.showModal();
   void loadWhatsappGroups();
+  void loadWhatsappMessages();
 });
 
 els.settingsDialog.addEventListener('close', () => {
@@ -170,6 +174,48 @@ if (els.waGroupInput) {
       void addWhatsappGroup();
     }
   });
+}
+
+if (els.waMessagesRefresh) {
+  els.waMessagesRefresh.addEventListener('click', () => void loadWhatsappMessages());
+}
+
+async function loadWhatsappMessages() {
+  if (!els.waMessagesList) return;
+  if (els.waMessagesHint) els.waMessagesHint.textContent = 'Loading messages…';
+  try {
+    const res = await fetch(api('/api/whatsapp/messages?limit=40'));
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    els.waMessagesList.replaceChildren();
+    const rows = Array.isArray(data.messages) ? data.messages : [];
+    if (!rows.length) {
+      const empty = document.createElement('li');
+      empty.textContent = 'No captured messages yet. Send a new WhatsApp message after connect.';
+      els.waMessagesList.appendChild(empty);
+    } else {
+      for (const m of rows) {
+        const li = document.createElement('li');
+        const meta = document.createElement('div');
+        meta.className = 'wa-msg-meta';
+        const when = m.timestamp ? new Date(m.timestamp).toLocaleString() : '';
+        meta.textContent = `${m.chatName || m.chatId || 'chat'} · ${when}${m.fromMe ? ' · you' : ''}`;
+        const body = document.createElement('div');
+        body.textContent = m.body || (m.hasMedia ? '(media)' : '');
+        li.append(meta, body);
+        els.waMessagesList.appendChild(li);
+      }
+    }
+    if (els.waMessagesHint) {
+      els.waMessagesHint.textContent = `${rows.length} message(s).`;
+    }
+  } catch (err) {
+    if (els.waMessagesHint) {
+      els.waMessagesHint.textContent = `Could not load messages: ${err.message}`;
+    }
+  }
 }
 
 async function loadWhatsappGroups() {
@@ -276,7 +322,7 @@ async function addWhatsappGroup() {
     if (data.whatsapp) updateWaSessionHint(data.whatsapp);
     else if (data.waState) updateWaSessionHint({ state: data.waState, ready: data.waState === 'authenticated' });
 
-    if (!res.ok || !data.ok || !data.found) {
+    if (!res.ok || !data.ok) {
       renderWaSuggestions(data.suggestions);
       const detail =
         data.message ||

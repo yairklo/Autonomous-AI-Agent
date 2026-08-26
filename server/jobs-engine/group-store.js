@@ -55,7 +55,7 @@ export async function trackGroupByName(
       },
       $setOnInsert: { addedAt: new Date() },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   ).lean();
   return doc;
 }
@@ -75,7 +75,7 @@ export async function untrackGroupByName(name) {
   const doc = await TrackedGroup.findOneAndUpdate(
     { name: new RegExp(`^${escapeRe(cleaned)}$`, 'i') },
     { $set: { active: false } },
-    { new: true }
+    { returnDocument: 'after' }
   ).lean();
   return doc;
 }

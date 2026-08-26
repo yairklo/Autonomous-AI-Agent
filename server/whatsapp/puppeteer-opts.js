@@ -11,12 +11,16 @@ export function buildWhatsappPuppeteerOpts(env = process.env) {
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--no-first-run',
+    '--no-zygote',
     '--disable-extensions',
   ];
   const opts = {
     headless: true,
     args,
   };
+  if (String(env.WHATSAPP_CHROME_DUMPIO || '').trim() === '1') {
+    opts.dumpio = true;
+  }
   const executablePath = String(
     env.PUPPETEER_EXECUTABLE_PATH || env.CHROME_PATH || ''
   ).trim();

@@ -166,3 +166,27 @@ export async function listRecentJobs({ limit = 50, status } = {}) {
   const lim = Math.min(Math.max(Number(limit) || 50, 1), 200);
   return Job.find(q).sort({ updatedAt: -1 }).limit(lim).lean();
 }
+
+export async function listRecentWhatsappMessages({
+  limit = 50,
+  chatId,
+  since,
+} = {}) {
+  if (!mongoReady()) {
+    const err = new Error('MongoDB is not connected');
+    err.code = 'MONGO_UNAVAILABLE';
+    throw err;
+  }
+  const q = {};
+  if (chatId) q.chatId = String(chatId);
+  if (since) {
+    const d = since instanceof Date ? since : new Date(since);
+    if (!Number.isNaN(d.getTime())) q.timestamp = { $gte: d };
+  }
+  const lim = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  return WhatsappMessage.find(q)
+    .sort({ timestamp: -1 })
+    .limit(lim)
+    .select({ raw: 0 })
+    .lean();
+}
