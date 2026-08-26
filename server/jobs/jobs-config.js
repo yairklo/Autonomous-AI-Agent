@@ -80,9 +80,14 @@ export function saveWhatsappGroups(groups, { overridePath, allowEmpty = false } 
 
 /**
  * Load jobs pipeline config from config.json (groups allow-list; optional data override).
- * @param {string} [configPath]
+ * @param {string | { configPath?: string, overridePath?: string | null }} [configPath]
  */
 export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
+  let overridePathOpt;
+  if (configPath && typeof configPath === 'object') {
+    overridePathOpt = configPath.overridePath;
+    configPath = configPath.configPath || DEFAULT_CONFIG_PATH;
+  }
   const resolved = path.resolve(configPath || DEFAULT_CONFIG_PATH);
   if (!fs.existsSync(resolved)) {
     const err = new Error(`Jobs config not found: ${resolved}`);
@@ -107,9 +112,11 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
   // temp/test configs are not polluted by a live GUI override.
   const groupsInfo = resolveWhatsappGroups(
     raw,
-    isDefaultConfig || fs.existsSync(localOverridePath)
-      ? localOverridePath
-      : null
+    overridePathOpt !== undefined
+      ? overridePathOpt
+      : isDefaultConfig || fs.existsSync(localOverridePath)
+        ? localOverridePath
+        : null
   );
 
   const groups = groupsInfo.groups;

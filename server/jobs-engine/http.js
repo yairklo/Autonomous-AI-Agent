@@ -2,7 +2,7 @@
  * Jobs-engine ops HTTP (tracked groups + recent Mongo jobs + GUI track/resolve).
  *
  * GET    /api/jobs/tracked-groups
- * POST   /api/jobs/tracked-groups  { name }  — resolve in live WA, then track
+ * POST   /api/jobs/tracked-groups  { name }  — track by live WA match, or by name if WA is down
  * DELETE /api/jobs/tracked-groups  { name }
  * GET    /api/jobs/recent?limit=&status=
  */
@@ -54,12 +54,12 @@ export function mountJobsEngineRoutes(app) {
     try {
       const name = req.body?.name || req.body?.group;
       const result = await trackGroupFromGui(name, { addedBy: 'gui' });
-      if (!result.found) {
+      if (!result.ok) {
         const status =
-          result.code === 'WA_NOT_READY'
-            ? 409
-            : result.code === 'GROUP_NAME_REQUIRED'
-              ? 400
+          result.code === 'GROUP_NAME_REQUIRED'
+            ? 400
+            : result.code === 'WA_GROUP_AMBIGUOUS' || result.code === 'WA_NOT_READY'
+              ? 409
               : 404;
         return res.status(status).json(result);
       }

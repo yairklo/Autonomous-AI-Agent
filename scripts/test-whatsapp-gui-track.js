@@ -66,26 +66,74 @@ test('trackGroupFromGui adds to file allow-list when found', async () => {
     overridePath,
     JSON.stringify({ groups: ['Existing Group'] }, null, 2)
   );
-
-  // Point override via env-like monkey by calling save with explicit path inside test module path —
-  // exercise track helpers with injected chats + direct file sync.
-  const { saveWhatsappGroups, loadJobsConfig } = await import(
-    '../server/jobs/jobs-config.js'
-  );
-  // Ensure at least the resolve+message contract works; file sync unit:
+  const { trackGroupFromGui } = await import('../server/jobs-engine/track-gui.js');
   const chats = [
     { isGroup: true, id: { _serialized: 'g2@g.us' }, name: 'Backend Jobs IL' },
   ];
-  const resolved = await resolveWhatsappGroupByName('Backend Jobs', { chats });
-  assert.equal(resolved.found, true);
-  const saved = saveWhatsappGroups(
-    ['Existing Group', resolved.match.name],
-    { overridePath }
+  const result = await trackGroupFromGui('Backend Jobs', { chats, overridePath });
+  assert.equal(result.ok, true);
+  assert.equal(result.found, true);
+  assert.equal(result.persistedByName, false);
+  assert.ok(result.groups.includes('Backend Jobs IL'));
+  assert.ok(result.groups.includes('Existing Group'));
+});
+
+test('trackGroupFromGui persists exact name when WhatsApp is not ready', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-track-gui-'));
+  const overridePath = path.join(tmp, 'whatsapp-groups.json');
+  fs.writeFileSync(
+    overridePath,
+    JSON.stringify({ groups: ['Existing Group'] }, null, 2)
   );
-  assert.ok(saved.groups.includes('Backend Jobs IL'));
-  assert.ok(fs.existsSync(overridePath));
-  // sanity: loadJobsConfig still works for default path
-  assert.ok(loadJobsConfig().whatsapp.groups.length >= 1);
+  resetSharedWhatsappSessionForTests();
+  const session = createWhatsappSession({ onLog: () => {} });
+  const { trackGroupFromGui } = await import('../server/jobs-engine/track-gui.js');
+  const result = await trackGroupFromGui('Referally Junior 1-2 🐊', {
+    session,
+    overridePath,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.found, false);
+  assert.equal(result.persistedByName, true);
+  assert.ok(result.groups.includes('Referally Junior 1-2 🐊'));
+  assert.ok(result.groups.includes('Existing Group'));
+  const saved = JSON.parse(fs.readFileSync(overridePath, 'utf8'));
+  assert.ok(saved.groups.includes('Referally Junior 1-2 🐊'));
+});
+
+test('trackGroupFromGui persists Hebrew quoted name without live WA', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-track-gui-'));
+  const overridePath = path.join(tmp, 'whatsapp-groups.json');
+  fs.writeFileSync(
+    overridePath,
+    JSON.stringify({ groups: ['Jobs Israel'] }, null, 2)
+  );
+  const { trackGroupFromGui } = await import('../server/jobs-engine/track-gui.js');
+  const name = 'מדמ"ח - נטוורקינג ומשרות';
+  const result = await trackGroupFromGui(name, {
+    chats: [{ isGroup: true, id: { _serialized: 'x' }, name: 'Other' }],
+    overridePath,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.persistedByName, true);
+  assert.ok(result.groups.includes(name));
+});
+
+test('trackGroupFromGui refuses ambiguous matches without persisting', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-track-gui-'));
+  const overridePath = path.join(tmp, 'whatsapp-groups.json');
+  const override = { groups: ['Existing'] };
+  fs.writeFileSync(overridePath, JSON.stringify(override, null, 2));
+  const { trackGroupFromGui } = await import('../server/jobs-engine/track-gui.js');
+  const chats = [
+    { isGroup: true, id: { _serialized: 'a' }, name: 'Jobs Israel' },
+    { isGroup: true, id: { _serialized: 'b' }, name: 'Jobs Israel Backend' },
+  ];
+  const result = await trackGroupFromGui('Jobs', { chats, overridePath });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'WA_GROUP_AMBIGUOUS');
+  const saved = JSON.parse(fs.readFileSync(overridePath, 'utf8'));
+  assert.deepEqual(saved.groups, ['Existing']);
 });
 
 console.log('whatsapp-gui-track tests: ok');

@@ -15,8 +15,8 @@ import {
 import { resolveWhatsappGroupByName } from './wa-resolve.js';
 import { getSharedWhatsappSession } from '../whatsapp/session.js';
 
-function syncFileAllowList(names, { allowEmpty = false } = {}) {
-  return saveWhatsappGroups(names, { allowEmpty });
+function syncFileAllowList(names, { allowEmpty = false, overridePath } = {}) {
+  return saveWhatsappGroups(names, { allowEmpty, overridePath });
 }
 
 /**
@@ -63,57 +63,76 @@ export async function listGroupsForGui() {
 }
 
 /**
- * Search WhatsApp for group name; if found, track in Mongo + file allow-list.
+ * Track a WhatsApp group for job matching + Telegram.
+ * Prefer a live chat match when WhatsApp is authenticated; otherwise persist the
+ * exact name to the file allow-list (and Mongo if connected) so ingest can match
+ * by display name once messages arrive.
  */
 export async function trackGroupFromGui(name, opts = {}) {
-  const resolved = await resolveWhatsappGroupByName(name, {
-    session: opts.session,
-    chats: opts.chats,
-  });
-
-  if (!resolved.found || !resolved.match) {
+  const requested = String(name || '').trim();
+  if (!requested) {
     return {
       ok: false,
       found: false,
       added: false,
-      ...resolved,
+      error: 'Group name required',
+      code: 'GROUP_NAME_REQUIRED',
+      message: 'name is required',
     };
   }
 
-  const matchedName = resolved.match.name;
-  const groupId = resolved.match.id || undefined;
+  const resolved = await resolveWhatsappGroupByName(requested, {
+    session: opts.session,
+    chats: opts.chats,
+  });
+
+  if (resolved.code === 'WA_GROUP_AMBIGUOUS') {
+    return {
+      ...resolved,
+      ok: false,
+      found: false,
+      added: false,
+    };
+  }
+
+  const foundLive = Boolean(resolved.found && resolved.match);
+  const persistName = foundLive ? resolved.match.name : requested;
+  const groupId = foundLive ? resolved.match.id || undefined : undefined;
 
   let mongoGroup = null;
   if (mongoReady()) {
-    mongoGroup = await trackGroupByName(matchedName, {
+    mongoGroup = await trackGroupByName(persistName, {
       addedBy: opts.addedBy || 'gui',
       groupId,
     });
   }
 
-  const fileCfg = loadJobsConfig();
-  const nextNames = [...fileCfg.whatsapp.groups, matchedName];
-  const saved = syncFileAllowList(nextNames);
+  const fileCfg = loadJobsConfig({ overridePath: opts.overridePath });
+  const nextNames = [...fileCfg.whatsapp.groups, persistName];
+  const saved = syncFileAllowList(nextNames, { overridePath: opts.overridePath });
 
   return {
     ok: true,
-    found: true,
+    found: foundLive,
     added: true,
+    persistedByName: !foundLive,
     waState: resolved.waState,
-    match: resolved.match,
+    match: resolved.match || null,
     group: mongoGroup,
     groups: saved.groups,
     source: mongoGroup ? 'mongo+file' : 'file',
-    message: resolved.match.exact
-      ? `Found and added: ${matchedName}`
-      : `Found close match and added: ${matchedName}`,
+    message: foundLive
+      ? resolved.match.exact
+        ? `Found and added: ${persistName}`
+        : `Found close match and added: ${persistName}`
+      : `Added to tracked list by name: ${persistName}`,
   };
 }
 
 /**
  * Remove group from Mongo (active=false) + file allow-list.
  */
-export async function untrackGroupFromGui(name) {
+export async function untrackGroupFromGui(name, opts = {}) {
   const cleaned = String(name || '').trim();
   if (!cleaned) {
     return {
@@ -129,7 +148,7 @@ export async function untrackGroupFromGui(name) {
     mongoGroup = await untrackGroupByName(cleaned);
   }
 
-  const fileCfg = loadJobsConfig();
+  const fileCfg = loadJobsConfig({ overridePath: opts.overridePath });
   const next = fileCfg.whatsapp.groups.filter(
     (g) => g.toLowerCase() !== cleaned.toLowerCase()
   );
@@ -144,7 +163,10 @@ export async function untrackGroupFromGui(name) {
     };
   }
 
-  const saved = syncFileAllowList(next, { allowEmpty: true });
+  const saved = syncFileAllowList(next, {
+    allowEmpty: true,
+    overridePath: opts.overridePath,
+  });
   return {
     ok: true,
     removed: true,
