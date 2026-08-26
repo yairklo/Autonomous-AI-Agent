@@ -7,6 +7,26 @@ import { isGroupLikeJid } from '../whatsapp/groups.js';
 const TTL_MS = 30 * 60 * 1000;
 const cache = new Map();
 
+/** Fallback display name for 1:1 "Message yourself" chats with no push name. */
+export const SELF_CHAT_LABEL = 'אני';
+
+export function isDirectChatId(id) {
+  const s = String(id || '');
+  if (isGroupLikeJid(s)) return false;
+  return (
+    s.includes('@c.us') ||
+    s.includes('@lid') ||
+    s.includes('@s.whatsapp.net')
+  );
+}
+
+export function resolveDisplayName({ isGroup, name, chatId, fromMe } = {}) {
+  const cleaned = String(name || '').trim();
+  if (cleaned) return cleaned;
+  if (!isGroup && fromMe) return SELF_CHAT_LABEL;
+  return String(chatId || '').trim();
+}
+
 export function groupChatIdFromMessage(msg = {}) {
   const candidates = [msg.chatId, msg.from, msg.to];
   for (const c of candidates) {

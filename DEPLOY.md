@@ -75,7 +75,7 @@
 # | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Jobs approval bot (inside app) |
 # | `JOINUP_TELEGRAM_AUTOSTART` | Keep `0` — Telegram is a separate Coolify app. Alone it no longer starts the bot; embedded mode also needs `JOINUP_TELEGRAM_ALLOW_EMBEDDED=1` (local only). |
 # | Volumes | `.wwebjs_auth`, `data`, `assets`, Claude/Cursor/git config, `/workspaces` |
-# | WhatsApp / Puppeteer | Uses Playwright image Chromium via `PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome` (no puppeteer Chrome download at build). |
+# | WhatsApp / Puppeteer | Playwright image for OS libs; Chrome binary is Puppeteer's pinned build (`npx puppeteer browsers install chrome` → `/usr/local/bin/wa-chrome`). Do not point `PUPPETEER_EXECUTABLE_PATH` at Playwright Chrome 151. |
 #
 # ### joinup-telegram (`Dockerfile.joinup-telegram`) — thin
 #

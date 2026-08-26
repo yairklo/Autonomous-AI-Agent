@@ -16,9 +16,11 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV HOME=/root
 
-# Skip Puppeteer's Chrome download — use Playwright image Chromium instead
-# (avoids flaky Google CDN downloads + corrupt partial cache folders on Coolify).
+# Skip Chrome during npm install, then install the revision Puppeteer pins.
+# Playwright's image Chromium (Chrome 151) breaks whatsapp-web.js getChats /
+# live events (evaluate error "r", no message_create).
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
@@ -31,12 +33,16 @@ COPY package.json package-lock.json ./
 RUN npm install
 ENV NODE_ENV=production
 
-# Point whatsapp-web.js / puppeteer at Playwright's preinstalled Chromium.
-RUN CHROME="$(find /ms-playwright -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) 2>/dev/null | head -n 1)" \
+ENV PUPPETEER_SKIP_DOWNLOAD=false \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
+RUN npx puppeteer browsers install chrome \
+  && CHROME="$(find /root/.cache/puppeteer -type f \( -path '*/chrome-linux64/chrome' -o -path '*/chrome-linux/chrome' \) 2>/dev/null | head -n 1)" \
   && test -n "$CHROME" \
   && test -x "$CHROME" \
   && ln -sf "$CHROME" /usr/local/bin/wa-chrome \
   && /usr/local/bin/wa-chrome --version
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Claude Code CLI (subscription / browser login — not API-key based)
 RUN npm install -g @anthropic-ai/claude-code

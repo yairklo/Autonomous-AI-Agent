@@ -221,6 +221,13 @@ test('GET /api/whatsapp/groups lists joined groups including read-only and newsl
   const covBody = await coverage.json();
   assert.equal(covBody.code, 'MONGO_UNAVAILABLE');
 
+  const messages = await fetch(
+    `http://127.0.0.1:${port}/api/whatsapp/messages`
+  );
+  assert.equal(messages.status, 503);
+  const msgBody = await messages.json();
+  assert.equal(msgBody.code, 'MONGO_UNAVAILABLE');
+
   await session.stop();
   await new Promise((resolve, reject) =>
     server.close((err) => (err ? reject(err) : resolve()))

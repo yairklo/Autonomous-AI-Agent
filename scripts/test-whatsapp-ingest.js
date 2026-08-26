@@ -18,7 +18,7 @@ import { mountJobsEngineRoutes } from '../server/jobs-engine/http.js';
 import { groupIdFromName } from '../server/jobs-engine/group-store.js';
 import { fingerprintFromMatchedJob } from '../server/jobs-engine/job-store.js';
 import { clearChatCache } from '../server/jobs-engine/chat-cache.js';
-import { isPermanentDisconnect } from '../server/whatsapp/session.js';
+import { isPermanentDisconnect, isBrowserLaunchFailure } from '../server/whatsapp/session.js';
 
 const JOBS_CONFIG = {
   roles: ['Full Stack', 'Backend'],
@@ -85,6 +85,8 @@ test('isPermanentDisconnect detects logout vs drop', () => {
   assert.equal(isPermanentDisconnect('UNPAIRED'), true);
   assert.equal(isPermanentDisconnect('timeout'), false);
   assert.equal(isPermanentDisconnect('NAVIGATION'), true);
+  assert.equal(isBrowserLaunchFailure('Failed to launch the browser process:  Code: 21'), true);
+  assert.equal(isBrowserLaunchFailure('timeout'), false);
 });
 
 test('handleWhatsappMessage upserts discovered job for tracked group', async () => {
@@ -273,6 +275,48 @@ test('handleWhatsappMessage captures newsletter/announcement chat ids as groups'
       }),
     }
   );
+  assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage persists self/direct chat when tracked as אני', async () => {
+  resetIngestTestState();
+  const persisted = [];
+  const result = await handleWhatsappMessage(
+    {
+      body: 'דרוש Backend Engineer / Full Stack https://jobs.example.com/self-test',
+      hasMedia: false,
+      author: 'me',
+      from: '97250@c.us',
+      to: '97250@c.us',
+      id: { _serialized: 'wamid-self-1', fromMe: true },
+      getChat: async () => ({
+        isGroup: false,
+        name: 'אני',
+        id: { _serialized: '97250@c.us' },
+      }),
+    },
+    {
+      jobsConfig: {
+        ...JOBS_CONFIG,
+        whatsapp: { ...JOBS_CONFIG.whatsapp, groups: ['אני'] },
+      },
+      mongoReady: () => true,
+      isTrackedGroupName: async (name) => name === 'אני',
+      persistRawWhatsappMessage: async (doc) => {
+        persisted.push(doc);
+        return { stored: true, isNew: true };
+      },
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async (matched, meta) => ({
+        job: { jobId: 'self1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+        meta,
+      }),
+    }
+  );
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].chatName, 'אני');
   assert.ok(result.results?.length >= 1);
 });
 

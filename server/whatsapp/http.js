@@ -5,6 +5,7 @@
  * GET  /api/whatsapp/qr
  * GET  /api/whatsapp/groups
  * GET  /api/whatsapp/ingest-coverage
+ * GET  /api/whatsapp/messages
  * POST /api/whatsapp/start
  * POST /api/whatsapp/stop
  */
@@ -15,6 +16,19 @@ import { createTelegramClient } from '../jobs/telegram.js';
 import { isAllowedGroup, loadJobsConfig } from '../jobs/jobs-config.js';
 import { isTrackedGroupName, mongoReady } from '../jobs-engine/group-store.js';
 import { listCapturedChatStats } from '../jobs-engine/ingest-coverage.js';
+import { listRecentWhatsappMessages } from '../jobs-engine/job-store.js';
+
+function errText(err) {
+  if (err == null) return 'unknown';
+  if (typeof err === 'string') return err;
+  const msg = String(err.message || err.originalMessage || '').trim();
+  if (msg) return err.code ? `${msg} (${err.code})` : msg;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
 async function notifyQrViaTelegram({ qr, at }) {
   const botToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -110,9 +124,10 @@ export function mountWhatsappRoutes(app, deps = {}) {
         groups,
       });
     } catch (err) {
+      console.error('[whatsapp] GET /groups failed:', err);
       return res.status(500).json({
         ok: false,
-        error: err.message,
+        error: errText(err),
         code: err.code || 'WA_GROUPS_FAILED',
         state: snap.state,
       });
@@ -142,6 +157,30 @@ export function mountWhatsappRoutes(app, deps = {}) {
         ok: false,
         error: err.message,
         code: err.code || 'WA_COVERAGE_FAILED',
+      });
+    }
+  });
+
+  app.get('/api/whatsapp/messages', async (req, res) => {
+    if (!mongoReady()) {
+      return res.status(503).json({
+        ok: false,
+        error: 'MongoDB is not connected',
+        code: 'MONGO_UNAVAILABLE',
+      });
+    }
+    try {
+      const messages = await listRecentWhatsappMessages({
+        limit: req.query.limit,
+        chatId: req.query.chatId,
+        since: req.query.since,
+      });
+      return res.json({ ok: true, count: messages.length, messages });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: errText(err),
+        code: err.code || 'WA_MESSAGES_FAILED',
       });
     }
   });

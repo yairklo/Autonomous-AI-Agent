@@ -1093,7 +1093,7 @@ async function boot() {
     console.log(`[voice-agent] Terminal chat: npm run chat`);
     console.log(`[voice-agent] open the PWA from a phone on LAN/Tailscale`);
     console.log(
-      `[voice-agent] WhatsApp: GET /api/whatsapp/status | GET /api/whatsapp/groups | POST /api/whatsapp/start`
+      `[voice-agent] WhatsApp: GET /api/whatsapp/status | GET /api/whatsapp/groups | GET /api/whatsapp/messages | POST /api/whatsapp/start`
     );
     console.log(
       `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`

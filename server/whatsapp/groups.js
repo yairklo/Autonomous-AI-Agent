@@ -49,5 +49,11 @@ export async function listJoinedWhatsappGroups(client) {
   return (Array.isArray(chats) ? chats : [])
     .map(summarizeGroupChat)
     .filter((g) => g.isGroup)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => {
+      try {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      } catch {
+        return String(a.name).localeCompare(String(b.name));
+      }
+    });
 }
