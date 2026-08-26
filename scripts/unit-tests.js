@@ -494,8 +494,36 @@ test('executeMcpTool submit_whatsapp_job_cv uses fixture profile', async () => {
 test('jobs config.json allow-lists WhatsApp groups only', async () => {
   const { loadJobsConfig, isAllowedGroup } = await import('../server/jobs/jobs-config.js');
   const cfg = loadJobsConfig(path.join(config.root, 'config.json'));
+  const rawCfg = JSON.parse(
+    fs.readFileSync(path.join(config.root, 'config.json'), 'utf8')
+  );
+  const expectedGroups = [
+    'Jobs Israel',
+    'Full Stack Israel',
+    'Backend Jobs IL',
+    'Referally Junior 1-2 🐊',
+    'Referally Entry 0+ 💙',
+    'מדמ"ח - נטוורקינג ומשרות',
+    'בוגרי מדעי המחשב - משרות ופרסומי עבודה',
+  ];
+  for (const name of expectedGroups) {
+    assert.ok(
+      rawCfg.whatsapp.groups.includes(name),
+      `config.json should include ${name}`
+    );
+  }
   assert.ok(cfg.whatsapp.groups.includes('Jobs Israel'));
   assert.ok(isAllowedGroup('Jobs Israel', cfg));
+  assert.ok(
+    isAllowedGroup('Referally Junior 1-2 🐊', {
+      whatsapp: { groups: rawCfg.whatsapp.groups },
+    })
+  );
+  assert.ok(
+    isAllowedGroup('מדמ"ח - נטוורקינג ומשרות', {
+      whatsapp: { groups: rawCfg.whatsapp.groups },
+    })
+  );
   assert.strictEqual(isAllowedGroup('Random Spam Group', cfg), false);
   assert.ok(cfg.safety.neverSendWhatsappGroupMessages);
   assert.ok(cfg.safety.neverSubmitWithoutTelegramApproval);
