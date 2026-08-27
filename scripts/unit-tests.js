@@ -623,6 +623,17 @@ test('matchFullStackOrBackend detects HE/EN roles', async () => {
   assert.ok(en.matches);
   const pm = matchFullStackOrBackend('משרה חדשה: Product Manager');
   assert.strictEqual(pm.matches, false);
+  const fe = matchFullStackOrBackend('דרוש/ה Junior Frontend Developer, React');
+  assert.ok(fe.matches);
+  const qa = matchFullStackOrBackend("We're hiring a Junior QA Automation engineer — send CV");
+  assert.ok(qa.matches);
+  const juniorDev = matchFullStackOrBackend('דרוש מפתח ג׳וניור אחרי תואר במדעי המחשב');
+  assert.ok(juniorDev.matches);
+  const materials = matchFullStackOrBackend(
+    '*Materials Engineer* / ISCAR ISRAEL\nMigdal Tefen | Materials Engineering\nEntry-level or experienced materials engineer\nhttps://www.linkedin.com/jobs/view/4459650902'
+  );
+  assert.strictEqual(materials.matches, false);
+  assert.equal(materials.excluded, true);
 });
 
 test('JobDb dedupes by fingerprint', async () => {
