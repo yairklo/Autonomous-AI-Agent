@@ -165,7 +165,7 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
         appConfig.root
       ),
       cvPath: resolveMaybeRelative(
-        raw.profile?.cvPath || 'assets/cv.pdf',
+        raw.profile?.cvPath || 'data/cv.pdf',
         appConfig.root
       ),
     },

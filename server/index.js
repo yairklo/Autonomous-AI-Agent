@@ -1098,7 +1098,7 @@ async function boot() {
       `[voice-agent] WhatsApp: GET /api/whatsapp/status | GET /api/whatsapp/groups | GET /api/whatsapp/messages | POST /api/whatsapp/start`
     );
     console.log(
-      `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`
+      `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent | GET/PUT /api/jobs/profile | POST /api/jobs/cv | GET/POST /api/jobs/drive-tracker`
     );
     startIngestWhenReady(getSharedWhatsappSession(), {
       onLog: (line) => console.log(line),

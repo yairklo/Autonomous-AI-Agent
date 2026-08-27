@@ -668,7 +668,7 @@ test('jobs engine HTTP gui list works without mongo', async () => {
   await new Promise((r) => server.close(r));
 });
 
-test('jobs engine recent returns 503 without mongo', async () => {
+test('jobs engine recent works without mongo', async () => {
   const app = express();
   app.use(express.json());
   mountJobsEngineRoutes(app);
@@ -677,10 +677,57 @@ test('jobs engine recent returns 503 without mongo', async () => {
   });
   const { port } = server.address();
   const res = await fetch(`http://127.0.0.1:${port}/api/jobs/recent`);
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.code, 'MONGO_UNAVAILABLE');
+  assert.equal(body.ok, true);
+  assert.ok(Array.isArray(body.jobs));
   await new Promise((r) => server.close(r));
+});
+
+test('jobs engine drive-tracker status does not require mongo', async () => {
+  const app = express();
+  app.use(express.json());
+  mountJobsEngineRoutes(app);
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/jobs/drive-tracker`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.configured, 'boolean');
+  assert.ok(body.howTo);
+  await new Promise((r) => server.close(r));
+});
+
+test('CV profile save + PDF upload persist on a data-like path (no redeploy)', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-profile-'));
+  const jobsConfig = {
+    profile: {
+      path: path.join(tmp, 'cv-profile.json'),
+      cvPath: path.join(tmp, 'cv.pdf'),
+    },
+  };
+  const { saveCvProfile, saveCvPdf, getProfileForGui, readCvPdfBuffer } =
+    await import('../server/jobs-engine/profile-store.js');
+  const saved = saveCvProfile(
+    { name: 'Test User', email: 't@example.com', phone: '050', linkedin: '', github: '' },
+    jobsConfig
+  );
+  assert.equal(saved.ok, true);
+  assert.equal(saved.profile.name, 'Test User');
+  assert.equal(saved.profile.email, 't@example.com');
+  const pdf = Buffer.from('%PDF-1.4 test cv');
+  const after = saveCvPdf(pdf, 'resume.pdf', jobsConfig);
+  assert.equal(after.ok, true);
+  assert.equal(after.cv.present, true);
+  assert.ok(after.cv.bytes > 0);
+  assert.deepEqual(readCvPdfBuffer(jobsConfig), pdf);
+  const gui = getProfileForGui(jobsConfig);
+  assert.equal(gui.persistedOnVolume, true);
+  assert.equal(gui.profile.name, 'Test User');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 console.log('whatsapp-ingest tests: ok');

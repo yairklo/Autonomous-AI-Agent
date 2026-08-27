@@ -1,27 +1,38 @@
 /**
- * Jobs-engine ops HTTP (tracked groups + recent Mongo jobs + GUI track/resolve).
+ * Jobs-engine ops HTTP (tracked groups, CV/profile, jobs table, Drive tracker).
  *
  * GET    /api/jobs/tracked-groups
- * POST   /api/jobs/tracked-groups  { name }  — track by live WA match, or by name if WA is down
+ * POST   /api/jobs/tracked-groups  { name }
  * DELETE /api/jobs/tracked-groups  { name }
  * GET    /api/jobs/recent?limit=&status=
+ * GET    /api/jobs/profile
+ * PUT    /api/jobs/profile
+ * GET    /api/jobs/cv
+ * POST   /api/jobs/cv   multipart field "cv"
+ * GET    /api/jobs/drive-tracker
+ * POST   /api/jobs/drive-tracker   sync Excel to Drive
  */
 
+import multer from 'multer';
 import { mongoReady } from './group-store.js';
-import { listRecentJobs } from './job-store.js';
+import { listJobsForGui } from './job-store.js';
 import {
   listGroupsForGui,
   trackGroupFromGui,
   untrackGroupFromGui,
 } from './track-gui.js';
+import {
+  getProfileForGui,
+  saveCvProfile,
+  saveCvPdf,
+  readCvPdfBuffer,
+} from './profile-store.js';
+import { driveTrackerStatus, syncTrackerToDrive } from './drive-tracker.js';
 
-function mongoUnavailable(res) {
-  return res.status(503).json({
-    ok: false,
-    error: 'MongoDB is not connected',
-    code: 'MONGO_UNAVAILABLE',
-  });
-}
+const cvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 /**
  * @param {import('express').Express} app
@@ -101,13 +112,94 @@ export function mountJobsEngineRoutes(app) {
   });
 
   app.get('/api/jobs/recent', async (req, res) => {
-    if (!mongoReady()) return mongoUnavailable(res);
     try {
-      const jobs = await listRecentJobs({
+      const payload = await listJobsForGui({
         limit: req.query.limit,
         status: req.query.status,
       });
-      res.json({ ok: true, jobs });
+      res.json({ ok: true, ...payload });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message, code: err.code });
+    }
+  });
+
+  app.get('/api/jobs/profile', (_req, res) => {
+    try {
+      res.json(getProfileForGui());
+    } catch (err) {
+      const status = err.code === 'CV_PROFILE_INVALID' ? 400 : 500;
+      res.status(status).json({ ok: false, error: err.message, code: err.code });
+    }
+  });
+
+  app.put('/api/jobs/profile', (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      res.json(saveCvProfile(body));
+    } catch (err) {
+      const status = err.code === 'CV_PROFILE_INVALID' ? 400 : 500;
+      res.status(status).json({ ok: false, error: err.message, code: err.code });
+    }
+  });
+
+  app.get('/api/jobs/cv', (_req, res) => {
+    try {
+      const buf = readCvPdfBuffer();
+      if (!buf) {
+        return res.status(404).json({
+          ok: false,
+          error: 'No CV uploaded yet. Use Settings → CV (saved on the data volume).',
+          code: 'CV_NOT_FOUND',
+        });
+      }
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="cv.pdf"');
+      res.send(buf);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message, code: err.code });
+    }
+  });
+
+  app.post('/api/jobs/cv', (req, res, next) => {
+    cvUpload.single('cv')(req, res, (err) => {
+      if (err) {
+        const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+        return res.status(status).json({
+          ok: false,
+          error: err.message || 'CV upload failed',
+          code: err.code || 'CV_UPLOAD_FAILED',
+        });
+      }
+      next();
+    });
+  }, (req, res) => {
+    try {
+      const file = req.file;
+      if (!file?.buffer) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Missing PDF file (multipart field name: cv)',
+          code: 'CV_MISSING',
+        });
+      }
+      const result = saveCvPdf(file.buffer, file.originalname || 'cv.pdf');
+      res.json(result);
+    } catch (err) {
+      const status =
+        err.code === 'CV_NOT_PDF' || err.code === 'CV_EMPTY' ? 400 : 500;
+      res.status(status).json({ ok: false, error: err.message, code: err.code });
+    }
+  });
+
+  app.get('/api/jobs/drive-tracker', (_req, res) => {
+    res.json({ ok: true, ...driveTrackerStatus() });
+  });
+
+  app.post('/api/jobs/drive-tracker', async (_req, res) => {
+    try {
+      const result = await syncTrackerToDrive({ onLog: console.log });
+      const status = result.ok ? 200 : result.code === 'GDRIVE_NOT_CONFIGURED' ? 409 : 400;
+      res.status(status).json({ ...driveTrackerStatus(), ...result });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message, code: err.code });
     }

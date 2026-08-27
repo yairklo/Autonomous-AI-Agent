@@ -45,7 +45,7 @@
   },
   "profile": {
     "path": "data/cv-profile.json",
-    "cvPath": "assets/cv.pdf"
+    "cvPath": "data/cv.pdf"
   },
   "storage": {
     "localOnly": true,
