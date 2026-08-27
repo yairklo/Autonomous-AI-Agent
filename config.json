@@ -13,7 +13,22 @@
     "textOnly": true,
     "neverSendMessages": true
   },
-  "roles": ["Full Stack", "Backend", "פול סטאק", "בקאנד", "Backend Engineer", "Full-Stack"],
+  "roles": [
+    "Full Stack",
+    "Backend",
+    "Frontend",
+    "Software Engineer",
+    "מפתח",
+    "פול סטאק",
+    "בקאנד",
+    "פרונט",
+    "ג'וניור",
+    "QA",
+    "Data Analyst",
+    "DevOps",
+    "Backend Engineer",
+    "Full-Stack"
+  ],
   "telegram": {
     "enabled": true,
     "botTokenEnv": "TELEGRAM_BOT_TOKEN",

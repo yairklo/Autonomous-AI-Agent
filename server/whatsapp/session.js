@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import { buildWhatsappClientOptions } from './client-opts.js';
+import { unlinkChromeProfileLocks } from './chrome-locks.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,18 +42,6 @@ function defaultAuthPath() {
     String(process.env.WHATSAPP_AUTH_PATH || '').trim() ||
     path.join(root, '.wwebjs_auth')
   );
-}
-
-function unlinkSingletonLock(authPath, onLog) {
-  const lockPath = path.join(authPath, 'session', 'SingletonLock');
-  try {
-    if (fs.existsSync(lockPath)) {
-      fs.unlinkSync(lockPath);
-      onLog(`[whatsapp-session] Removed stale SingletonLock at ${lockPath}`);
-    }
-  } catch (err) {
-    onLog(`[whatsapp-session] Could not remove SingletonLock: ${err.message}`);
-  }
 }
 
 /**
@@ -312,7 +301,7 @@ export function createWhatsappSession(opts = {}) {
       if (client) {
         await destroyClient();
       }
-      unlinkSingletonLock(authPath, onLog);
+      unlinkChromeProfileLocks(authPath, onLog);
       client = await buildClient();
       wireClient(client);
       const initPromise =
@@ -354,6 +343,7 @@ export function createWhatsappSession(opts = {}) {
     starting = false;
     clearReconnectTimer();
     await destroyClient();
+    unlinkChromeProfileLocks(authPath, onLog);
     lastQr = '';
     setState('disconnected', 'stopped');
     return snapshot();

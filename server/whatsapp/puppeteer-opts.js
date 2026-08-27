@@ -12,6 +12,7 @@ export function buildWhatsappPuppeteerOpts(env = process.env) {
     '--disable-gpu',
     '--no-first-run',
     '--no-zygote',
+    '--single-process',
     '--disable-extensions',
   ];
   const opts = {

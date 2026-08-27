@@ -190,7 +190,7 @@ export function createTelegramClient({
 }
 
 function formatJobAlert(job) {
-  const roles = (job.rolesMatched || []).join(', ') || 'Full Stack/Backend';
+  const roles = (job.rolesMatched || []).join(', ') || 'CS junior';
   const url = job.formUrl || job.contacts?.urls?.[0] || 'n/a';
   return [
     '🎯 New job match (approval required)',

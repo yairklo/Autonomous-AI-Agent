@@ -577,6 +577,27 @@ test('connect-whatsapp script exists and documents QR login', () => {
   assert.match(src, /LocalAuth/);
   assert.match(src, /\.wwebjs_auth/);
   assert.match(src, /buildWhatsappClientOptions/);
+  assert.match(src, /unlinkChromeProfileLocks/);
+});
+
+test('unlinkChromeProfileLocks removes nested SingletonLock files', async () => {
+  const { unlinkChromeProfileLocks } = await import(
+    '../server/whatsapp/chrome-locks.js'
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-locks-'));
+  try {
+    const nested = path.join(tmp, 'session', 'Default');
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, 'SingletonLock'), 'x');
+    fs.writeFileSync(path.join(tmp, 'session', 'SingletonSocket'), 'x');
+    fs.writeFileSync(path.join(nested, 'Preferences'), '{}');
+    const n = unlinkChromeProfileLocks(tmp);
+    assert.equal(n, 2);
+    assert.equal(fs.existsSync(path.join(nested, 'SingletonLock')), false);
+    assert.equal(fs.existsSync(path.join(nested, 'Preferences')), true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('whatsapp puppeteer opts honor executable path env', async () => {
@@ -590,6 +611,7 @@ test('whatsapp puppeteer opts honor executable path env', async () => {
   assert.ok(opts.args.includes('--no-sandbox'));
   assert.ok(opts.args.includes('--disable-dev-shm-usage'));
   assert.ok(opts.args.includes('--no-zygote'));
+  assert.ok(opts.args.includes('--single-process'));
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {
@@ -601,6 +623,17 @@ test('matchFullStackOrBackend detects HE/EN roles', async () => {
   assert.ok(en.matches);
   const pm = matchFullStackOrBackend('משרה חדשה: Product Manager');
   assert.strictEqual(pm.matches, false);
+  const fe = matchFullStackOrBackend('דרוש/ה Junior Frontend Developer, React');
+  assert.ok(fe.matches);
+  const qa = matchFullStackOrBackend("We're hiring a Junior QA Automation engineer — send CV");
+  assert.ok(qa.matches);
+  const juniorDev = matchFullStackOrBackend('דרוש מפתח ג׳וניור אחרי תואר במדעי המחשב');
+  assert.ok(juniorDev.matches);
+  const materials = matchFullStackOrBackend(
+    '*Materials Engineer* / ISCAR ISRAEL\nMigdal Tefen | Materials Engineering\nEntry-level or experienced materials engineer\nhttps://www.linkedin.com/jobs/view/4459650902'
+  );
+  assert.strictEqual(materials.matches, false);
+  assert.equal(materials.excluded, true);
 });
 
 test('JobDb dedupes by fingerprint', async () => {

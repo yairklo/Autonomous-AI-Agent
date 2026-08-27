@@ -137,7 +137,7 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
       textOnly: raw.whatsapp?.textOnly !== false,
       neverSendMessages: raw.whatsapp?.neverSendMessages !== false,
     },
-    roles: Array.isArray(raw.roles) ? raw.roles.map(String) : ['Full Stack', 'Backend'],
+    roles: Array.isArray(raw.roles) ? raw.roles.map(String) : ['Full Stack', 'Backend', 'Frontend', 'מפתח'],
     telegram: {
       enabled: raw.telegram?.enabled !== false,
       botToken:
