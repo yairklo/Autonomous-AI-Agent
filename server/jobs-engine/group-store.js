@@ -3,7 +3,7 @@
  */
 
 import { TrackedGroup } from '../models/TrackedGroup.js';
-import { loadJobsConfig, normalizeGroupNames } from '../jobs/jobs-config.js';
+import { loadJobsConfig, normalizeGroupNames, saveWhatsappGroupJid } from '../jobs/jobs-config.js';
 import { isGroupLikeJid } from '../whatsapp/groups.js';
 import { mongoReady } from './mongo-ready.js';
 
@@ -43,6 +43,30 @@ export function rememberJidName(jid, name) {
   jidNameMemory.set(id, label);
 }
 
+export function hydrateJidsFromMap(jids) {
+  const map = jids && typeof jids === 'object' ? jids : {};
+  let n = 0;
+  for (const [jid, name] of Object.entries(map)) {
+    const before = jidNameMemory.get(String(jid).toLowerCase());
+    rememberJidName(jid, name);
+    if (!before && rememberedNameForJid(jid)) n += 1;
+  }
+  return n;
+}
+
+export async function hydrateTrackedJidsFromMongo() {
+  let n = hydrateJidsFromMap(loadJobsConfig().whatsapp?.groupJids);
+  if (!mongoReady()) return n;
+  const tracked = await listTrackedGroups({ activeOnly: true });
+  for (const g of tracked) {
+    if (g?.jid && isGroupLikeJid(g.jid) && g.name) {
+      rememberJidName(g.jid, g.name);
+      n += 1;
+    }
+  }
+  return n;
+}
+
 export function rememberedNameForJid(jid) {
   return jidNameMemory.get(String(jid || '').trim().toLowerCase()) || '';
 }
@@ -55,19 +79,6 @@ export function isRememberedTrackedJid(jid) {
 
 export function clearTrackedJidMemory() {
   jidNameMemory.clear();
-}
-
-export async function hydrateTrackedJidsFromMongo() {
-  if (!mongoReady()) return 0;
-  const tracked = await listTrackedGroups({ activeOnly: true });
-  let n = 0;
-  for (const g of tracked) {
-    if (g?.jid && isGroupLikeJid(g.jid) && g.name) {
-      rememberJidName(g.jid, g.name);
-      n += 1;
-    }
-  }
-  return n;
 }
 
 /**
@@ -104,6 +115,11 @@ export async function bindTrackedGroupJids(joined) {
       { $set: { jid: row.jid } }
     );
     rememberJidName(row.jid, row.name);
+    try {
+      saveWhatsappGroupJid(row.jid, row.name);
+    } catch {
+      /* volume write is best-effort */
+    }
   }
   return { bound: bound.length, unbound: unbound.length, names: bound.map((b) => b.name) };
 }
@@ -188,6 +204,10 @@ export async function isTrackedChat({ name, chatId } = {}) {
   const cleaned = String(name || '').trim();
   const id = String(chatId || '').trim();
   if (isRememberedTrackedJid(id)) return true;
+  const mapped = rememberedNameForJid(id);
+  if (mapped) {
+    or.push({ name: new RegExp(`^${escapeRe(mapped)}$`, 'i') });
+  }
   if (cleaned) {
     or.push({ name: new RegExp(`^${escapeRe(cleaned)}$`, 'i') });
     if (isGroupLikeJid(cleaned)) {
@@ -223,7 +243,14 @@ export async function rememberTrackedGroupJid(name, chatId) {
     { $set: { jid } },
     { returnDocument: 'after' }
   ).lean();
-  if (doc) rememberJidName(jid, cleaned);
+  if (doc) {
+    rememberJidName(jid, cleaned);
+    try {
+      saveWhatsappGroupJid(jid, cleaned);
+    } catch {
+      /* ignore */
+    }
+  }
   return Boolean(doc);
 }
 

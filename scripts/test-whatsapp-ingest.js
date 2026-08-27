@@ -308,6 +308,76 @@ test('handleWhatsappMessage tracks by remembered JID when title is missing', asy
   assert.ok(result.results?.length >= 1);
 });
 
+test('handleWhatsappMessage tracks unresolved JID via groupJids map', async () => {
+  resetIngestTestState();
+  const entryJid = '120363403637482285@g.us';
+  const madmahJid = '972547598009-1508702211@g.us';
+  const cfg = {
+    ...JOBS_CONFIG,
+    whatsapp: {
+      ...JOBS_CONFIG.whatsapp,
+      groups: ['Referally Entry 0+ 💙', 'מדמ"ח - נטוורקינג ומשרות'],
+      groupJids: {
+        [entryJid]: 'Referally Entry 0+ 💙',
+        [madmahJid]: 'מדמ"ח - נטוורקינג ומשרות',
+      },
+    },
+  };
+  const persist = async () => ({ stored: true, isNew: true });
+  const upsert = async (matched, meta) => ({
+    job: { jobId: meta.groupName, status: 'discovered', rawText: matched.text },
+    isNew: true,
+    meta,
+  });
+  const entry = await handleWhatsappMessage(
+    {
+      body: 'Junior React Developer B.Sc in computer science https://www.comeet.com/jobs/x',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: entryJid,
+      to: entryJid,
+      id: { _serialized: 'wamid-entry-jid', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: cfg,
+      mongoReady: () => true,
+      persistRawWhatsappMessage: persist,
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: upsert,
+    }
+  );
+  assert.ok(entry.results?.length >= 1);
+  assert.equal(entry.results[0].meta.groupName, 'Referally Entry 0+ 💙');
+
+  const madmah = await handleWhatsappMessage(
+    {
+      body: 'Hiring Backend engineer Node.js apply https://jobs.eu.lever.co/mobileye/x',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: madmahJid,
+      to: madmahJid,
+      id: { _serialized: 'wamid-madmah-jid', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: cfg,
+      mongoReady: () => true,
+      persistRawWhatsappMessage: persist,
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: upsert,
+    }
+  );
+  assert.ok(madmah.results?.length >= 1);
+  assert.equal(madmah.results[0].meta.groupName, 'מדמ"ח - נטוורקינג ומשרות');
+});
+
 test('listJoinedWhatsappGroups falls back to Store when getChats throws r', async () => {
   const { listJoinedWhatsappGroups } = await import('../server/whatsapp/groups.js');
   const client = {

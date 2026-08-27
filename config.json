@@ -12,7 +12,12 @@
     ],
     "scanMode": "realtime",
     "textOnly": true,
-    "neverSendMessages": true
+    "neverSendMessages": true,
+    "groupJids": {
+      "120363390709579185@g.us": "Referally Junior 1-2 🐊",
+      "120363403637482285@g.us": "Referally Entry 0+ 💙",
+      "972547598009-1508702211@g.us": "מדמ\"ח - נטוורקינג ומשרות"
+    }
   },
   "roles": [
     "Full Stack",

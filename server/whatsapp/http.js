@@ -180,6 +180,10 @@ export function mountWhatsappRoutes(app, deps = {}) {
       const jobsConfig = loadJobsConfig();
       const selfUser = whatsappSelfUserId(session.getClient?.());
       const trackedNames = [...(jobsConfig.whatsapp?.groups || [])];
+      for (const [jid, name] of Object.entries(jobsConfig.whatsapp?.groupJids || {})) {
+        if (jid) trackedNames.push(jid);
+        if (name) trackedNames.push(name);
+      }
       if (mongoReady()) {
         try {
           const { listTrackedGroups } = await import('../jobs-engine/group-store.js');

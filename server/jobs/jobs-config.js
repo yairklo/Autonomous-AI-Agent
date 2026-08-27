@@ -30,28 +30,55 @@ export function normalizeGroupNames(groups) {
 }
 
 /**
+ * JID → display name. File override wins over config.json.
+ * Keys are lowercased live WhatsApp ids (`…@g.us`).
+ * @param {unknown} obj
+ * @returns {Record<string, string>}
+ */
+export function normalizeJidMap(obj) {
+  const out = {};
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+  for (const [jid, name] of Object.entries(obj)) {
+    const id = String(jid || '').trim().toLowerCase();
+    const label = String(name || '').trim();
+    if (!id || (!id.includes('@g.us') && !id.includes('@newsletter'))) continue;
+    if (!label || label.toLowerCase() === id) continue;
+    out[id] = label;
+  }
+  return out;
+}
+
+function readOverrideFile(overridePath) {
+  if (!overridePath || !fs.existsSync(overridePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(overridePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve allow-listed WhatsApp groups: data/whatsapp-groups.json overrides config.json.
  * @param {object} raw - parsed config.json
  * @param {string} [overridePath]
- * @returns {{ groups: string[], source: 'override' | 'config' }}
+ * @returns {{ groups: string[], source: 'override' | 'config', jids: Record<string, string> }}
  */
 export function resolveWhatsappGroups(
   raw,
   overridePath = WHATSAPP_GROUPS_OVERRIDE_PATH
 ) {
   const fromConfig = normalizeGroupNames(raw?.whatsapp?.groups);
-  if (overridePath && fs.existsSync(overridePath)) {
-    try {
-      const override = JSON.parse(fs.readFileSync(overridePath, 'utf8'));
-      const groups = normalizeGroupNames(override?.groups);
-      if (groups.length) {
-        return { groups, source: 'override' };
-      }
-    } catch {
-      /* fall through to config.json */
+  const fromConfigJids = normalizeJidMap(raw?.whatsapp?.groupJids);
+  const override = readOverrideFile(overridePath);
+  const fromFileJids = normalizeJidMap(override?.jids);
+  const jids = { ...fromConfigJids, ...fromFileJids };
+  if (override) {
+    const groups = normalizeGroupNames(override?.groups);
+    if (groups.length) {
+      return { groups, source: 'override', jids };
     }
   }
-  return { groups: fromConfig, source: 'config' };
+  return { groups: fromConfig, source: 'config', jids };
 }
 
 /**
@@ -61,7 +88,7 @@ export function resolveWhatsappGroups(
  * @param {string} [opts.overridePath]
  * @returns {{ groups: string[], path: string }}
  */
-export function saveWhatsappGroups(groups, { overridePath, allowEmpty = false } = {}) {
+export function saveWhatsappGroups(groups, { overridePath, allowEmpty = false, jids } = {}) {
   const cleaned = normalizeGroupNames(groups);
   if (!cleaned.length && !allowEmpty) {
     const err = new Error('At least one WhatsApp group name is required');
@@ -70,12 +97,42 @@ export function saveWhatsappGroups(groups, { overridePath, allowEmpty = false } 
   }
   const target = path.resolve(overridePath || WHATSAPP_GROUPS_OVERRIDE_PATH);
   fs.mkdirSync(path.dirname(target), { recursive: true });
+  const prev = readOverrideFile(target) || {};
   const payload = {
     groups: cleaned,
+    jids: normalizeJidMap({ ...prev.jids, ...jids }),
     updatedAt: new Date().toISOString(),
   };
   fs.writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  return { groups: cleaned, path: target };
+  return { groups: cleaned, jids: payload.jids, path: target };
+}
+
+/**
+ * Persist one live JID → title on the data volume (no rebuild).
+ */
+export function saveWhatsappGroupJid(jid, name, { overridePath } = {}) {
+  const id = String(jid || '').trim();
+  const label = String(name || '').trim();
+  const map = normalizeJidMap({ [id]: label });
+  if (!Object.keys(map).length) return null;
+  const target = path.resolve(overridePath || WHATSAPP_GROUPS_OVERRIDE_PATH);
+  const prev = readOverrideFile(target);
+  const groups = normalizeGroupNames(prev?.groups);
+  const nextGroups = groups.length ? groups : undefined;
+  if (!nextGroups) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const payload = {
+      groups: [],
+      jids: normalizeJidMap({ ...prev?.jids, ...map }),
+      updatedAt: new Date().toISOString(),
+    };
+    // Keep existing group list if the override already had names; otherwise leave
+    // groups empty only when the file was jids-only (loadJobsConfig still uses config.json).
+    if (prev?.groups) payload.groups = groups;
+    fs.writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    return { jids: payload.jids, path: target };
+  }
+  return saveWhatsappGroups(nextGroups, { overridePath: target, allowEmpty: true, jids: map });
 }
 
 /**
@@ -133,6 +190,7 @@ export function loadJobsConfig(configPath = DEFAULT_CONFIG_PATH) {
       groupsInfo.source === 'override' ? localOverridePath : null,
     whatsapp: {
       groups,
+      groupJids: groupsInfo.jids || {},
       scanMode: raw.whatsapp?.scanMode || 'realtime',
       textOnly: raw.whatsapp?.textOnly !== false,
       neverSendMessages: raw.whatsapp?.neverSendMessages !== false,
@@ -198,10 +256,13 @@ function resolveMaybeRelative(p, root) {
 /**
  * Return true if groupName is in the allow-list from config.json.
  * Short labels (e.g. "אני") are exact-only so they do not match every Hebrew title.
+ * Live JIDs (`120363…@g.us`) resolve through whatsapp.groupJids first.
  */
 export function isAllowedGroup(groupName, jobsConfig) {
-  const name = String(groupName || '').trim().toLowerCase();
-  if (!name) return false;
+  const raw = String(groupName || '').trim();
+  if (!raw) return false;
+  const mapped = jobsConfig?.whatsapp?.groupJids?.[raw.toLowerCase()];
+  const name = String(mapped || raw).trim().toLowerCase();
   const groups = jobsConfig?.whatsapp?.groups || [];
   return groups.some((g) => {
     const gLower = String(g || '').trim().toLowerCase();
