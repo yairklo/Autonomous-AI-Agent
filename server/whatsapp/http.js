@@ -176,7 +176,9 @@ export function mountWhatsappRoutes(app, deps = {}) {
         since: req.query.since,
       });
       const { explainMessageMatch } = await import('../jobs-engine/match-explain.js');
+      const { whatsappSelfUserId } = await import('../jobs-engine/chat-cache.js');
       const jobsConfig = loadJobsConfig();
+      const selfUser = whatsappSelfUserId(session.getClient?.());
       const trackedNames = [...(jobsConfig.whatsapp?.groups || [])];
       if (mongoReady()) {
         try {
@@ -193,7 +195,7 @@ export function mountWhatsappRoutes(app, deps = {}) {
       }
       const explained = messages.map((m) => ({
         ...m,
-        match: explainMessageMatch(m, { jobsConfig, trackedNames }),
+        match: explainMessageMatch(m, { jobsConfig, trackedNames, selfUser }),
       }));
       return res.json({ ok: true, count: explained.length, messages: explained });
     } catch (err) {

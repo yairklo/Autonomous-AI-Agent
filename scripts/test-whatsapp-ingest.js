@@ -402,6 +402,82 @@ test('handleWhatsappMessage persists self/direct chat when tracked as אני', a
   assert.ok(result.results?.length >= 1);
 });
 
+test('handleWhatsappMessage treats own legacy @g.us Message-yourself as אני', async () => {
+  resetIngestTestState();
+  const persisted = [];
+  const ownJid = '972527960190-1563124052@g.us';
+  const result = await handleWhatsappMessage(
+    {
+      body: 'דרוש Software engineer (python) https://jobs.example.com/innoviz',
+      hasMedia: false,
+      author: 'me',
+      from: ownJid,
+      to: ownJid,
+      fromMe: true,
+      id: { _serialized: 'wamid-self-legacy-1', fromMe: true },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      client: { info: { wid: { user: '972527960190' } } },
+      jobsConfig: {
+        ...JOBS_CONFIG,
+        whatsapp: { ...JOBS_CONFIG.whatsapp, groups: ['Jobs Israel'] },
+      },
+      mongoReady: () => true,
+      isTrackedGroupName: async () => false,
+      persistRawWhatsappMessage: async (doc) => {
+        persisted.push(doc);
+        return { stored: true, isNew: true };
+      },
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async (matched, meta) => ({
+        job: { jobId: 'self-legacy', status: 'discovered', rawText: matched.text },
+        isNew: true,
+        meta,
+      }),
+    }
+  );
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].chatName, 'אני');
+  assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage does not treat someone else legacy @g.us as אני', async () => {
+  resetIngestTestState();
+  const otherJid = '972547598009-1508702211@g.us';
+  const result = await handleWhatsappMessage(
+    {
+      body: 'דרוש Software engineer (python) https://jobs.example.com/other',
+      hasMedia: false,
+      author: 'me',
+      from: otherJid,
+      to: otherJid,
+      fromMe: true,
+      id: { _serialized: 'wamid-other-legacy-1', fromMe: true },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      client: { info: { wid: { user: '972527960190' } } },
+      jobsConfig: JOBS_CONFIG,
+      mongoReady: () => true,
+      isTrackedGroupName: async () => false,
+      persistRawWhatsappMessage: async () => ({ stored: true, isNew: true }),
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async () => ({
+        job: { jobId: 'should-not', status: 'discovered' },
+        isNew: true,
+      }),
+    }
+  );
+  assert.equal(result.skipped, 'group_not_tracked');
+});
+
 test('attachMessageIngest listens on message_create', async () => {
   resetIngestTestState();
   const client = new EventEmitter();

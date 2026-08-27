@@ -14,7 +14,7 @@ import {
   mongoReady,
   rememberTrackedGroupJid,
 } from './group-store.js';
-import { groupChatIdFromMessage, resolveChatInfo, resolveDisplayName, seedChatCacheFromGroups } from './chat-cache.js';
+import { groupChatIdFromMessage, isSelfChatTarget, resolveChatInfo, resolveDisplayName, seedChatCacheFromGroups, SELF_CHAT_LABEL, whatsappSelfUserId } from './chat-cache.js';
 import { isGroupLikeJid } from '../whatsapp/groups.js';
 import {
   persistRawWhatsappMessage,
@@ -113,13 +113,24 @@ export async function handleWhatsappMessage(msg, deps = {}) {
 
   const chatInfo = await resolveChatInfo(serialized, deps.client, onLog);
   const isGroup = Boolean(chatInfo.isGroup);
-  const groupName = resolveDisplayName({
-    isGroup,
-    name: chatInfo.name || serialized.groupName,
-    chatId: chatInfo.chatId || serialized.chatId,
-    fromMe: serialized.fromMe,
-  });
   const chatId = chatInfo.chatId || serialized.chatId;
+  const selfUser = whatsappSelfUserId(deps.client);
+  const selfChat = isSelfChatTarget({
+    fromMe: serialized.fromMe,
+    isGroup,
+    chatId,
+    groupName: chatInfo.name || serialized.groupName,
+    selfUser,
+  });
+  const groupName = selfChat
+    ? SELF_CHAT_LABEL
+    : resolveDisplayName({
+        isGroup,
+        name: chatInfo.name || serialized.groupName,
+        chatId,
+        fromMe: serialized.fromMe,
+        selfUser,
+      });
 
   onLog(
     `[whatsapp-ingest] MSG RECV | groupName="${groupName}" | isGroup=${isGroup} | from=${serialized.from} | bodyPreview="${body.substring(0, 30)}"`
@@ -160,18 +171,20 @@ export async function handleWhatsappMessage(msg, deps = {}) {
     return { skipped: 'duplicate_message' };
   }
 
-  let tracked = false;
+  let tracked = selfChat;
   try {
-    if (deps.isTrackedGroupName) {
-      tracked = await deps.isTrackedGroupName(groupName);
-      if (!tracked && chatId && chatId !== groupName) {
-        tracked = await deps.isTrackedGroupName(chatId);
+    if (!tracked) {
+      if (deps.isTrackedGroupName) {
+        tracked = await deps.isTrackedGroupName(groupName);
+        if (!tracked && chatId && chatId !== groupName) {
+          tracked = await deps.isTrackedGroupName(chatId);
+        }
+      } else {
+        tracked = await isTrackedChat({ name: groupName, chatId });
       }
-    } else {
-      tracked = await isTrackedChat({ name: groupName, chatId });
     }
   } catch {
-    tracked = false;
+    tracked = selfChat;
   }
   if (
     tracked &&
