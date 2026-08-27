@@ -42,6 +42,7 @@ import { mountWhatsappRoutes, maybeAutostartWhatsapp } from './whatsapp/http.js'
 import { getSharedWhatsappSession } from './whatsapp/session.js';
 import { mountJobsEngineRoutes } from './jobs-engine/http.js';
 import { startIngestWhenReady } from './jobs-engine/ingest.js';
+import { startTelegramApprovalPolling } from './jobs/telegram-poll.js';
 import { recordActivity } from './activity-store.js';
 import { logMessage, getMessages } from './message-store.js';
 import {
@@ -1065,6 +1066,7 @@ async function streamWhatsappJobScanViaMcp(res, clientId, waScan, signal) {
 }
 
 async function boot() {
+  let telegramPoller = null;
   if (config.mongoUri) {
     try {
       await mongoose.connect(config.mongoUri);
@@ -1099,6 +1101,9 @@ async function boot() {
       `[voice-agent] Jobs engine: GET /api/jobs/tracked-groups | GET /api/jobs/recent`
     );
     startIngestWhenReady(getSharedWhatsappSession(), {
+      onLog: (line) => console.log(line),
+    });
+    telegramPoller = startTelegramApprovalPolling({
       onLog: (line) => console.log(line),
     });
     maybeAutostartWhatsapp();
@@ -1143,6 +1148,11 @@ async function boot() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[voice-agent] ${signal} — shutting down`);
+    try {
+      telegramPoller?.stop();
+    } catch (err) {
+      console.warn(`[voice-agent] telegram poller stop: ${err.message}`);
+    }
     try {
       await getSharedWhatsappSession().stop();
     } catch (err) {

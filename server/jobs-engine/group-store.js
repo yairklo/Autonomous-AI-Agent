@@ -2,14 +2,12 @@
  * Mongo TrackedGroup helpers for WhatsApp job ingest allow-list.
  */
 
-import mongoose from 'mongoose';
 import { TrackedGroup } from '../models/TrackedGroup.js';
 import { loadJobsConfig, normalizeGroupNames } from '../jobs/jobs-config.js';
 import { isGroupLikeJid } from '../whatsapp/groups.js';
+import { mongoReady } from './mongo-ready.js';
 
-export function mongoReady() {
-  return mongoose.connection.readyState === 1;
-}
+export { mongoReady };
 
 function nameKey(name) {
   return String(name || '').trim().toLowerCase();

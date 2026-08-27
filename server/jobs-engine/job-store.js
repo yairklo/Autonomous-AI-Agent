@@ -2,14 +2,12 @@
  * Mongo Job + raw WhatsApp message upsert helpers.
  */
 
-import mongoose from 'mongoose';
 import { Job } from '../models/Job.js';
 import { WhatsappMessage } from '../models/WhatsappMessage.js';
 import { JobDb } from '../jobs/job-db.js';
+import { mongoReady } from './mongo-ready.js';
 
-export function mongoReady() {
-  return mongoose.connection.readyState === 1;
-}
+export { mongoReady };
 
 export function fingerprintFromMatchedJob(job) {
   return JobDb.fingerprint({
@@ -178,6 +176,42 @@ export async function upsertDiscoveredJob(
       if (dup) return { job: dup, isNew: false, duplicateOf: dup.jobId };
     }
     throw err;
+  }
+}
+
+/**
+ * Mirror a JobDb (approval/submission) status transition onto the Mongo Job
+ * record with the same fingerprint, so /api/jobs/recent reflects reality
+ * instead of staying stuck at 'discovered' forever. Best-effort: swallows
+ * errors (Mongo down, no matching doc) and reports via the return value
+ * rather than throwing, since this is a secondary observability mirror, not
+ * the source of truth (the JSON JobDb is).
+ * @returns {Promise<{ synced: boolean, error?: string }>}
+ */
+export async function syncMongoJobStatus(fingerprint, status, detail = {}) {
+  if (!fingerprint || !mongoReady()) {
+    return { synced: false, error: !fingerprint ? 'missing_fingerprint' : 'mongo_unavailable' };
+  }
+  try {
+    const doc = await Job.findOneAndUpdate(
+      { fingerprint },
+      {
+        $set: { status },
+        $push: {
+          applicationLog: {
+            at: new Date(),
+            action: status,
+            ok: detail.ok !== false,
+            detail: String(detail.message || '').slice(0, 500),
+            screenshotPath: detail.screenshotPath || '',
+          },
+        },
+      },
+      { new: true }
+    ).lean();
+    return { synced: Boolean(doc) };
+  } catch (err) {
+    return { synced: false, error: err.message };
   }
 }
 

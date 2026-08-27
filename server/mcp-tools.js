@@ -244,11 +244,16 @@ export const MCP_TOOLS = [
   },
   {
     name: 'submit_manual_job_link',
-    description: 'Submits a job application using Playwright given a direct URL.',
+    description:
+      'Submits a job application using Playwright given a direct apply-form URL the user explicitly provided in this conversation. Runs dry-run (no real submit) unless confirm=true — pass confirm=true only after the user has clearly asked to actually apply to this specific URL, not on your own initiative.',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string' }
+        url: { type: 'string' },
+        confirm: {
+          type: 'boolean',
+          description: 'Set true only after explicit user confirmation to really submit (not dry-run).',
+        },
       },
       required: ['url']
     }
@@ -780,12 +785,13 @@ import { updateJobInTracker } from './jobs/tracker.js';
 async function executeSubmitManualJobLink(args = {}, { onLog } = {}) {
   const url = String(args.url || '').trim();
   if (!url) throw new Error('URL is required');
+  const confirmed = args.confirm === true;
 
-  onLog?.(`[mcp] tool=submit_manual_job_link url=${url}`);
-  
+  onLog?.(`[mcp] tool=submit_manual_job_link url=${url} confirm=${confirmed}`);
+
   const db = openJobDb(path.join(config.root, 'data', 'jobs-db.json'));
   const jobId = `manual_${randomUUID().slice(0, 8)}`;
-  
+
   const mockJob = {
     id: jobId,
     groupName: 'Manual URL Submission',
@@ -793,26 +799,44 @@ async function executeSubmitManualJobLink(args = {}, { onLog } = {}) {
     body: `Manual submission to: ${url}`,
     text: `Manual submission to: ${url}`,
     timestamp: new Date().toISOString(),
+    // Approval here comes from the user's own explicit chat request to apply
+    // to this specific URL — the same trust boundary as resolve_job_approval,
+    // which is likewise only reachable via chat/voice, not the Telegram
+    // Approve button. confirm=true is still required for a REAL submit;
+    // without it this always dry-runs, so a stray/misinterpreted tool call
+    // can never fire a live application on its own.
     status: 'approved',
     approvalStatus: 'approved',
-    formUrl: url
+    formUrl: url,
+    source: 'manual_link',
   };
-  
+
   const { job: upsertedJob } = db.upsertJob(mockJob);
   const actualJobId = upsertedJob.id;
-  
+
   // Force approval status in case it was deduplicated from a previous pending attempt
   db.update(actualJobId, { approvalStatus: 'approved' });
-  
+
   onLog?.(`[mcp] injected/updated manual job id=${actualJobId} into tracker`);
 
   try {
     const result = await submitApprovedJob({
       configPath: path.join(config.root, 'config.json'),
       jobId: actualJobId,
+      dryRun: !confirmed,
+      skipDelay: !confirmed,
       onLog
     });
-    return { ok: true, tool: 'submit_manual_job_link', url, result };
+    return {
+      ok: true,
+      tool: 'submit_manual_job_link',
+      url,
+      confirmed,
+      note: confirmed
+        ? undefined
+        : 'Dry-run only — confirm=true was not set, so no real application was submitted. Re-run with confirm=true only after the user explicitly confirms.',
+      result,
+    };
   } catch (err) {
     onLog?.(`[mcp] tool=submit_manual_job_link error: ${err.message}`);
     throw err;
