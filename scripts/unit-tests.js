@@ -577,6 +577,27 @@ test('connect-whatsapp script exists and documents QR login', () => {
   assert.match(src, /LocalAuth/);
   assert.match(src, /\.wwebjs_auth/);
   assert.match(src, /buildWhatsappClientOptions/);
+  assert.match(src, /unlinkChromeProfileLocks/);
+});
+
+test('unlinkChromeProfileLocks removes nested SingletonLock files', async () => {
+  const { unlinkChromeProfileLocks } = await import(
+    '../server/whatsapp/chrome-locks.js'
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-locks-'));
+  try {
+    const nested = path.join(tmp, 'session', 'Default');
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, 'SingletonLock'), 'x');
+    fs.writeFileSync(path.join(tmp, 'session', 'SingletonSocket'), 'x');
+    fs.writeFileSync(path.join(nested, 'Preferences'), '{}');
+    const n = unlinkChromeProfileLocks(tmp);
+    assert.equal(n, 2);
+    assert.equal(fs.existsSync(path.join(nested, 'SingletonLock')), false);
+    assert.equal(fs.existsSync(path.join(nested, 'Preferences')), true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('whatsapp puppeteer opts honor executable path env', async () => {

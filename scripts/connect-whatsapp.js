@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { buildWhatsappClientOptions } from '../server/whatsapp/client-opts.js';
+import { unlinkChromeProfileLocks } from '../server/whatsapp/chrome-locks.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +64,7 @@ async function main() {
     process.exit(1);
   }
   console.log(`[whatsapp] LocalAuth path: ${authPath}`);
+  unlinkChromeProfileLocks(authPath, (line) => console.log(line));
   console.log('[whatsapp] Creating client (headless Chromium)…');
 
   const client = new Client(
