@@ -18,6 +18,7 @@ import { mountJobsEngineRoutes } from '../server/jobs-engine/http.js';
 import { groupIdFromName } from '../server/jobs-engine/group-store.js';
 import { fingerprintFromMatchedJob } from '../server/jobs-engine/job-store.js';
 import { clearChatCache } from '../server/jobs-engine/chat-cache.js';
+import { clearTrackedJidMemory } from '../server/jobs-engine/group-store.js';
 import { isPermanentDisconnect, isBrowserLaunchFailure } from '../server/whatsapp/session.js';
 
 const JOBS_CONFIG = {
@@ -57,6 +58,7 @@ const silentNotify = {
 
 function resetIngestTestState() {
   clearChatCache();
+  clearTrackedJidMemory();
 }
 
 test('fingerprintFromMatchedJob is stable and ignores group', () => {
@@ -223,6 +225,109 @@ test('handleWhatsappMessage resolves group name from chat cache when getChat fai
   );
   assert.equal(persisted[0].chatName, 'Referally Junior 1-2 🐊');
   assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage resolves title from Store when getChat throws r', async () => {
+  resetIngestTestState();
+  const persisted = [];
+  const referallyJid = '120363390709579185@g.us';
+  const result = await handleWhatsappMessage(
+    {
+      body: '*Communications System Engineer* / Ethosia Computer Science embedded software https://www.linkedin.com/jobs/view/4457748262',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: referallyJid,
+      to: referallyJid,
+      id: { _serialized: 'wamid-store-1', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      client: {
+        pupPage: {
+          evaluate: async (_fn, id) =>
+            id === referallyJid ? 'Referally Junior 1-2 🐊' : '',
+        },
+      },
+      jobsConfig: {
+        ...JOBS_CONFIG,
+        whatsapp: { ...JOBS_CONFIG.whatsapp, groups: ['Referally Junior 1-2 🐊'] },
+      },
+      mongoReady: () => true,
+      isTrackedGroupName: async (name) => name === 'Referally Junior 1-2 🐊',
+      persistRawWhatsappMessage: async (doc) => {
+        persisted.push(doc);
+        return { stored: true, isNew: true };
+      },
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async (matched, meta) => ({
+        job: { jobId: 'store1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+        meta,
+      }),
+    }
+  );
+  assert.equal(persisted[0].chatName, 'Referally Junior 1-2 🐊');
+  assert.ok(result.results?.length >= 1);
+});
+
+test('handleWhatsappMessage tracks by remembered JID when title is missing', async () => {
+  resetIngestTestState();
+  const { rememberJidName } = await import('../server/jobs-engine/group-store.js');
+  const jid = '120363390709579185@g.us';
+  rememberJidName(jid, 'Referally Junior 1-2 🐊');
+  const result = await handleWhatsappMessage(
+    {
+      body: 'דרוש Backend Engineer / Full Stack https://jobs.example.com/jid-only',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: jid,
+      to: jid,
+      id: { _serialized: 'wamid-jid-mem-1', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: JOBS_CONFIG,
+      mongoReady: () => true,
+      isTrackedGroupName: async (name) =>
+        name === 'Referally Junior 1-2 🐊' || name === jid,
+      persistRawWhatsappMessage: async () => ({ stored: true, isNew: true }),
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async (matched, meta) => ({
+        job: { jobId: 'jidmem', status: 'discovered', rawText: matched.text },
+        isNew: true,
+        meta,
+      }),
+    }
+  );
+  assert.ok(result.results?.length >= 1);
+});
+
+test('listJoinedWhatsappGroups falls back to Store when getChats throws r', async () => {
+  const { listJoinedWhatsappGroups } = await import('../server/whatsapp/groups.js');
+  const client = {
+    getChats: async () => {
+      throw new Error('r');
+    },
+    pupPage: {
+      evaluate: async () => [
+        {
+          id: '120363390709579185@g.us',
+          name: 'Referally Junior 1-2 🐊',
+          isReadOnly: true,
+        },
+      ],
+    },
+  };
+  const groups = await listJoinedWhatsappGroups(client);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].id, '120363390709579185@g.us');
+  assert.equal(groups[0].name, 'Referally Junior 1-2 🐊');
 });
 
 test('handleWhatsappMessage skips untracked groups', async () => {

@@ -1,11 +1,13 @@
 /**
  * chatId → { isGroup, name } cache so ingest does not call getChat() on every event.
+ * Named mappings never expire — display names are labels; the JID is the ingest key.
  */
 
-import { isGroupLikeJid } from '../whatsapp/groups.js';
+import { isGroupLikeJid, readChatTitleFromStore } from '../whatsapp/groups.js';
 
-const TTL_MS = 30 * 60 * 1000;
 const cache = new Map();
+const storeMissUntil = new Map();
+const STORE_MISS_TTL_MS = 60 * 1000;
 
 /** Fallback display name for 1:1 "Message yourself" chats with no push name. */
 export const SELF_CHAT_LABEL = 'אני';
@@ -122,10 +124,6 @@ export function getCachedChat(chatId) {
   if (!id) return null;
   const hit = cache.get(id);
   if (!hit) return null;
-  if (Date.now() - hit.at > TTL_MS) {
-    cache.delete(id);
-    return null;
-  }
   if (hit.isGroup && !String(hit.name || '').trim()) {
     cache.delete(id);
     return null;
@@ -156,16 +154,29 @@ export function seedChatCacheFromGroups(groups = []) {
 
 export function clearChatCache() {
   cache.clear();
+  storeMissUntil.clear();
 }
 
 /**
- * Resolve group metadata with cache, then getChat / getChatById, then JID fallback.
+ * Resolve group metadata: lasting JID cache, then WhatsApp Store, then getChat.
  */
 export async function resolveChatInfo(msg, client, onLog = () => {}) {
   const chatId = groupChatIdFromMessage(msg);
   const fromPayload = groupTitleFromMessage(msg);
   const cached = getCachedChat(chatId);
   if (cached?.name) return { ...cached, chatId };
+
+  let storeName = '';
+  const missUntil = storeMissUntil.get(chatId) || 0;
+  if (chatId && Date.now() >= missUntil) {
+    storeName = await readChatTitleFromStore(client, chatId);
+    if (storeName && !looksLikeChatJid(storeName)) {
+      const info = { isGroup: isGroupLikeJid(chatId), name: storeName, chatId };
+      setCachedChat(chatId, info);
+      return info;
+    }
+    if (chatId) storeMissUntil.set(chatId, Date.now() + STORE_MISS_TTL_MS);
+  }
 
   let chat = msg.chat || null;
   if (!chat && typeof msg.getChat === 'function') {
@@ -185,7 +196,7 @@ export async function resolveChatInfo(msg, client, onLog = () => {}) {
 
   const isGroup = Boolean(chat?.isGroup || isGroupLikeJid(chatId));
   const name = String(
-    chat?.name || chat?.formattedTitle || fromPayload || msg.groupName || ''
+    chat?.name || chat?.formattedTitle || fromPayload || msg.groupName || storeName || ''
   ).trim();
   const info = { isGroup, name: looksLikeChatJid(name) ? '' : name, chatId };
   if (chatId) setCachedChat(chatId, info);

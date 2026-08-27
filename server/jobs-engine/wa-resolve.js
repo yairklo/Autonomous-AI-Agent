@@ -48,17 +48,9 @@ export async function resolveWhatsappGroupByName(name, opts = {}) {
 
   let chats = opts.chats;
   if (!chats) {
-    if (typeof client.getChats !== 'function') {
-      return {
-        ok: false,
-        found: false,
-        waState,
-        error: 'WhatsApp client cannot list chats',
-        code: 'WA_NO_GETCHATS',
-      };
-    }
     try {
-      chats = await client.getChats();
+      const { listJoinedWhatsappGroups } = await import('../whatsapp/groups.js');
+      chats = await listJoinedWhatsappGroups(client);
     } catch (err) {
       return {
         ok: false,
@@ -71,12 +63,12 @@ export async function resolveWhatsappGroupByName(name, opts = {}) {
   }
 
   const groups = (Array.isArray(chats) ? chats : [])
-    .filter((c) => c && c.isGroup)
+    .filter((c) => c && (c.isGroup || c.id || c.id?._serialized))
     .map((c) => ({
       id: String(c.id?._serialized || c.id || ''),
       name: String(c.name || '').trim(),
     }))
-    .filter((c) => c.name);
+    .filter((c) => c.name && (c.id.includes('@g.us') || c.id.includes('@newsletter') || c.isGroup !== false));
 
   const needle = cleaned.toLowerCase();
   const exact = groups.find((g) => g.name.toLowerCase() === needle);
