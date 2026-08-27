@@ -80,6 +80,25 @@ test('groupIdFromName normalizes', () => {
   assert.equal(groupIdFromName('Jobs Israel'), 'name:jobs israel');
 });
 
+test('matchJoinedToTracked binds unique names and skips ambiguous', async () => {
+  const { matchJoinedToTracked } = await import('../server/jobs-engine/group-store.js');
+  const { bound, unbound } = matchJoinedToTracked(
+    [
+      { id: '120363aaa@g.us', name: 'Referally Junior 1-2 🐊' },
+      { id: '120363bbb@g.us', name: 'Dup' },
+      { id: '120363ccc@g.us', name: 'Dup' },
+    ],
+    [
+      { _id: '1', name: 'Referally Junior 1-2 🐊' },
+      { _id: '2', name: 'Dup' },
+      { _id: '3', name: 'Missing Group' },
+    ]
+  );
+  assert.equal(bound.length, 1);
+  assert.equal(bound[0].jid, '120363aaa@g.us');
+  assert.equal(unbound.length, 2);
+});
+
 test('chat cache ignores empty group names and seeds JID → title', async () => {
   const {
     clearChatCache,

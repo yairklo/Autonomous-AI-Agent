@@ -15,6 +15,43 @@ function nameKey(name) {
   return String(name || '').trim().toLowerCase();
 }
 
+/**
+ * Pair live WhatsApp chats to tracked groups by exact name (case-insensitive).
+ * Ambiguous titles are skipped — never guess the JID.
+ */
+export function matchJoinedToTracked(joined = [], tracked = []) {
+  const bound = [];
+  const unbound = [];
+  for (const g of tracked) {
+    const key = nameKey(g.name);
+    if (!key) continue;
+    const hits = (Array.isArray(joined) ? joined : []).filter(
+      (j) => nameKey(j.name) === key && isGroupLikeJid(j.id)
+    );
+    if (hits.length === 1) {
+      bound.push({ name: g.name, jid: String(hits[0].id), trackedId: g._id });
+    } else {
+      unbound.push({ name: g.name, hits: hits.length });
+    }
+  }
+  return { bound, unbound };
+}
+
+export async function bindTrackedGroupJids(joined) {
+  if (!mongoReady()) {
+    return { bound: 0, unbound: 0, reason: 'mongo_unavailable' };
+  }
+  const tracked = await listTrackedGroups({ activeOnly: true });
+  const { bound, unbound } = matchJoinedToTracked(joined, tracked);
+  for (const row of bound) {
+    await TrackedGroup.findOneAndUpdate(
+      { _id: row.trackedId },
+      { $set: { jid: row.jid } }
+    );
+  }
+  return { bound: bound.length, unbound: unbound.length, names: bound.map((b) => b.name) };
+}
+
 export function groupIdFromName(name) {
   return `name:${nameKey(name)}`;
 }

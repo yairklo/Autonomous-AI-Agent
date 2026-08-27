@@ -33,7 +33,6 @@ export function explainMessageMatch(
       matched: false,
       reason: 'group_not_tracked',
       detail: storedAsJid
-        ? `saved as JID (${groupName || chatId}), not the group title — tracking compares names`
         : `"${groupName || chatId}" is not in the tracked / allow list`,
     };
   }
