@@ -5,11 +5,12 @@
 
 import { isAllowedGroup, loadJobsConfig } from '../jobs/jobs-config.js';
 import { matchFullStackOrBackend } from '../jobs/job-matcher.js';
-import { looksLikeChatJid } from './chat-cache.js';
+import { isGroupLikeJid } from '../whatsapp/groups.js';
+import { isSelfChatTarget, looksLikeChatJid, SELF_CHAT_LABEL } from './chat-cache.js';
 
 export function explainMessageMatch(
   msg,
-  { jobsConfig, trackedNames = [] } = {}
+  { jobsConfig, trackedNames = [], selfUser = '' } = {}
 ) {
   const cfg = jobsConfig || loadJobsConfig();
   const groupName = String(msg?.chatName || '').trim();
@@ -21,8 +22,18 @@ export function explainMessageMatch(
   );
   const nameKey = groupName.toLowerCase();
   const idKey = chatId.toLowerCase();
+  const selfChat = isSelfChatTarget({
+    fromMe: Boolean(msg?.fromMe),
+    isGroup: isGroupLikeJid(chatId),
+    chatId,
+    groupName,
+    selfUser,
+  });
   const inTracked = Boolean(
-    (nameKey && tracked.has(nameKey)) || (idKey && tracked.has(idKey))
+    selfChat ||
+      nameKey === SELF_CHAT_LABEL.toLowerCase() ||
+      (nameKey && tracked.has(nameKey)) ||
+      (idKey && tracked.has(idKey))
   );
   const allowed =
     isAllowedGroup(groupName, cfg) || isAllowedGroup(chatId, cfg);
@@ -33,6 +44,7 @@ export function explainMessageMatch(
       matched: false,
       reason: 'group_not_tracked',
       detail: storedAsJid
+        ? `stored as chat JID "${groupName || chatId}" — group title was not resolved`
         : `"${groupName || chatId}" is not in the tracked / allow list`,
     };
   }

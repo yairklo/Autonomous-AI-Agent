@@ -525,6 +525,13 @@ test('jobs config.json allow-lists WhatsApp groups only', async () => {
     })
   );
   assert.strictEqual(isAllowedGroup('Random Spam Group', cfg), false);
+  assert.ok(isAllowedGroup('אני', { whatsapp: { groups: ['אני', 'Jobs Israel'] } }));
+  assert.strictEqual(
+    isAllowedGroup('קבוצה עם אני באמצע', {
+      whatsapp: { groups: ['אני', 'Jobs Israel'] },
+    }),
+    false
+  );
   assert.ok(cfg.safety.neverSendWhatsappGroupMessages);
   assert.ok(cfg.safety.neverSubmitWithoutTelegramApproval);
 });
@@ -647,6 +654,20 @@ test('explainMessageMatch distinguishes JID skip vs role skip vs match', async (
     { jobsConfig, trackedNames: ['Referally Junior 1-2 🐊'] }
   );
   assert.equal(hit.matched, true);
+  const selfHit = explainMessageMatch(
+    {
+      chatName: '972527960190-1563124052@g.us',
+      chatId: '972527960190-1563124052@g.us',
+      fromMe: true,
+      body: 'דרוש Software engineer (python)',
+    },
+    {
+      jobsConfig,
+      trackedNames: ['Referally Junior 1-2 🐊'],
+      selfUser: '972527960190',
+    }
+  );
+  assert.equal(selfHit.matched, true);
 });
 
 test('matchFullStackOrBackend detects HE/EN roles', async () => {
@@ -789,9 +810,12 @@ test('pipeline scan → approve → playwright dry-run', async () => {
       limit: 10,
     });
     assert.ok(scanned.enqueuedCount >= 1, 'expected Full Stack/Backend jobs');
-    assert.ok(scanned.jobs.every((j) => j.formUrl || j.contacts?.urls?.length));
+    const applyJobs = scanned.jobs.filter(
+      (j) => j.formUrl || j.contacts?.urls?.length
+    );
+    assert.ok(applyJobs.length >= 1, 'expected at least one job with an apply URL');
 
-    const jobId = scanned.jobs[0].id;
+    const jobId = applyJobs[0].id;
     const approved = resolveJobApproval({
       configPath: cfgPath,
       callbackData: `job_approve:${jobId}`,

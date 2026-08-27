@@ -42,7 +42,62 @@ export function groupTitleFromMessage(msg = {}) {
   return '';
 }
 
-export function resolveDisplayName({ isGroup, name, chatId, fromMe } = {}) {
+export function whatsappSelfUserId(client) {
+  const w = client?.info?.wid;
+  if (!w) return '';
+  if (typeof w.user === 'string' && w.user.trim()) return w.user.trim();
+  return String(w._serialized || '').replace(/@.*$/, '').trim();
+}
+
+export function chatUserPart(id) {
+  return String(id || '')
+    .replace(/@.*$/, '')
+    .trim();
+}
+
+/** Old WhatsApp group JID owned by this account: `<ownNumber>-<unix>@g.us`. */
+export function isOwnLegacyGroupJid(chatId, selfUser) {
+  const me = chatUserPart(selfUser);
+  if (!me) return false;
+  const escaped = me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}-\\d+@g\\.us$`).test(String(chatId || ''));
+}
+
+/**
+ * Message yourself / "אני": labeled אני, own @c.us, or the owner's old-style
+ * `@g.us` (`<ownNumber>-<timestamp>@g.us`) when getChat failed and only the JID remains.
+ * Does not treat fromMe into someone else's group/DM as self-chat.
+ */
+export function isSelfChatTarget({
+  fromMe,
+  isGroup,
+  chatId,
+  groupName,
+  selfUser,
+} = {}) {
+  const name = String(groupName || '').trim();
+  if (name === SELF_CHAT_LABEL) return true;
+  const id = String(chatId || '');
+  const me = chatUserPart(selfUser);
+  if (me && isDirectChatId(id) && chatUserPart(id) === me) return true;
+  if (isOwnLegacyGroupJid(id, me)) return true;
+  if (!fromMe) return false;
+  if (me) return false;
+  return isDirectChatId(id) || !isGroup;
+}
+
+export function resolveDisplayName({ isGroup, name, chatId, fromMe, selfUser } = {}) {
+  if (
+    isSelfChatTarget({
+      fromMe,
+      isGroup,
+      chatId,
+      groupName: name,
+      selfUser,
+    })
+  ) {
+    return SELF_CHAT_LABEL;
+  }
   const cleaned = String(name || '').trim();
   if (cleaned && !looksLikeChatJid(cleaned)) return cleaned;
   if (cleaned && looksLikeChatJid(cleaned) && isGroup) {

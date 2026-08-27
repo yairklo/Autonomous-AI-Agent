@@ -197,13 +197,17 @@ function resolveMaybeRelative(p, root) {
 
 /**
  * Return true if groupName is in the allow-list from config.json.
+ * Short labels (e.g. "אני") are exact-only so they do not match every Hebrew title.
  */
 export function isAllowedGroup(groupName, jobsConfig) {
   const name = String(groupName || '').trim().toLowerCase();
   if (!name) return false;
   const groups = jobsConfig?.whatsapp?.groups || [];
   return groups.some((g) => {
-    const gLower = String(g).toLowerCase();
-    return name === gLower || name.includes(gLower) || gLower.includes(name);
+    const gLower = String(g || '').trim().toLowerCase();
+    if (!gLower) return false;
+    if (name === gLower) return true;
+    if (gLower.length <= 4 || name.length <= 4) return false;
+    return name.includes(gLower) || gLower.includes(name);
   });
 }
