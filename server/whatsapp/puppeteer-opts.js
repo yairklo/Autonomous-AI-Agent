@@ -1,8 +1,8 @@
 /**
  * Puppeteer launch options for whatsapp-web.js inside Docker/Coolify.
  *
- * Prefer Chrome installed at build time (`npx puppeteer browsers install chrome`).
- * Optional override: PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ * Prefer image Chromium via PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome
+ * (Playwright v1.50.1-jammy). Optional override: /usr/bin/chromium
  */
 export function buildWhatsappPuppeteerOpts(env = process.env) {
   const args = [

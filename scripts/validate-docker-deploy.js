@@ -29,14 +29,16 @@ assert.match(appDf, /CMD\s*\[\s*"npm",\s*"start"\s*\]/);
 assert.match(appDf, /JOINUP_TELEGRAM_AUTOSTART=0/);
 assert.match(appDf, /EXPOSE 8787/);
 assert.match(appDf, /PUPPETEER_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
-assert.match(appDf, /browsers install chrome/);
-assert.match(appDf, /PUPPETEER_CACHE_DIR=\/opt\/puppeteer-cache/);
+assert.match(appDf, /playwright:v1\.50\.1-jammy/);
+assert.match(appDf, /\/ms-playwright/);
+assert.doesNotMatch(appDf, /browsers install chrome/);
 assert.match(appDf, /FROM mcr\.microsoft\.com\/playwright/);
 
 const rootDf = read('Dockerfile');
 assert.match(rootDf, /PUPPETEER_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
-assert.match(rootDf, /browsers install chrome/);
-assert.match(rootDf, /PUPPETEER_CACHE_DIR=\/opt\/puppeteer-cache/);
+assert.match(rootDf, /playwright:v1\.50\.1-jammy/);
+assert.match(rootDf, /\/ms-playwright/);
+assert.doesNotMatch(rootDf, /browsers install chrome/);
 
 const tgDf = read('Dockerfile.joinup-telegram');
 assert.match(tgDf, /CMD\s*\[\s*"npm",\s*"run",\s*"start:joinup-telegram"\s*\]/);
