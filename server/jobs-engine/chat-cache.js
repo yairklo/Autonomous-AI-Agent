@@ -20,9 +20,36 @@ export function isDirectChatId(id) {
   );
 }
 
+export function looksLikeChatJid(value) {
+  const s = String(value || '');
+  return isGroupLikeJid(s) || isDirectChatId(s);
+}
+
+/** Best-effort group title from a wwebjs message without calling getChat(). */
+export function groupTitleFromMessage(msg = {}) {
+  const candidates = [
+    msg.groupName,
+    msg.chat?.name,
+    msg.chat?.formattedTitle,
+    msg._data?.formattedTitle,
+    msg._data?.chat?.formattedTitle,
+    msg._data?.chat?.name,
+  ];
+  for (const raw of candidates) {
+    const s = String(raw || '').trim();
+    if (s && !looksLikeChatJid(s)) return s;
+  }
+  return '';
+}
+
 export function resolveDisplayName({ isGroup, name, chatId, fromMe } = {}) {
   const cleaned = String(name || '').trim();
-  if (cleaned) return cleaned;
+  if (cleaned && !looksLikeChatJid(cleaned)) return cleaned;
+  if (cleaned && looksLikeChatJid(cleaned) && isGroup) {
+    /* keep going — JID is not a display name */
+  } else if (cleaned) {
+    return cleaned;
+  }
   if (!isGroup && fromMe) return SELF_CHAT_LABEL;
   return String(chatId || '').trim();
 }
@@ -44,17 +71,32 @@ export function getCachedChat(chatId) {
     cache.delete(id);
     return null;
   }
+  if (hit.isGroup && !String(hit.name || '').trim()) {
+    cache.delete(id);
+    return null;
+  }
   return hit;
 }
 
 export function setCachedChat(chatId, info) {
   const id = String(chatId || '');
   if (!id) return;
-  cache.set(id, {
-    isGroup: Boolean(info?.isGroup || isGroupLikeJid(id)),
-    name: String(info?.name || ''),
-    at: Date.now(),
-  });
+  const name = String(info?.name || '').trim();
+  const isGroup = Boolean(info?.isGroup || isGroupLikeJid(id));
+  if (isGroup && !name) return;
+  cache.set(id, { isGroup, name, at: Date.now() });
+}
+
+export function seedChatCacheFromGroups(groups = []) {
+  let n = 0;
+  for (const g of Array.isArray(groups) ? groups : []) {
+    const id = String(g?.id || '').trim();
+    const name = String(g?.name || '').trim();
+    if (!id || !name) continue;
+    setCachedChat(id, { isGroup: true, name });
+    n += 1;
+  }
+  return n;
 }
 
 export function clearChatCache() {
@@ -66,8 +108,9 @@ export function clearChatCache() {
  */
 export async function resolveChatInfo(msg, client, onLog = () => {}) {
   const chatId = groupChatIdFromMessage(msg);
+  const fromPayload = groupTitleFromMessage(msg);
   const cached = getCachedChat(chatId);
-  if (cached) return { ...cached, chatId };
+  if (cached?.name) return { ...cached, chatId };
 
   let chat = msg.chat || null;
   if (!chat && typeof msg.getChat === 'function') {
@@ -86,8 +129,10 @@ export async function resolveChatInfo(msg, client, onLog = () => {}) {
   }
 
   const isGroup = Boolean(chat?.isGroup || isGroupLikeJid(chatId));
-  const name = String(chat?.name || msg.groupName || '').trim();
-  const info = { isGroup, name, chatId };
+  const name = String(
+    chat?.name || chat?.formattedTitle || fromPayload || msg.groupName || ''
+  ).trim();
+  const info = { isGroup, name: looksLikeChatJid(name) ? '' : name, chatId };
   if (chatId) setCachedChat(chatId, info);
-  return info;
+  return { ...info, name: info.name };
 }

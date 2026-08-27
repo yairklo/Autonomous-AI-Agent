@@ -5,6 +5,7 @@
 import mongoose from 'mongoose';
 import { TrackedGroup } from '../models/TrackedGroup.js';
 import { loadJobsConfig, normalizeGroupNames } from '../jobs/jobs-config.js';
+import { isGroupLikeJid } from '../whatsapp/groups.js';
 
 export function mongoReady() {
   return mongoose.connection.readyState === 1;
@@ -44,6 +45,7 @@ export async function trackGroupByName(
     throw err;
   }
   const id = groupId || groupIdFromName(cleaned);
+  const jid = isGroupLikeJid(id) ? id : undefined;
   const doc = await TrackedGroup.findOneAndUpdate(
     { $or: [{ groupId: id }, { name: new RegExp(`^${escapeRe(cleaned)}$`, 'i') }] },
     {
@@ -52,6 +54,7 @@ export async function trackGroupByName(
         name: cleaned,
         active: true,
         addedBy: String(addedBy || 'api'),
+        ...(jid ? { jid } : {}),
       },
       $setOnInsert: { addedAt: new Date() },
     },
@@ -80,16 +83,41 @@ export async function untrackGroupByName(name) {
   return doc;
 }
 
-export async function isTrackedGroupName(name) {
+export async function isTrackedChat({ name, chatId } = {}) {
   if (!mongoReady()) return false;
+  const or = [];
   const cleaned = String(name || '').trim();
-  if (!cleaned) return false;
-  const doc = await TrackedGroup.findOne({
-    active: true,
-    name: new RegExp(`^${escapeRe(cleaned)}$`, 'i'),
-  })
+  const id = String(chatId || '').trim();
+  if (cleaned) {
+    or.push({ name: new RegExp(`^${escapeRe(cleaned)}$`, 'i') });
+    if (isGroupLikeJid(cleaned)) {
+      or.push({ groupId: cleaned }, { jid: cleaned });
+    }
+  }
+  if (id && isGroupLikeJid(id)) {
+    or.push({ groupId: id }, { jid: id });
+  }
+  if (!or.length) return false;
+  const doc = await TrackedGroup.findOne({ active: true, $or: or })
     .select({ _id: 1 })
     .lean();
+  return Boolean(doc);
+}
+
+export async function isTrackedGroupName(name) {
+  return isTrackedChat({ name, chatId: name });
+}
+
+export async function rememberTrackedGroupJid(name, chatId) {
+  if (!mongoReady()) return false;
+  const cleaned = String(name || '').trim();
+  const jid = String(chatId || '').trim();
+  if (!cleaned || !isGroupLikeJid(jid)) return false;
+  const doc = await TrackedGroup.findOneAndUpdate(
+    { active: true, name: new RegExp(`^${escapeRe(cleaned)}$`, 'i') },
+    { $set: { jid } },
+    { returnDocument: 'after' }
+  ).lean();
   return Boolean(doc);
 }
 

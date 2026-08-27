@@ -9,15 +9,17 @@ import { sealClientAgainstSends } from '../jobs/whatsapp-live.js';
 import {
   ensureTrackedGroupsSeeded,
   groupIdFromName,
-  isTrackedGroupName,
+  isTrackedChat,
   mongoReady,
+  rememberTrackedGroupJid,
 } from './group-store.js';
+import { groupChatIdFromMessage, resolveChatInfo, resolveDisplayName, seedChatCacheFromGroups } from './chat-cache.js';
+import { isGroupLikeJid } from '../whatsapp/groups.js';
 import {
   persistRawWhatsappMessage,
   upsertDiscoveredJob,
   waMessageIdFromMsg,
 } from './job-store.js';
-import { groupChatIdFromMessage, resolveChatInfo, resolveDisplayName } from './chat-cache.js';
 import { createIngestQueue } from './ingest-queue.js';
 import {
   appendIngestBuffer,
@@ -83,7 +85,6 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   const onLog = deps.onLog || (() => {});
   const jobsConfig = deps.jobsConfig || loadJobsConfig();
   const upsert = deps.upsertDiscoveredJob || upsertDiscoveredJob;
-  const isTracked = deps.isTrackedGroupName || isTrackedGroupName;
   const persistRaw = deps.persistRawWhatsappMessage || persistRawWhatsappMessage;
   const notify = deps.notifyLiveJob || notifyLiveJob;
   const mongoIsReady =
@@ -96,6 +97,8 @@ export async function handleWhatsappMessage(msg, deps = {}) {
           ...serializeWhatsappMessage(msg),
           getChat: liveGetChat || undefined,
           chat: msg.chat,
+          _data: msg._data,
+          groupName: msg.groupName,
         }
       : { ...msg, body: extractBody(msg), text: extractBody(msg) };
   const ignore = shouldIgnoreSerialized(serialized);
@@ -158,13 +161,35 @@ export async function handleWhatsappMessage(msg, deps = {}) {
 
   let tracked = false;
   try {
-    tracked = await isTracked(groupName);
+    if (deps.isTrackedGroupName) {
+      tracked = await deps.isTrackedGroupName(groupName);
+      if (!tracked && chatId && chatId !== groupName) {
+        tracked = await deps.isTrackedGroupName(chatId);
+      }
+    } else {
+      tracked = await isTrackedChat({ name: groupName, chatId });
+    }
   } catch {
     tracked = false;
   }
+  if (
+    tracked &&
+    isGroup &&
+    chatId &&
+    isGroupLikeJid(chatId) &&
+    groupName &&
+    !isGroupLikeJid(groupName)
+  ) {
+    rememberTrackedGroupJid(groupName, chatId).catch(() => {});
+  }
   if (!tracked) {
-    if (!isAllowedGroup(groupName, jobsConfig)) {
-      onLog(`[whatsapp-ingest] skipped: group_not_tracked (groupName: "${groupName}")`);
+    if (
+      !isAllowedGroup(groupName, jobsConfig) &&
+      !isAllowedGroup(chatId, jobsConfig)
+    ) {
+      onLog(
+        `[whatsapp-ingest] skipped: group_not_tracked (groupName: "${groupName}" chatId: "${chatId}")`
+      );
       return { skipped: 'group_not_tracked' };
     }
   }
@@ -319,8 +344,9 @@ export function startIngestWhenReady(session, deps = {}) {
       try {
         const { listJoinedWhatsappGroups } = await import('../whatsapp/groups.js');
         const joined = await listJoinedWhatsappGroups(client);
+        const cached = seedChatCacheFromGroups(joined);
         onLog(
-          `[whatsapp-ingest] session sees ${joined.length} group/newsletter chat(s)`
+          `[whatsapp-ingest] session sees ${joined.length} group/newsletter chat(s); cached ${cached} display name(s)`
         );
       } catch (err) {
         onLog(`[whatsapp-ingest] group list skipped: ${err.message}`);

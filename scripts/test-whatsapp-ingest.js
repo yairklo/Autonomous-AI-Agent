@@ -80,6 +80,26 @@ test('groupIdFromName normalizes', () => {
   assert.equal(groupIdFromName('Jobs Israel'), 'name:jobs israel');
 });
 
+test('chat cache ignores empty group names and seeds JID → title', async () => {
+  const {
+    clearChatCache,
+    getCachedChat,
+    seedChatCacheFromGroups,
+    setCachedChat,
+    groupTitleFromMessage,
+  } = await import('../server/jobs-engine/chat-cache.js');
+  clearChatCache();
+  setCachedChat('120363@g.us', { isGroup: true, name: '' });
+  assert.equal(getCachedChat('120363@g.us'), null);
+  seedChatCacheFromGroups([{ id: '120363@g.us', name: 'Referally Junior 1-2 🐊' }]);
+  assert.equal(getCachedChat('120363@g.us').name, 'Referally Junior 1-2 🐊');
+  assert.equal(
+    groupTitleFromMessage({ _data: { chat: { formattedTitle: 'Jobs Israel' } } }),
+    'Jobs Israel'
+  );
+  clearChatCache();
+});
+
 test('isPermanentDisconnect detects logout vs drop', () => {
   assert.equal(isPermanentDisconnect('LOGOUT'), true);
   assert.equal(isPermanentDisconnect('UNPAIRED'), true);
@@ -141,6 +161,49 @@ test('handleWhatsappMessage upserts discovered job for tracked group', async () 
     }
   );
   assert.equal(dup.results[0].isNew, false);
+});
+
+test('handleWhatsappMessage resolves group name from chat cache when getChat fails', async () => {
+  resetIngestTestState();
+  const { seedChatCacheFromGroups } = await import('../server/jobs-engine/chat-cache.js');
+  seedChatCacheFromGroups([
+    { id: '120363403637482285@g.us', name: 'Referally Junior 1-2 🐊' },
+  ]);
+  const persisted = [];
+  const result = await handleWhatsappMessage(
+    {
+      body: 'דרוש Backend Engineer / Full Stack https://jobs.example.com/referally',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: '120363403637482285@g.us',
+      to: '120363403637482285@g.us',
+      id: { _serialized: 'wamid-jid-1', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: {
+        ...JOBS_CONFIG,
+        whatsapp: { ...JOBS_CONFIG.whatsapp, groups: ['Referally Junior 1-2 🐊'] },
+      },
+      mongoReady: () => true,
+      isTrackedGroupName: async (name) => name === 'Referally Junior 1-2 🐊',
+      persistRawWhatsappMessage: async (doc) => {
+        persisted.push(doc);
+        return { stored: true, isNew: true };
+      },
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: async (matched, meta) => ({
+        job: { jobId: 'jid1', status: 'discovered', rawText: matched.text },
+        isNew: true,
+        meta,
+      }),
+    }
+  );
+  assert.equal(persisted[0].chatName, 'Referally Junior 1-2 🐊');
+  assert.ok(result.results?.length >= 1);
 });
 
 test('handleWhatsappMessage skips untracked groups', async () => {
