@@ -71,8 +71,13 @@ export async function listGroupsFromStore(client) {
         const id = String(chat.id?._serialized || '');
         if (!id || seen[id]) return;
         if (id.indexOf('@g.us') < 0 && id.indexOf('@newsletter') < 0) return;
-        const name = String(chat.name || chat.formattedTitle || '').trim();
-        if (!name) return;
+        const name = String(
+          chat.name ||
+            chat.formattedTitle ||
+            chat.groupMetadata?.subject ||
+            ''
+        ).trim();
+        if (!name || /@(g\.us|newsletter)$/i.test(name)) return;
         seen[id] = true;
         out.push({
           id,
@@ -100,8 +105,17 @@ export async function readChatTitleFromStore(client, chatId) {
   if (!id || !page || typeof page.evaluate !== 'function') return '';
   try {
     const title = await page.evaluate((serial) => {
-      const pick = (chat) =>
-        String(chat?.name || chat?.formattedTitle || chat?.contact?.name || '').trim();
+      const looksJid = (n) => /@(g\.us|newsletter)$/i.test(String(n || ''));
+      const pick = (chat) => {
+        const n = String(
+          chat?.name ||
+            chat?.formattedTitle ||
+            chat?.groupMetadata?.subject ||
+            chat?.contact?.name ||
+            ''
+        ).trim();
+        return n && !looksJid(n) ? n : '';
+      };
       try {
         const direct = window.Store?.Chat?.get?.(serial);
         const n = pick(direct);
@@ -114,7 +128,22 @@ export async function readChatTitleFromStore(client, chatId) {
         if (wid) {
           const n = pick(window.Store?.Chat?.get?.(wid));
           if (n) return n;
+          try {
+            const gm = window.Store?.GroupMetadata?.get?.(wid) ||
+              window.Store?.GroupMetadata?.get?.(serial);
+            const subject = String(gm?.subject || gm?.name || '').trim();
+            if (subject && !looksJid(subject)) return subject;
+          } catch (_e2) {
+            /* ignore */
+          }
         }
+      } catch (_e) {
+        /* ignore */
+      }
+      try {
+        const gm = window.Store?.GroupMetadata?.get?.(serial);
+        const subject = String(gm?.subject || gm?.name || '').trim();
+        if (subject && !looksJid(subject)) return subject;
       } catch (_e) {
         /* ignore */
       }

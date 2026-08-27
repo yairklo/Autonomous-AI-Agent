@@ -4,7 +4,8 @@
 
 import { Job } from '../models/Job.js';
 import { WhatsappMessage } from '../models/WhatsappMessage.js';
-import { JobDb } from '../jobs/job-db.js';
+import { JobDb, openJobDb } from '../jobs/job-db.js';
+import { loadJobsConfig } from '../jobs/jobs-config.js';
 import { mongoReady } from './mongo-ready.js';
 
 export { mongoReady };
@@ -225,6 +226,124 @@ export async function listRecentJobs({ limit = 50, status } = {}) {
   if (status) q.status = String(status);
   const lim = Math.min(Math.max(Number(limit) || 50, 1), 200);
   return Job.find(q).sort({ updatedAt: -1 }).limit(lim).lean();
+}
+
+function firstLine(text) {
+  return (
+    String(text || '')
+      .split(/\n/)
+      .map((s) => s.trim())
+      .find(Boolean) || ''
+  );
+}
+
+function normalizeStatus(status) {
+  const s = String(status || '').trim();
+  if (s === 'detected') return 'discovered';
+  return s || 'discovered';
+}
+
+function jobDbToRow(j) {
+  const title = firstLine(j.text) || (j.rolesMatched || []).join(' / ') || 'Untitled job';
+  return {
+    id: j.id,
+    fingerprint: j.fingerprint || j.id,
+    title: title.slice(0, 120),
+    company: j.company || '',
+    group: j.groupName || '',
+    applyUrl: j.formUrl || j.contacts?.urls?.[0] || j.submitResult?.formUrl || '',
+    status: normalizeStatus(j.status),
+    approvalStatus: j.approvalStatus || '',
+    submittedAt: j.submittedAt || '',
+    createdAt: j.createdAt || '',
+    updatedAt: j.updatedAt || j.createdAt || '',
+    source: j.source || 'jobdb',
+  };
+}
+
+function mongoToRow(j, local) {
+  const parsed = j.parsedData || {};
+  const applyUrl =
+    j.applyUrl || local?.applyUrl || parsed.contacts?.urls?.[0] || '';
+  const title =
+    j.title ||
+    local?.title ||
+    (parsed.rolesMatched || []).join(' / ') ||
+    firstLine(j.rawText || j.description) ||
+    'Untitled job';
+  return {
+    id: j.jobId || local?.id || j.fingerprint,
+    fingerprint: j.fingerprint || local?.fingerprint || '',
+    title: String(title).slice(0, 120),
+    company: j.company || local?.company || '',
+    group: parsed.groupName || local?.group || '',
+    applyUrl,
+    status: normalizeStatus(j.status || local?.status),
+    approvalStatus: local?.approvalStatus || '',
+    submittedAt: local?.submittedAt || '',
+    createdAt: j.createdAt || local?.createdAt || '',
+    updatedAt: j.updatedAt || local?.updatedAt || '',
+    source: j.source || local?.source || 'mongo',
+  };
+}
+
+/**
+ * GUI jobs table: JSON JobDb (approval/submit) merged with Mongo (ingest).
+ * Works when Mongo is down — JobDb on the data volume is enough.
+ */
+export async function listJobsForGui({ limit = 80, status } = {}) {
+  const lim = Math.min(Math.max(Number(limit) || 80, 1), 200);
+  let local = [];
+  let source = 'jobdb';
+  try {
+    const jobsConfig = loadJobsConfig();
+    const db = openJobDb(jobsConfig.storage.jobsDbPath);
+    local = db.list({ limit: 500 });
+  } catch {
+    local = [];
+  }
+
+  let mongoJobs = [];
+  if (mongoReady()) {
+    try {
+      mongoJobs = await listRecentJobs({ limit: 200 });
+      source = local.length ? 'mongo+jobdb' : 'mongo';
+    } catch {
+      source = local.length ? 'jobdb' : 'none';
+    }
+  }
+
+  const byKey = new Map();
+  for (const j of local) {
+    const row = jobDbToRow(j);
+    byKey.set(row.fingerprint || row.id, row);
+  }
+  for (const j of mongoJobs) {
+    const fp = j.fingerprint || j.jobId;
+    const existing = byKey.get(fp);
+    byKey.set(fp, mongoToRow(j, existing));
+  }
+
+  let rows = [...byKey.values()];
+  if (status) {
+    const s = String(status).toLowerCase();
+    rows = rows.filter(
+      (r) =>
+        String(r.status).toLowerCase() === s ||
+        String(r.approvalStatus).toLowerCase() === s
+    );
+  }
+  rows.sort((a, b) =>
+    String(b.updatedAt || b.createdAt || '').localeCompare(
+      String(a.updatedAt || a.createdAt || '')
+    )
+  );
+  return {
+    jobs: rows.slice(0, lim),
+    source,
+    mongo: mongoReady(),
+    total: rows.length,
+  };
 }
 
 export async function listRecentWhatsappMessages({

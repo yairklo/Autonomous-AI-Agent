@@ -636,6 +636,27 @@ test('explainMessageMatch distinguishes JID skip vs role skip vs match', async (
     { jobsConfig, trackedNames: ['Referally Junior 1-2 🐊'] }
   );
   assert.equal(jidSkip.reason, 'group_not_tracked');
+  const jidMapped = explainMessageMatch(
+    {
+      chatName: '120363390709579185@g.us',
+      chatId: '120363390709579185@g.us',
+      body: 'דרוש Software engineer (python)',
+    },
+    {
+      jobsConfig: {
+        ...jobsConfig,
+        whatsapp: {
+          groups: ['Referally Junior 1-2 🐊'],
+          groupJids: {
+            '120363390709579185@g.us': 'Referally Junior 1-2 🐊',
+          },
+        },
+      },
+      trackedNames: ['Referally Junior 1-2 🐊'],
+    }
+  );
+  assert.equal(jidMapped.reason, 'matched');
+  assert.equal(jidMapped.matched, true);
   const roleSkip = explainMessageMatch(
     {
       chatName: 'Referally Junior 1-2 🐊',

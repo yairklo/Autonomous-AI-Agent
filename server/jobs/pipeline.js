@@ -262,6 +262,7 @@ export async function submitApprovedJob({
 
   const cvCandidates = [
     cvPath,
+    path.join(appConfig.root, 'data', 'cv.pdf'),
     jobsConfig.profile.cvPath,
     path.join(appConfig.root, 'assets', 'cv.pdf'),
     profile.cvPath
@@ -280,7 +281,7 @@ export async function submitApprovedJob({
 
   const cvFinal = cvCandidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
   if (!cvFinal) {
-    const err = new Error('CV file not found (expected assets/cv.pdf)');
+    const err = new Error('CV file not found (expected data/cv.pdf — upload from Settings, no redeploy)');
     err.code = 'CV_NOT_FOUND';
     throw err;
   }

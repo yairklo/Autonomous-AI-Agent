@@ -31,6 +31,7 @@
           <h1>Voice Agent</h1>
         </div>
         <div class="top-actions">
+          <button type="button" id="jobsBtn" class="ghost" aria-label="Jobs">Jobs</button>
           <button type="button" id="historyBtn" class="ghost" aria-label="History">History</button>
           <button type="button" id="logoutBtn" class="ghost" aria-label="Logout">Logout</button>
           <button type="button" id="settingsBtn" class="ghost" aria-label="Settings">
@@ -114,6 +115,39 @@
       </div>
     </dialog>
 
+    <dialog id="jobsDialog" class="history-dialog jobs-dialog">
+      <div class="history-panel jobs-panel">
+        <header class="history-head">
+          <div>
+            <h2>Jobs</h2>
+            <p class="history-sub">משרות שזוהו · סטטוס הגשה · סנכרון לדרייב</p>
+          </div>
+          <button type="button" id="jobsClose" class="ghost">Close</button>
+        </header>
+        <div class="jobs-toolbar">
+          <button type="button" id="jobsRefresh" class="ghost">Refresh</button>
+          <button type="button" id="jobsDriveSync" class="ghost">Sync to Drive</button>
+          <a id="jobsDriveLink" class="jobs-drive-link" hidden href="#" target="_blank" rel="noopener">Open in Drive</a>
+        </div>
+        <p class="hint" id="jobsHint">Loading jobs…</p>
+        <div class="jobs-table-wrap">
+          <table class="jobs-table" id="jobsTable">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Company</th>
+                <th>Group</th>
+                <th>Apply</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody id="jobsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="settingsDialog">
       <form method="dialog" id="settingsForm" class="settings">
         <h2>Server</h2>
@@ -130,6 +164,43 @@
           Prefer server TTS when available
         </label>
         <p class="hint" id="healthHint">Not checked yet.</p>
+
+        <h2>CV &amp; profile</h2>
+        <p class="hint">
+          Saved on the Coolify <code>data</code> volume (<code>data/cv.pdf</code> +
+          <code>data/cv-profile.json</code>). Updating here does not require a rebuild.
+        </p>
+        <label>
+          Name
+          <input id="cvName" type="text" autocomplete="name" />
+        </label>
+        <label>
+          Email
+          <input id="cvEmail" type="email" autocomplete="email" />
+        </label>
+        <label>
+          Phone
+          <input id="cvPhone" type="tel" autocomplete="tel" />
+        </label>
+        <label>
+          LinkedIn
+          <input id="cvLinkedin" type="url" placeholder="https://linkedin.com/in/…" />
+        </label>
+        <label>
+          GitHub
+          <input id="cvGithub" type="url" placeholder="https://github.com/…" />
+        </label>
+        <div class="wa-groups-add">
+          <button type="button" id="cvProfileSave" class="send">Save profile</button>
+          <a id="cvDownload" class="ghost jobs-drive-link" hidden href="/api/jobs/cv">Download current CV</a>
+        </div>
+        <p class="hint" id="cvProfileHint"></p>
+        <label>
+          Upload PDF
+          <input id="cvFile" type="file" accept="application/pdf,.pdf" />
+        </label>
+        <button type="button" id="cvUpload" class="ghost">Upload CV</button>
+        <p class="hint" id="cvFileHint">No CV uploaded yet.</p>
 
         <h2>WhatsApp groups</h2>
         <p class="hint">

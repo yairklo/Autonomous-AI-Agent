@@ -5,6 +5,7 @@
 import {
   loadJobsConfig,
   saveWhatsappGroups,
+  saveWhatsappGroupJid,
 } from '../jobs/jobs-config.js';
 import {
   listTrackedGroups,
@@ -14,6 +15,7 @@ import {
 } from './group-store.js';
 import { resolveWhatsappGroupByName } from './wa-resolve.js';
 import { getSharedWhatsappSession } from '../whatsapp/session.js';
+import { isGroupLikeJid } from '../whatsapp/groups.js';
 
 function syncFileAllowList(names, { allowEmpty = false, overridePath } = {}) {
   return saveWhatsappGroups(names, { allowEmpty, overridePath });
@@ -110,6 +112,13 @@ export async function trackGroupFromGui(name, opts = {}) {
   const fileCfg = loadJobsConfig({ overridePath: opts.overridePath });
   const nextNames = [...fileCfg.whatsapp.groups, persistName];
   const saved = syncFileAllowList(nextNames, { overridePath: opts.overridePath });
+  if (foundLive && isGroupLikeJid(groupId)) {
+    try {
+      saveWhatsappGroupJid(groupId, persistName, { overridePath: opts.overridePath });
+    } catch {
+      /* file jid map is best-effort */
+    }
+  }
 
   return {
     ok: true,

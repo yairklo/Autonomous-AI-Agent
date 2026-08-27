@@ -10,6 +10,7 @@ import {
   bindTrackedGroupJids,
   ensureTrackedGroupsSeeded,
   groupIdFromName,
+  hydrateJidsFromMap,
   hydrateTrackedJidsFromMongo,
   isTrackedChat,
   mongoReady,
@@ -119,20 +120,27 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   const chatInfo = await resolveChatInfo(serialized, deps.client, onLog);
   const isGroup = Boolean(chatInfo.isGroup);
   const chatId = chatInfo.chatId || serialized.chatId;
+  hydrateJidsFromMap(jobsConfig?.whatsapp?.groupJids);
   const selfUser = whatsappSelfUserId(deps.client);
   const remembered = rememberedNameForJid(chatId);
+  const payloadTitle = [chatInfo.name, serialized.groupName, remembered].find(
+    (value) => {
+      const s = String(value || '').trim();
+      return s && !looksLikeChatJid(s);
+    }
+  ) || '';
   const selfChat = isSelfChatTarget({
     fromMe: serialized.fromMe,
     isGroup,
     chatId,
-    groupName: chatInfo.name || serialized.groupName || remembered,
+    groupName: payloadTitle || serialized.groupName || remembered,
     selfUser,
   });
   const groupName = selfChat
     ? SELF_CHAT_LABEL
     : resolveDisplayName({
         isGroup,
-        name: chatInfo.name || serialized.groupName || remembered,
+        name: payloadTitle,
         chatId,
         fromMe: serialized.fromMe,
         selfUser,
@@ -188,11 +196,14 @@ export async function handleWhatsappMessage(msg, deps = {}) {
     if (!tracked) {
       if (deps.isTrackedGroupName) {
         tracked = await deps.isTrackedGroupName(groupName);
+        if (!tracked && remembered) {
+          tracked = await deps.isTrackedGroupName(remembered);
+        }
         if (!tracked && chatId && chatId !== groupName) {
           tracked = await deps.isTrackedGroupName(chatId);
         }
       } else {
-        tracked = await isTrackedChat({ name: groupName, chatId });
+        tracked = await isTrackedChat({ name: groupName || remembered, chatId });
       }
     }
   } catch {
@@ -212,7 +223,8 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   if (!tracked) {
     if (
       !isAllowedGroup(groupName, jobsConfig) &&
-      !isAllowedGroup(chatId, jobsConfig)
+      !isAllowedGroup(chatId, jobsConfig) &&
+      !isAllowedGroup(remembered, jobsConfig)
     ) {
       onLog(
         `[whatsapp-ingest] skipped: group_not_tracked (groupName: "${groupName}" chatId: "${chatId}")`
@@ -266,7 +278,7 @@ export async function rematchJidLabeledMessages(deps = {}) {
   const listFn = deps.listJidLabeledMessages || listJidLabeledMessages;
   let rows = [];
   try {
-    rows = await listFn({ limit: deps.rematchLimit || 80 });
+    rows = await listFn({ limit: deps.rematchLimit || 200 });
   } catch (err) {
     onLog(`[whatsapp-ingest] rematch list failed: ${err.message}`);
     return { rematched: 0 };

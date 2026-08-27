@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import ExcelJS from 'exceljs';
 import { config as appConfig } from '../config.js';
+import { driveTrackerStatus, syncTrackerToDrive } from '../jobs-engine/drive-tracker.js';
 
 const TRACKER_FILE = path.join(appConfig.root, 'data', 'job_applications.xlsx');
 
@@ -155,6 +156,11 @@ async function updateJobInTrackerNow(job) {
     row.alignment = { wrapText: true, vertical: 'top', horizontal: 'right' };
 
     await workbook.xlsx.writeFile(TRACKER_FILE);
+    if (driveTrackerStatus().configured) {
+      void syncTrackerToDrive({
+        onLog: (msg) => console.log(msg),
+      }).catch((err) => console.error('[tracker] drive sync:', err.message));
+    }
   } catch (err) {
     console.error('[tracker] Failed to update Excel tracker:', err.message);
   }

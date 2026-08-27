@@ -329,7 +329,9 @@ dialog::backdrop {
 }
 
 .settings input[type="url"],
-.settings input[type="text"] {
+.settings input[type="text"],
+.settings input[type="email"],
+.settings input[type="tel"] {
   width: 100%;
   border-radius: 0.65rem;
   border: 1px solid rgba(231, 215, 177, 0.25);
@@ -337,6 +339,12 @@ dialog::backdrop {
   color: var(--ink);
   padding: 0.65rem 0.75rem;
   font: inherit;
+}
+
+.settings input[type="file"] {
+  width: 100%;
+  font: inherit;
+  color: var(--muted);
 }
 
 .settings code {
@@ -864,6 +872,83 @@ dialog::backdrop {
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.jobs-panel {
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.jobs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.jobs-drive-link {
+  color: var(--mint);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.jobs-drive-link[hidden] {
+  display: none;
+}
+
+.jobs-table-wrap {
+  overflow: auto;
+  max-height: min(62dvh, 560px);
+  border: 1px solid rgba(231, 215, 177, 0.18);
+  border-radius: 0.75rem;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.jobs-table th,
+.jobs-table td {
+  text-align: start;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid rgba(231, 215, 177, 0.12);
+  vertical-align: top;
+}
+
+.jobs-table th {
+  position: sticky;
+  top: 0;
+  background: #152824;
+  color: var(--sand);
+  font-weight: 600;
+}
+
+.jobs-table a {
+  color: var(--mint);
+}
+
+.jobs-status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.jobs-status.is-submitted {
+  background: rgba(125, 206, 160, 0.22);
+  color: var(--mint);
+}
+
+.jobs-status.is-awaiting {
+  background: rgba(233, 196, 106, 0.18);
+  color: var(--sand);
+}
+
+.jobs-status.is-failed {
+  background: rgba(217, 120, 94, 0.2);
+  color: var(--danger);
 }
 
 @media (max-width: 720px) {

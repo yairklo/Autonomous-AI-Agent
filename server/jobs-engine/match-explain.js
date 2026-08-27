@@ -7,6 +7,7 @@ import { isAllowedGroup, loadJobsConfig } from '../jobs/jobs-config.js';
 import { matchFullStackOrBackend } from '../jobs/job-matcher.js';
 import { isGroupLikeJid } from '../whatsapp/groups.js';
 import { isSelfChatTarget, looksLikeChatJid, SELF_CHAT_LABEL } from './chat-cache.js';
+import { rememberedNameForJid } from './group-store.js';
 
 export function explainMessageMatch(
   msg,
@@ -15,18 +16,29 @@ export function explainMessageMatch(
   const cfg = jobsConfig || loadJobsConfig();
   const groupName = String(msg?.chatName || '').trim();
   const chatId = String(msg?.chatId || '').trim();
+  const mapped =
+    rememberedNameForJid(chatId) ||
+    cfg.whatsapp?.groupJids?.[chatId.toLowerCase()] ||
+    cfg.whatsapp?.groupJids?.[groupName.toLowerCase()] ||
+    '';
+  const resolvedName =
+    looksLikeChatJid(groupName) || !groupName ? mapped || groupName : groupName;
   const tracked = new Set(
     (Array.isArray(trackedNames) ? trackedNames : [])
       .map((n) => String(n || '').trim().toLowerCase())
       .filter(Boolean)
   );
-  const nameKey = groupName.toLowerCase();
+  for (const [jid, name] of Object.entries(cfg.whatsapp?.groupJids || {})) {
+    if (jid) tracked.add(String(jid).toLowerCase());
+    if (name) tracked.add(String(name).trim().toLowerCase());
+  }
+  const nameKey = resolvedName.toLowerCase();
   const idKey = chatId.toLowerCase();
   const selfChat = isSelfChatTarget({
     fromMe: Boolean(msg?.fromMe),
     isGroup: isGroupLikeJid(chatId),
     chatId,
-    groupName,
+    groupName: resolvedName,
     selfUser,
   });
   const inTracked = Boolean(
@@ -36,7 +48,7 @@ export function explainMessageMatch(
       (idKey && tracked.has(idKey))
   );
   const allowed =
-    isAllowedGroup(groupName, cfg) || isAllowedGroup(chatId, cfg);
+    isAllowedGroup(resolvedName, cfg) || isAllowedGroup(chatId, cfg);
 
   if (!inTracked && !allowed) {
     const storedAsJid = looksLikeChatJid(groupName) || (!groupName && looksLikeChatJid(chatId));

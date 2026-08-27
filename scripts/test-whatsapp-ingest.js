@@ -308,6 +308,76 @@ test('handleWhatsappMessage tracks by remembered JID when title is missing', asy
   assert.ok(result.results?.length >= 1);
 });
 
+test('handleWhatsappMessage tracks unresolved JID via groupJids map', async () => {
+  resetIngestTestState();
+  const entryJid = '120363403637482285@g.us';
+  const madmahJid = '972547598009-1508702211@g.us';
+  const cfg = {
+    ...JOBS_CONFIG,
+    whatsapp: {
+      ...JOBS_CONFIG.whatsapp,
+      groups: ['Referally Entry 0+ 💙', 'מדמ"ח - נטוורקינג ומשרות'],
+      groupJids: {
+        [entryJid]: 'Referally Entry 0+ 💙',
+        [madmahJid]: 'מדמ"ח - נטוורקינג ומשרות',
+      },
+    },
+  };
+  const persist = async () => ({ stored: true, isNew: true });
+  const upsert = async (matched, meta) => ({
+    job: { jobId: meta.groupName, status: 'discovered', rawText: matched.text },
+    isNew: true,
+    meta,
+  });
+  const entry = await handleWhatsappMessage(
+    {
+      body: 'Junior React Developer B.Sc in computer science https://www.comeet.com/jobs/x',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: entryJid,
+      to: entryJid,
+      id: { _serialized: 'wamid-entry-jid', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: cfg,
+      mongoReady: () => true,
+      persistRawWhatsappMessage: persist,
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: upsert,
+    }
+  );
+  assert.ok(entry.results?.length >= 1);
+  assert.equal(entry.results[0].meta.groupName, 'Referally Entry 0+ 💙');
+
+  const madmah = await handleWhatsappMessage(
+    {
+      body: 'Hiring Backend engineer Node.js apply https://jobs.eu.lever.co/mobileye/x',
+      hasMedia: false,
+      author: 'recruiter@lid',
+      from: madmahJid,
+      to: madmahJid,
+      id: { _serialized: 'wamid-madmah-jid', fromMe: false },
+      getChat: async () => {
+        throw new Error('r');
+      },
+    },
+    {
+      jobsConfig: cfg,
+      mongoReady: () => true,
+      persistRawWhatsappMessage: persist,
+      notifyLiveJob: async () => {},
+      notifyTelegram: false,
+      upsertDiscoveredJob: upsert,
+    }
+  );
+  assert.ok(madmah.results?.length >= 1);
+  assert.equal(madmah.results[0].meta.groupName, 'מדמ"ח - נטוורקינג ומשרות');
+});
+
 test('listJoinedWhatsappGroups falls back to Store when getChats throws r', async () => {
   const { listJoinedWhatsappGroups } = await import('../server/whatsapp/groups.js');
   const client = {
@@ -668,7 +738,7 @@ test('jobs engine HTTP gui list works without mongo', async () => {
   await new Promise((r) => server.close(r));
 });
 
-test('jobs engine recent returns 503 without mongo', async () => {
+test('jobs engine recent works without mongo', async () => {
   const app = express();
   app.use(express.json());
   mountJobsEngineRoutes(app);
@@ -677,10 +747,57 @@ test('jobs engine recent returns 503 without mongo', async () => {
   });
   const { port } = server.address();
   const res = await fetch(`http://127.0.0.1:${port}/api/jobs/recent`);
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.code, 'MONGO_UNAVAILABLE');
+  assert.equal(body.ok, true);
+  assert.ok(Array.isArray(body.jobs));
   await new Promise((r) => server.close(r));
+});
+
+test('jobs engine drive-tracker status does not require mongo', async () => {
+  const app = express();
+  app.use(express.json());
+  mountJobsEngineRoutes(app);
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/jobs/drive-tracker`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.configured, 'boolean');
+  assert.ok(body.howTo);
+  await new Promise((r) => server.close(r));
+});
+
+test('CV profile save + PDF upload persist on a data-like path (no redeploy)', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-profile-'));
+  const jobsConfig = {
+    profile: {
+      path: path.join(tmp, 'cv-profile.json'),
+      cvPath: path.join(tmp, 'cv.pdf'),
+    },
+  };
+  const { saveCvProfile, saveCvPdf, getProfileForGui, readCvPdfBuffer } =
+    await import('../server/jobs-engine/profile-store.js');
+  const saved = saveCvProfile(
+    { name: 'Test User', email: 't@example.com', phone: '050', linkedin: '', github: '' },
+    jobsConfig
+  );
+  assert.equal(saved.ok, true);
+  assert.equal(saved.profile.name, 'Test User');
+  assert.equal(saved.profile.email, 't@example.com');
+  const pdf = Buffer.from('%PDF-1.4 test cv');
+  const after = saveCvPdf(pdf, 'resume.pdf', jobsConfig);
+  assert.equal(after.ok, true);
+  assert.equal(after.cv.present, true);
+  assert.ok(after.cv.bytes > 0);
+  assert.deepEqual(readCvPdfBuffer(jobsConfig), pdf);
+  const gui = getProfileForGui(jobsConfig);
+  assert.equal(gui.persistedOnVolume, true);
+  assert.equal(gui.profile.name, 'Test User');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 console.log('whatsapp-ingest tests: ok');

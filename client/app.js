@@ -72,6 +72,25 @@ const els = {
   textInput: document.getElementById('textInput'),
   settingsBtn: document.getElementById('settingsBtn'),
   settingsDialog: document.getElementById('settingsDialog'),
+  jobsBtn: document.getElementById('jobsBtn'),
+  jobsDialog: document.getElementById('jobsDialog'),
+  jobsClose: document.getElementById('jobsClose'),
+  jobsRefresh: document.getElementById('jobsRefresh'),
+  jobsDriveSync: document.getElementById('jobsDriveSync'),
+  jobsDriveLink: document.getElementById('jobsDriveLink'),
+  jobsHint: document.getElementById('jobsHint'),
+  jobsTableBody: document.getElementById('jobsTableBody'),
+  cvName: document.getElementById('cvName'),
+  cvEmail: document.getElementById('cvEmail'),
+  cvPhone: document.getElementById('cvPhone'),
+  cvLinkedin: document.getElementById('cvLinkedin'),
+  cvGithub: document.getElementById('cvGithub'),
+  cvProfileSave: document.getElementById('cvProfileSave'),
+  cvProfileHint: document.getElementById('cvProfileHint'),
+  cvFile: document.getElementById('cvFile'),
+  cvUpload: document.getElementById('cvUpload'),
+  cvFileHint: document.getElementById('cvFileHint'),
+  cvDownload: document.getElementById('cvDownload'),
   historyBtn: document.getElementById('historyBtn'),
   historyDialog: document.getElementById('historyDialog'),
   historyClose: document.getElementById('historyClose'),
@@ -123,6 +142,7 @@ els.settingsBtn.addEventListener('click', () => {
   els.settingsDialog.showModal();
   void loadWhatsappGroups();
   void loadWhatsappMessages();
+  void loadCvProfile();
 });
 
 els.settingsDialog.addEventListener('close', () => {
@@ -178,6 +198,229 @@ if (els.waGroupInput) {
 
 if (els.waMessagesRefresh) {
   els.waMessagesRefresh.addEventListener('click', () => void loadWhatsappMessages());
+}
+
+function applyCvProfile(data) {
+  const p = data?.profile || {};
+  if (els.cvName) els.cvName.value = p.name || '';
+  if (els.cvEmail) els.cvEmail.value = p.email || '';
+  if (els.cvPhone) els.cvPhone.value = p.phone || '';
+  if (els.cvLinkedin) els.cvLinkedin.value = p.linkedin || '';
+  if (els.cvGithub) els.cvGithub.value = p.github || '';
+  const cv = data?.cv || {};
+  if (els.cvFileHint) {
+    els.cvFileHint.textContent = cv.present
+      ? `On volume: ${cv.storedAs || 'data/cv.pdf'} · ${cv.bytes || 0} bytes · ${cv.updatedAt || ''}`
+      : 'No CV on the data volume yet. Upload a PDF here — no rebuild.';
+  }
+  if (els.cvDownload) {
+    els.cvDownload.hidden = !cv.present;
+    els.cvDownload.href = api('/api/jobs/cv');
+  }
+  if (els.cvProfileHint && data?.volumeHint) {
+    els.cvProfileHint.textContent = data.volumeHint;
+  }
+}
+
+async function loadCvProfile() {
+  if (!els.cvName) return;
+  try {
+    const res = await fetch(api('/api/jobs/profile'));
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    applyCvProfile(data);
+  } catch (err) {
+    if (els.cvProfileHint) els.cvProfileHint.textContent = `Could not load CV profile: ${err.message}`;
+  }
+}
+
+async function saveCvProfileFromForm() {
+  if (els.cvProfileHint) els.cvProfileHint.textContent = 'Saving profile…';
+  try {
+    const res = await fetch(api('/api/jobs/profile'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: els.cvName?.value || '',
+        email: els.cvEmail?.value || '',
+        phone: els.cvPhone?.value || '',
+        linkedin: els.cvLinkedin?.value || '',
+        github: els.cvGithub?.value || '',
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    applyCvProfile(data);
+    if (els.cvProfileHint) els.cvProfileHint.textContent = 'Profile saved on the data volume.';
+  } catch (err) {
+    if (els.cvProfileHint) els.cvProfileHint.textContent = `Save failed: ${err.message}`;
+  }
+}
+
+async function uploadCvPdf() {
+  const file = els.cvFile?.files?.[0];
+  if (!file) {
+    if (els.cvFileHint) els.cvFileHint.textContent = 'Choose a PDF first.';
+    return;
+  }
+  if (els.cvFileHint) els.cvFileHint.textContent = `Uploading ${file.name}…`;
+  try {
+    const body = new FormData();
+    body.append('cv', file, file.name);
+    const res = await fetch(api('/api/jobs/cv'), { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    applyCvProfile(data);
+    if (els.cvFileHint) {
+      els.cvFileHint.textContent = `Uploaded ${file.name} to the data volume. Applies immediately — no redeploy.`;
+    }
+  } catch (err) {
+    if (els.cvFileHint) els.cvFileHint.textContent = `Upload failed: ${err.message}`;
+  }
+}
+
+function statusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('submit') && s.includes('fail')) return 'is-failed';
+  if (s === 'submitted' || s === 'approved') return 'is-submitted';
+  if (s.includes('await') || s === 'discovered') return 'is-awaiting';
+  if (s.includes('fail') || s === 'rejected') return 'is-failed';
+  return '';
+}
+
+function formatJobDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString();
+}
+
+async function loadJobsTable() {
+  if (!els.jobsTableBody || !els.jobsHint) return;
+  els.jobsHint.textContent = 'Loading jobs…';
+  try {
+    const res = await fetch(api('/api/jobs/recent?limit=120'));
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    els.jobsTableBody.replaceChildren();
+    if (!jobs.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.textContent = 'No jobs yet. Tracked WhatsApp groups will appear here after ingest.';
+      tr.appendChild(td);
+      els.jobsTableBody.appendChild(tr);
+    } else {
+      for (const job of jobs) {
+        const tr = document.createElement('tr');
+        const title = document.createElement('td');
+        title.textContent = job.title || '—';
+        const company = document.createElement('td');
+        company.textContent = job.company || '—';
+        const group = document.createElement('td');
+        group.textContent = job.group || '—';
+        const apply = document.createElement('td');
+        if (job.applyUrl) {
+          const a = document.createElement('a');
+          a.href = job.applyUrl;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = 'Open';
+          apply.appendChild(a);
+        } else {
+          apply.textContent = '—';
+        }
+        const status = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = `jobs-status ${statusClass(job.status)}`.trim();
+        badge.textContent = job.approvalStatus && job.approvalStatus !== 'pending'
+          ? `${job.status} / ${job.approvalStatus}`
+          : job.status || '—';
+        status.appendChild(badge);
+        const date = document.createElement('td');
+        date.textContent = formatJobDate(job.submittedAt || job.updatedAt || job.createdAt);
+        tr.append(title, company, group, apply, status, date);
+        els.jobsTableBody.appendChild(tr);
+      }
+    }
+    els.jobsHint.textContent = `${jobs.length} job(s) · source ${data.source || 'local'}${data.mongo ? ' · Mongo connected' : ''}`;
+  } catch (err) {
+    els.jobsHint.textContent = `Could not load jobs: ${err.message}`;
+  }
+}
+
+async function loadDriveTrackerStatus() {
+  if (!els.jobsDriveLink) return;
+  try {
+    const res = await fetch(api('/api/jobs/drive-tracker'));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (data.webViewLink) {
+      els.jobsDriveLink.hidden = false;
+      els.jobsDriveLink.href = data.webViewLink;
+    } else {
+      els.jobsDriveLink.hidden = true;
+    }
+    if (els.jobsHint && data.howTo) {
+      const extra = data.lastSyncedAt
+        ? ` Last Drive sync: ${formatJobDate(data.lastSyncedAt)}.`
+        : data.configured
+          ? ' Drive is authorized — click Sync to upload the Excel sheet.'
+          : ` ${data.howTo}`;
+      if (!els.jobsHint.textContent.startsWith('Could not')) {
+        els.jobsHint.textContent = `${els.jobsHint.textContent}${extra}`;
+      }
+    }
+  } catch {
+    /* jobs table still useful without Drive */
+  }
+}
+
+async function syncJobsToDrive() {
+  if (els.jobsHint) els.jobsHint.textContent = 'Syncing Excel tracker to Google Drive…';
+  try {
+    const res = await fetch(api('/api/jobs/drive-tracker'), { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || data.howTo || `HTTP ${res.status}`);
+    }
+    if (els.jobsDriveLink && data.webViewLink) {
+      els.jobsDriveLink.hidden = false;
+      els.jobsDriveLink.href = data.webViewLink;
+    }
+    if (els.jobsHint) {
+      els.jobsHint.textContent = data.webViewLink
+        ? `Synced to Drive. Open the sheet from the link.`
+        : `Synced file id ${data.fileId || ''}`;
+    }
+  } catch (err) {
+    if (els.jobsHint) els.jobsHint.textContent = `Drive sync failed: ${err.message}`;
+  }
+}
+
+if (els.cvProfileSave) {
+  els.cvProfileSave.addEventListener('click', () => void saveCvProfileFromForm());
+}
+if (els.cvUpload) {
+  els.cvUpload.addEventListener('click', () => void uploadCvPdf());
+}
+if (els.jobsBtn && els.jobsDialog) {
+  els.jobsBtn.addEventListener('click', () => {
+    els.jobsDialog.showModal();
+    void loadJobsTable().then(() => loadDriveTrackerStatus());
+  });
+}
+if (els.jobsClose && els.jobsDialog) {
+  els.jobsClose.addEventListener('click', () => els.jobsDialog.close());
+}
+if (els.jobsRefresh) {
+  els.jobsRefresh.addEventListener('click', () => {
+    void loadJobsTable().then(() => loadDriveTrackerStatus());
+  });
+}
+if (els.jobsDriveSync) {
+  els.jobsDriveSync.addEventListener('click', () => void syncJobsToDrive());
 }
 
 async function loadWhatsappMessages() {
