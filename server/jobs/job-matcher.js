@@ -93,7 +93,7 @@ export const EXCLUDED_ROLE_PATTERNS = [
   /chemical\s+engineer/i,
   /מהנדס(?:ת)?\s*כימ/,
   /הנדסת\s*כימיה/,
-  /electrical\s+engineer/i,
+  /electrical\s+engineers?\b/i,
   /מהנדס(?:ת)?\s*חשמל/,
   /הנדסת\s*חשמל/,
   /industrial\s+designer/i,

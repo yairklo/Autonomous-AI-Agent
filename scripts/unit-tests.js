@@ -698,6 +698,11 @@ test('matchFullStackOrBackend detects HE/EN roles', async () => {
     '*Design Automation Engineer* / NVIDIA Bachelor’s degree in Computer Science https://nvidia.wd5.myworkdayjobs.com/job'
   );
   assert.ok(nvidia.matches);
+  const comms = matchFullStackOrBackend(
+    '*Communications System Engineer* / Ethosia Herzliya | Software - B.Sc. in Electrical Engineering, Computer Science, or an equivalent field - Hands-on embedded software experience https://www.linkedin.com/jobs/view/4457748262'
+  );
+  assert.ok(comms.matches);
+  assert.notEqual(comms.excluded, true);
 });
 
 test('JobDb dedupes by fingerprint', async () => {

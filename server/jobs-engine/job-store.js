@@ -63,6 +63,32 @@ export async function persistRawWhatsappMessage(doc) {
   }
 }
 
+export async function updateWhatsappChatName(chatId, chatName) {
+  if (!mongoReady()) return 0;
+  const id = String(chatId || '').trim();
+  const name = String(chatName || '').trim();
+  if (!id || !name) return 0;
+  const res = await WhatsappMessage.updateMany({ chatId: id }, { $set: { chatName: name } });
+  return Number(res?.modifiedCount || 0);
+}
+
+export async function listJidLabeledMessages({ limit = 80 } = {}) {
+  if (!mongoReady()) return [];
+  const lim = Math.min(Math.max(Number(limit) || 80, 1), 200);
+  const rows = await WhatsappMessage.find({ chatId: /@g\.us$|@newsletter$/i })
+    .sort({ timestamp: -1 })
+    .limit(lim * 2)
+    .select({ raw: 0 })
+    .lean();
+  return rows
+    .filter((r) => {
+      const name = String(r.chatName || '').trim();
+      const id = String(r.chatId || '').trim();
+      return !name || name === id || /@(g\.us|c\.us|newsletter)$/i.test(name);
+    })
+    .slice(0, lim);
+}
+
 /**
  * Insert a discovered job or return existing duplicate without regressing status.
  * @returns {Promise<{ job: object, isNew: boolean, duplicateOf?: string }>}

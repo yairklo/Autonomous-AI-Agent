@@ -10,14 +10,19 @@ import {
   bindTrackedGroupJids,
   ensureTrackedGroupsSeeded,
   groupIdFromName,
+  hydrateTrackedJidsFromMongo,
   isTrackedChat,
   mongoReady,
+  rememberJidName,
   rememberTrackedGroupJid,
+  rememberedNameForJid,
 } from './group-store.js';
-import { groupChatIdFromMessage, isSelfChatTarget, resolveChatInfo, resolveDisplayName, seedChatCacheFromGroups, SELF_CHAT_LABEL, whatsappSelfUserId } from './chat-cache.js';
+import { groupChatIdFromMessage, isSelfChatTarget, looksLikeChatJid, resolveChatInfo, resolveDisplayName, seedChatCacheFromGroups, SELF_CHAT_LABEL, whatsappSelfUserId } from './chat-cache.js';
 import { isGroupLikeJid } from '../whatsapp/groups.js';
 import {
+  listJidLabeledMessages,
   persistRawWhatsappMessage,
+  updateWhatsappChatName,
   upsertDiscoveredJob,
   waMessageIdFromMsg,
 } from './job-store.js';
@@ -115,18 +120,19 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   const isGroup = Boolean(chatInfo.isGroup);
   const chatId = chatInfo.chatId || serialized.chatId;
   const selfUser = whatsappSelfUserId(deps.client);
+  const remembered = rememberedNameForJid(chatId);
   const selfChat = isSelfChatTarget({
     fromMe: serialized.fromMe,
     isGroup,
     chatId,
-    groupName: chatInfo.name || serialized.groupName,
+    groupName: chatInfo.name || serialized.groupName || remembered,
     selfUser,
   });
   const groupName = selfChat
     ? SELF_CHAT_LABEL
     : resolveDisplayName({
         isGroup,
-        name: chatInfo.name || serialized.groupName,
+        name: chatInfo.name || serialized.groupName || remembered,
         chatId,
         fromMe: serialized.fromMe,
         selfUser,
@@ -167,8 +173,14 @@ export async function handleWhatsappMessage(msg, deps = {}) {
       type: serialized.type,
     },
   });
-  if (raw.stored && raw.isNew === false) {
+  if (raw.stored && raw.isNew === false && !deps.rematch) {
     return { skipped: 'duplicate_message' };
+  }
+  if (chatId && groupName && !looksLikeChatJid(groupName)) {
+    rememberJidName(chatId, groupName);
+    if (mongoIsReady) {
+      updateWhatsappChatName(chatId, groupName).catch(() => {});
+    }
   }
 
   let tracked = selfChat;
@@ -194,6 +206,7 @@ export async function handleWhatsappMessage(msg, deps = {}) {
     groupName &&
     !isGroupLikeJid(groupName)
   ) {
+    rememberJidName(chatId, groupName);
     rememberTrackedGroupJid(groupName, chatId).catch(() => {});
   }
   if (!tracked) {
@@ -246,6 +259,48 @@ export async function handleWhatsappMessage(msg, deps = {}) {
   }
   deps.session?.markEvent?.();
   return { results };
+}
+
+export async function rematchJidLabeledMessages(deps = {}) {
+  const onLog = deps.onLog || (() => {});
+  const listFn = deps.listJidLabeledMessages || listJidLabeledMessages;
+  let rows = [];
+  try {
+    rows = await listFn({ limit: deps.rematchLimit || 80 });
+  } catch (err) {
+    onLog(`[whatsapp-ingest] rematch list failed: ${err.message}`);
+    return { rematched: 0 };
+  }
+  if (!rows.length) return { rematched: 0 };
+  onLog(`[whatsapp-ingest] rematching ${rows.length} message(s) stored as chat JID`);
+  let rematched = 0;
+  for (const row of rows) {
+    try {
+      const result = await handleWhatsappMessage(
+        {
+          messageId: row.messageId,
+          chatId: row.chatId,
+          from: row.chatId,
+          to: row.chatId,
+          body: row.body,
+          text: row.body,
+          fromMe: row.fromMe,
+          timestamp: row.timestamp,
+          type: row.type,
+          author: row.author,
+          hasMedia: row.hasMedia,
+          groupName: row.chatName,
+        },
+        { ...deps, rematch: true }
+      );
+      if (result?.results?.length || result?.skipped === 'not_target_job') {
+        rematched += 1;
+      }
+    } catch (err) {
+      onLog(`[whatsapp-ingest] rematch error: ${err.message}`);
+    }
+  }
+  return { rematched };
 }
 
 export async function drainIngestBuffer(deps = {}) {
@@ -356,6 +411,14 @@ export function startIngestWhenReady(session, deps = {}) {
       const attached = attachMessageIngest(client, { ...deps, session });
       detachIngest = attached.detach;
       try {
+        const hydrated = await hydrateTrackedJidsFromMongo();
+        if (hydrated) {
+          onLog(`[whatsapp-ingest] hydrated ${hydrated} tracked JID(s) from mongo`);
+        }
+      } catch (err) {
+        onLog(`[whatsapp-ingest] jid hydrate failed: ${err.message}`);
+      }
+      try {
         const { listJoinedWhatsappGroups } = await import('../whatsapp/groups.js');
         const joined = await listJoinedWhatsappGroups(client);
         const cached = seedChatCacheFromGroups(joined);
@@ -369,7 +432,17 @@ export function startIngestWhenReady(session, deps = {}) {
           );
         }
       } catch (err) {
-        onLog(`[whatsapp-ingest] group list skipped: ${err.message}`);
+        onLog(
+          `[whatsapp-ingest] group list skipped (${err.message}) — titles resolve per-message from Store by JID`
+        );
+      }
+      try {
+        const rematch = await rematchJidLabeledMessages({ ...deps, client, session });
+        if (rematch.rematched) {
+          onLog(`[whatsapp-ingest] rematched ${rematch.rematched} JID-labeled message(s)`);
+        }
+      } catch (err) {
+        onLog(`[whatsapp-ingest] rematch failed: ${err.message}`);
       }
       try {
         await drainIngestBuffer({ ...deps, client, session });
