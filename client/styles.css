@@ -442,7 +442,15 @@ dialog::backdrop {
   font-size: 0.75rem;
   margin-bottom: 0.2rem;
 }
-  border-color: rgba(125, 206, 160, 0.45);
+
+.wa-messages-list .wa-msg-match {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: #e8b86d;
+}
+
+.wa-messages-list .wa-msg-match[data-state='matched'] {
+  color: #7dcea0;
 }
 
 #waSessionHint[data-state='authenticated'] {

@@ -7,6 +7,7 @@ import { filterTargetJobs } from '../jobs/job-matcher.js';
 import { isAllowedGroup, loadJobsConfig } from '../jobs/jobs-config.js';
 import { sealClientAgainstSends } from '../jobs/whatsapp-live.js';
 import {
+  bindTrackedGroupJids,
   ensureTrackedGroupsSeeded,
   groupIdFromName,
   isTrackedChat,
@@ -348,6 +349,12 @@ export function startIngestWhenReady(session, deps = {}) {
         onLog(
           `[whatsapp-ingest] session sees ${joined.length} group/newsletter chat(s); cached ${cached} display name(s)`
         );
+        if (mongoReady()) {
+          const bind = await bindTrackedGroupJids(joined);
+          onLog(
+            `[whatsapp-ingest] bound ${bind.bound} tracked group JID(s); ${bind.unbound} still name-only`
+          );
+        }
       } catch (err) {
         onLog(`[whatsapp-ingest] group list skipped: ${err.message}`);
       }

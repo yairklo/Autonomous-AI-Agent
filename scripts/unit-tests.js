@@ -614,6 +614,41 @@ test('whatsapp puppeteer opts honor executable path env', async () => {
   assert.ok(opts.args.includes('--single-process'));
 });
 
+test('explainMessageMatch distinguishes JID skip vs role skip vs match', async () => {
+  const { explainMessageMatch } = await import('../server/jobs-engine/match-explain.js');
+  const jobsConfig = {
+    roles: ['Software Engineer'],
+    whatsapp: { groups: ['Referally Junior 1-2 🐊'] },
+  };
+  const jidSkip = explainMessageMatch(
+    {
+      chatName: '120363390709579185@g.us',
+      chatId: '120363390709579185@g.us',
+      body: '*Design Automation Engineer* Computer Science',
+    },
+    { jobsConfig, trackedNames: ['Referally Junior 1-2 🐊'] }
+  );
+  assert.equal(jidSkip.reason, 'group_not_tracked');
+  const roleSkip = explainMessageMatch(
+    {
+      chatName: 'Referally Junior 1-2 🐊',
+      chatId: '120363@g.us',
+      body: 'מחפשים שותף לדירה בתל אביב',
+    },
+    { jobsConfig, trackedNames: ['Referally Junior 1-2 🐊'] }
+  );
+  assert.equal(roleSkip.reason, 'not_target_job');
+  const hit = explainMessageMatch(
+    {
+      chatName: 'Referally Junior 1-2 🐊',
+      chatId: '120363@g.us',
+      body: 'דרוש Software engineer (python)',
+    },
+    { jobsConfig, trackedNames: ['Referally Junior 1-2 🐊'] }
+  );
+  assert.equal(hit.matched, true);
+});
+
 test('matchFullStackOrBackend detects HE/EN roles', async () => {
   const { matchFullStackOrBackend } = await import('../server/jobs/job-matcher.js');
   const he = matchFullStackOrBackend('דרוש Full Stack Developer עם Node');
@@ -634,6 +669,14 @@ test('matchFullStackOrBackend detects HE/EN roles', async () => {
   );
   assert.strictEqual(materials.matches, false);
   assert.equal(materials.excluded, true);
+  const sw = matchFullStackOrBackend(
+    'https://innoviz.tech/careers software engineer (python) לשאלות'
+  );
+  assert.ok(sw.matches);
+  const nvidia = matchFullStackOrBackend(
+    '*Design Automation Engineer* / NVIDIA Bachelor’s degree in Computer Science https://nvidia.wd5.myworkdayjobs.com/job'
+  );
+  assert.ok(nvidia.matches);
 });
 
 test('JobDb dedupes by fingerprint', async () => {

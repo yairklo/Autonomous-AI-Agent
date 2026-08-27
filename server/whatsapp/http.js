@@ -175,7 +175,27 @@ export function mountWhatsappRoutes(app, deps = {}) {
         chatId: req.query.chatId,
         since: req.query.since,
       });
-      return res.json({ ok: true, count: messages.length, messages });
+      const { explainMessageMatch } = await import('../jobs-engine/match-explain.js');
+      const jobsConfig = loadJobsConfig();
+      const trackedNames = [...(jobsConfig.whatsapp?.groups || [])];
+      if (mongoReady()) {
+        try {
+          const { listTrackedGroups } = await import('../jobs-engine/group-store.js');
+          const tracked = await listTrackedGroups({ activeOnly: true });
+          for (const g of tracked) {
+            if (g.name) trackedNames.push(g.name);
+            if (g.jid) trackedNames.push(g.jid);
+            if (g.groupId && String(g.groupId).includes('@')) trackedNames.push(g.groupId);
+          }
+        } catch {
+          /* file allow-list is enough */
+        }
+      }
+      const explained = messages.map((m) => ({
+        ...m,
+        match: explainMessageMatch(m, { jobsConfig, trackedNames }),
+      }));
+      return res.json({ ok: true, count: explained.length, messages: explained });
     } catch (err) {
       return res.status(500).json({
         ok: false,
