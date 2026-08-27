@@ -204,7 +204,16 @@ async function loadWhatsappMessages() {
         meta.textContent = `${m.chatName || m.chatId || 'chat'} · ${when}${m.fromMe ? ' · you' : ''}`;
         const body = document.createElement('div');
         body.textContent = m.body || (m.hasMedia ? '(media)' : '');
-        li.append(meta, body);
+        const matchLine = document.createElement('div');
+        matchLine.className = 'wa-msg-match';
+        if (m.match?.matched) {
+          matchLine.textContent = `Job match: ${m.match.detail || 'yes'}`;
+          matchLine.dataset.state = 'matched';
+        } else {
+          matchLine.textContent = `Not a job: ${m.match?.reason || 'unknown'}${m.match?.detail ? ` — ${m.match.detail}` : ''}`;
+          matchLine.dataset.state = m.match?.reason || 'unknown';
+        }
+        li.append(meta, body, matchLine);
         els.waMessagesList.appendChild(li);
       }
     }
