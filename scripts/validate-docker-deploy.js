@@ -62,6 +62,13 @@ assert.match(compose, /JOINUP_TELEGRAM_AUTOSTART=0/);
 
 const pkg = JSON.parse(read('package.json'));
 assert.equal(pkg.scripts['start:joinup-telegram'], 'node scripts/start-joinup-telegram.js');
+assert.equal(
+  pkg.optionalDependencies.playwright,
+  '1.50.1',
+  'npm playwright must match mcr.microsoft.com/playwright:v1.50.1-jammy (do not caret-bump)'
+);
+assert.match(appDf, /PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
+assert.match(rootDf, /PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
 
 assert.equal(
   resolveVoiceAgentBaseUrl({ VOICE_AGENT_URL: 'https://x.example/' }),

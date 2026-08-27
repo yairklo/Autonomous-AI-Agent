@@ -13,6 +13,19 @@ import {
   buildGenericFieldSelectors,
 } from './drivers/index.js';
 
+function resolvePlaywrightExecutable() {
+  const candidates = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    '/usr/local/bin/wa-chrome',
+  ];
+  for (const raw of candidates) {
+    const p = String(raw || '').trim();
+    if (p && fs.existsSync(p)) return p;
+  }
+  return '';
+}
+
 /**
  * Playwright form submitter with ATS-aware drivers (Workday / Greenhouse / Lever / generic).
  * Never sends WhatsApp DMs or group replies.
@@ -102,6 +115,9 @@ export async function submitJobFormWithPlaywright({
         throw err;
       }
       // HEADLESS_BROWSER=true|false (default true). In Docker/Coolify set HEADLESS_BROWSER=true.
+      // Pin npm playwright to the Docker image (1.50.1 / Chromium ~133). A newer
+      // playwright package looks for chromium_headless_shell-NNNN that is not in
+      // this image; bumping the image to 1.62 breaks whatsapp-web.js getChats ("r").
       const launchArgs = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -109,9 +125,14 @@ export async function submitJobFormWithPlaywright({
       if (headless) {
         launchArgs.push('--disable-blink-features=AutomationControlled');
       }
+      const executablePath = resolvePlaywrightExecutable();
+      if (executablePath) {
+        onLog?.(`[playwright-submitter] chromium executable=${executablePath}`);
+      }
       const browser = await playwright.chromium.launch({
         headless,
         args: launchArgs,
+        ...(executablePath ? { executablePath } : {}),
       });
       const context = await browser.newContext({
         userAgent:
