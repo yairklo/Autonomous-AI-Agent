@@ -28,7 +28,8 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # Production deps only — skip promptfoo + global claude-code (Coolify disk).
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
@@ -53,6 +54,8 @@ ENV NODE_ENV=production \
     CI=1 \
     PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/wa-chrome \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     CLAUDE_BIN=claude \
     GIT_CONFIG_GLOBAL=/root/.git-config-data/gitconfig \
     NO_OPEN_BROWSER=1 \

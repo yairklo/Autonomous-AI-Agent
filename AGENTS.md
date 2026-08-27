@@ -9,6 +9,7 @@ Persistent instructions for Cursor Agent (including headless terminal runs).
 
 ## Lessons learned (auto)
 - Quality gate `root:test` failed — re-run and fix locally before merge/deploy.
+- Playwright **npm must be exactly 1.50.1** to match `mcr.microsoft.com/playwright:v1.50.1-jammy`. A caret (`^1.54.1`) resolved to 1.62.1 and failed submit with `chromium_headless_shell-1234` missing. Do **not** bump the Docker image to 1.62 — Chrome 151 breaks WhatsApp `getChats` (`error: "r"`). Launch with `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/wa-chrome`.
 - `npm start` can fail hard on duplicate ESM imports (for example `fs` in `server/index.js`) even when tests pass; rerun startup locally after server entry changes.
 - Voice GUI push-to-talk needs a browser secure context (`window.isSecureContext`). Plain `http://VPS-IP:8787` after Coolify/VPS migrate blocks `getUserMedia` / Web Speech; enable Coolify domain + Let’s Encrypt HTTPS (no repo nginx/Caddyfile). Client must check `isSecureContext` and not silently ignore `SpeechRecognition.onerror` without MediaRecorder fallback.
 - Gemini orchestration: with `GEMINI_API_KEY` set (and no `AGENT_LLM_PROVIDER` override), the voice/joinUp chat backend uses `GeminiSessionManager` (`gemini-3.6-flash` by default from live discovery). MCP tools remain server-side. Free-tier calls go through `GeminiRateLimiter` (RPM spacing + 429 backoff). Discover models with `node scripts/list-google-models.js`.
