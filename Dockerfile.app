@@ -23,23 +23,18 @@ ENV HOME=/root
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Install dependencies first for better layer caching.
-# Use npm install (not npm ci) so Coolify builds tolerate lockfile
-# cross-platform variations. Force development during install so Coolify's
-# build-time NODE_ENV=production does not omit deps.
-ENV NODE_ENV=development
-COPY package.json package-lock.json ./
-RUN npm install
+# Production deps only. Coolify VPS ran out of disk unpacking promptfoo and
+# the global Claude CLI package (it ships claude.exe). Gemini does not need
+# that CLI at build time; install it later on the running container if required.
 ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm install --omit=dev --no-audit --no-fund
 
 RUN CHROME="$(find /ms-playwright -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) 2>/dev/null | head -n 1)" \
   && test -n "$CHROME" \
   && test -x "$CHROME" \
   && ln -sf "$CHROME" /usr/local/bin/wa-chrome \
   && /usr/local/bin/wa-chrome --no-sandbox --version
-
-# Claude Code CLI (subscription / browser login — not API-key based)
-RUN npm install -g @anthropic-ai/claude-code
 
 ENV PATH="/root/.local/bin:${PATH}"
 ENV HOME=/root

@@ -31,14 +31,18 @@ assert.match(appDf, /EXPOSE 8787/);
 assert.match(appDf, /PUPPETEER_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
 assert.match(appDf, /playwright:v1\.50\.1-jammy/);
 assert.match(appDf, /\/ms-playwright/);
+assert.match(appDf, /npm install --omit=dev/);
 assert.doesNotMatch(appDf, /browsers install chrome/);
+assert.doesNotMatch(appDf, /^RUN npm install -g @anthropic-ai\/claude-code/m);
 assert.match(appDf, /FROM mcr\.microsoft\.com\/playwright/);
 
 const rootDf = read('Dockerfile');
 assert.match(rootDf, /PUPPETEER_EXECUTABLE_PATH=\/usr\/local\/bin\/wa-chrome/);
 assert.match(rootDf, /playwright:v1\.50\.1-jammy/);
 assert.match(rootDf, /\/ms-playwright/);
+assert.match(rootDf, /npm install --omit=dev/);
 assert.doesNotMatch(rootDf, /browsers install chrome/);
+assert.doesNotMatch(rootDf, /^RUN npm install -g @anthropic-ai\/claude-code/m);
 
 const tgDf = read('Dockerfile.joinup-telegram');
 assert.match(tgDf, /CMD\s*\[\s*"npm",\s*"run",\s*"start:joinup-telegram"\s*\]/);
