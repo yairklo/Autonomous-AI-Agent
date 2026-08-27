@@ -100,6 +100,26 @@ export function createTelegramClient({
       };
     },
 
+    async sendSuccessAlert(job, details = {}, { dryRun = false } = {}) {
+      const text = [
+        '✅ Application submitted',
+        `Job: ${job.id}`,
+        `Group: ${job.groupName || 'n/a'}`,
+        `ATS: ${details.ats || 'unknown'}`,
+        `Form: ${job.formUrl || 'n/a'}`,
+      ].join('\n');
+
+      if (dryRun || !token || !chat) {
+        return { ok: true, dryRun: true, text };
+      }
+      const result = await api('sendMessage', {
+        chat_id: chat,
+        text,
+        disable_web_page_preview: true,
+      });
+      return { ok: true, dryRun: false, messageId: result.message_id, text };
+    },
+
     async sendFailureAlert(job, error, { dryRun = false } = {}) {
       const text = [
         '⚠️ Job submission failed',
@@ -150,6 +170,57 @@ export function createTelegramClient({
         disable_web_page_preview: true,
       });
       return { ok: true, dryRun: false, messageId: result.message_id, text };
+    },
+
+    /**
+     * Long-poll for updates (used to receive Approve/Reject button taps).
+     * @param {{ offset?: number, timeoutSec?: number }} [opts]
+     * @returns {Promise<object[]>} raw Telegram Update objects
+     */
+    async getUpdates({ offset, timeoutSec = 25 } = {}) {
+      if (!token) return [];
+      const result = await api('getUpdates', {
+        offset,
+        timeout: timeoutSec,
+        allowed_updates: ['callback_query'],
+      });
+      return Array.isArray(result) ? result : [];
+    },
+
+    /**
+     * Stop the button's loading spinner and optionally toast a message.
+     */
+    async answerCallbackQuery(callbackQueryId, { text, showAlert = false } = {}) {
+      if (!token) return { ok: true, dryRun: true };
+      try {
+        await api('answerCallbackQuery', {
+          callback_query_id: callbackQueryId,
+          text,
+          show_alert: showAlert,
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    },
+
+    /**
+     * Replace the Approve/Reject keyboard with a plain status line once resolved,
+     * so re-tapping an already-handled message can't fire a second action.
+     */
+    async editMessageAfterDecision(messageId, { originalText, statusLine } = {}) {
+      if (!token || !chat || !messageId) return { ok: true, dryRun: true };
+      try {
+        await api('editMessageText', {
+          chat_id: chat,
+          message_id: messageId,
+          text: [originalText, '', statusLine].filter(Boolean).join('\n'),
+          disable_web_page_preview: true,
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
     },
 
     /**

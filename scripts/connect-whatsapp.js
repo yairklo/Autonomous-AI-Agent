@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { buildWhatsappClientOptions } from '../server/whatsapp/client-opts.js';
 import { unlinkChromeProfileLocks } from '../server/whatsapp/chrome-locks.js';
+import { sealClientAgainstSends } from '../server/jobs/whatsapp-live.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -70,6 +71,10 @@ async function main() {
   const client = new Client(
     buildWhatsappClientOptions({ LocalAuth, authPath })
   );
+  // Defense in depth: this script never sends messages, but seal the client
+  // anyway so a future edit here can't accidentally add a live send path
+  // that bypasses the same safety guard the shared ingest session uses.
+  sealClientAgainstSends(client, (line) => console.log(line));
 
   let exiting = false;
   const shutdown = async (code = 0) => {

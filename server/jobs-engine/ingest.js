@@ -254,7 +254,7 @@ export async function handleWhatsappMessage(msg, deps = {}) {
       `[whatsapp-ingest] ${upserted.isNew ? 'new' : 'dup'} job=${upserted.job.jobId} group=${groupName}`
     );
     if (upserted.isNew && deps.notifyTelegram !== false) {
-      await notify(job, { groupName, onLog });
+      await notify(job, { groupName, jobsConfig, onLog });
     }
   }
   deps.session?.markEvent?.();
