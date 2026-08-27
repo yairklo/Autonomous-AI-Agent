@@ -77,6 +77,24 @@
 # | Volumes | `.wwebjs_auth`, `data`, `assets`, Claude/Cursor/git config, `/workspaces` |
 # | WhatsApp / Puppeteer | Playwright **v1.50.1-jammy** (Chromium ~133) via `PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/wa-chrome`. Do not use Playwright 1.61 / Chrome 151. |
 #
+# ## VPS disk full (`no space left on device` during Coolify export)
+#
+# Playwright images are ~1GB+. Failed rebuilds leave builder snapshots. If
+# unpack fails on `claude.exe` / overlayfs snapshots, free Docker disk on the
+# **server** (Coolify → Server → Terminal), **not** inside the app container:
+#
+# ```bash
+# df -h
+# docker system df
+# docker builder prune -af
+# docker image prune -af
+# docker container prune -f
+# df -h
+# ```
+#
+# Do **not** add `--volumes` — that would wipe `.wwebjs_auth` / `data`.
+# Then Rebuild the voice-agent app.
+#
 # ### joinup-telegram (`Dockerfile.joinup-telegram`) — thin
 #
 # | Variable | Notes |

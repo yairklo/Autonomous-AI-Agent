@@ -27,18 +27,16 @@ ENV HOME=/root
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-ENV NODE_ENV=development
-COPY package.json package-lock.json ./
-RUN npm install
+# Production deps only — skip promptfoo + global claude-code (Coolify disk).
 ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm install --omit=dev --no-audit --no-fund
 
 RUN CHROME="$(find /ms-playwright -type f \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) 2>/dev/null | head -n 1)" \
   && test -n "$CHROME" \
   && test -x "$CHROME" \
   && ln -sf "$CHROME" /usr/local/bin/wa-chrome \
   && /usr/local/bin/wa-chrome --no-sandbox --version
-
-RUN npm install -g @anthropic-ai/claude-code
 
 ENV PATH="/root/.local/bin:${PATH}"
 ENV HOME=/root
