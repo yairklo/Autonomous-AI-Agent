@@ -9,7 +9,8 @@
     "start": "node scripts/start-with-bootstrap.js",
     "start:joinup-telegram": "node scripts/start-joinup-telegram.js",
     "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
-    "build:graph": "repomix --output .graph-context.xml && graphifyy --output .graph-context-py.json",
+    "build:graph": "node scripts/generate-topology.js --output=.graph-context.md",
+    "check:graph": "node scripts/check-topology-freshness.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",
@@ -74,6 +75,7 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
+    "gpt-tokenizer": "^4.0.0",
     "promptfoo": "^0.121.19"
   }
 }
