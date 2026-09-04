@@ -20,7 +20,10 @@ verify the diff produced by L2 against the plan L1 wrote — not to re-plan or r
    rules most likely to be silently missed since they don't map to one glob.
 4. **Quality gates:** run `detectQualityGates(projectRoot)` + `runQualityGates(...)` from
    `scripts/dispatch-quality-gates.js` (already used by `scripts/dispatch-task.js` — do not
-   reimplement gate detection here). All gates must pass.
+   reimplement gate detection here). All gates must pass. If you want extra confidence beyond one
+   pass (e.g. an adversarial revert-and-rerun to rule out a false pass), run it **once**, not
+   twice — a sibling project (MultiVendor) ran its full suite twice for exactly this reason on a
+   single-fixture change and that doubling was most of that review's cost.
 
 ## Long-running gates: wait for real completion, but visibly
 
