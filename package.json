@@ -48,7 +48,8 @@
     "whatsapp:ingest-coverage": "node scripts/whatsapp-ingest-coverage.js",
     "test:whatsapp-session": "node scripts/test-whatsapp-session.js",
     "test:whatsapp-ingest": "node scripts/test-whatsapp-ingest.js",
-    "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js"
+    "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js",
+    "test:pipeline-triage": "node --test scripts/pipeline-triage.test.js"
   },
   "engines": {
     "node": ">=18"

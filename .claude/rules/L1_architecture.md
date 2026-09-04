@@ -21,6 +21,31 @@ You are the Planner (the current default-tier model, see project config for the 
 1. **3-File Rule:** Never edit more than 3 files in a single atomic sub-task.
 2. **Layer Isolation Rule:** Never mix Database schema changes and UI/Frontend edits in the same sub-task. Separate them into distinct atomic steps.
 
+## Fast path for trivial, low-risk changes
+
+Whoever defines the task tags it `risk: low | medium | high`. Once you know which files the fix
+needs, run:
+
+```
+node scripts/pipeline-triage.js --risk <the human-set tag> --files <comma-separated files>
+```
+
+(`node --test scripts/pipeline-triage.test.js` runs its self-tests — ported from MultiVendor's
+`scripts/pipeline_triage.py`/JoinUpApp's `scripts/pipeline-triage.mjs`, same idea: deterministic
+pattern matching for file-count and path-sensitivity, not an LLM judgment call. It can only ever
+escalate toward `full_pipeline`, never hand you a `fast_path` for something you can see is
+riskier than the gate knows — escalate anyway and say why if so.)
+
+- **`fast_path`**: implement the fix yourself directly instead of writing `plan.json` and handing
+  off to L2. Still respect the Approval Gate below exactly as written for interactive runs — the
+  fast path skips the L2 handoff, not human approval.
+- **`full_pipeline`**: proceed with `plan.json` + handoff to L2 as normal below.
+
+This exists because of a real cost measurement on a sibling project (MultiVendor) running this
+same pipeline: a one-file, 9-line, `risk: low` fix went through the full L1→L2→L3 pipeline
+anyway and cost ~215K tokens and over an hour of wall time, almost entirely in an L3-equivalent
+stage re-running the full test suite adversarially.
+
 ## Long-running verification: one bounded wait, not silence and not a repeating monitor
 
 Two real incidents in a sibling project running this same L1→L2→L3 pattern (MultiVendor):
