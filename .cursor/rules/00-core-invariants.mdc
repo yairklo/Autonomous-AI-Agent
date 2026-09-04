@@ -1,0 +1,21 @@
+---
+description: Cross-cutting ops/security invariants that apply regardless of which files are touched
+alwaysApply: true
+---
+
+# Core invariants (Autonomous AI Agent)
+
+## Secrets hygiene
+- Never commit `gdrive-credentials.json`, `gdrive-tokens.json`, `*.pem`, `*.key`, or anything under
+  `data/*.json` (already gitignored — do not work around that).
+
+## Docker image discipline
+- Do not `npm install -g @anthropic-ai/claude-code` inside the image (ships `claude.exe`; Coolify
+  unpack hits "no space left on device"). Use `npm install --omit=dev`.
+- Do not download Chrome at build time on Coolify.
+- If a Coolify export fails on overlayfs, prune builder/images on the **server** — never
+  `--volumes` (that deletes persisted data).
+
+## Quality gates
+- `root:test` (and any other quality gate) failing blocks merge/deploy — re-run and fix locally,
+  do not push a red gate.

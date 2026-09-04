@@ -1,3 +1,13 @@
+// ONE-TIME HISTORICAL MIGRATION -- already applied, do not re-run.
+// This regex-patches scripts/dispatch-task.js from an older Cursor-based
+// dispatcher shape (resolveCursorLaunch/runCursorAgent) to the current
+// Claude-based one. dispatch-task.js has since evolved past the exact
+// code shapes these regexes target (e.g. it now calls runAgentProcess,
+// not runCursorAgent) -- re-running this will either no-op silently (the
+// regex.replace() calls below just won't match) or, if a future edit to
+// dispatch-task.js happens to reintroduce a matching shape, silently
+// reinject the stale hardcoded `claude-3-5-*` model ids this file still
+// contains. Kept only for historical/audit reference.
 import fs from 'node:fs';
 import path from 'node:path';
 

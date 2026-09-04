@@ -3,18 +3,26 @@
 Persistent instructions for Cursor Agent (including headless terminal runs).
 
 ## Always
-- Read `PROMPT.md`, `.cursorrules`, `AGENTS.md`, and `.cursor/rules/`.
+- Read `PROMPT.md`, `.cursorrules`, `AGENTS.md`, `.claude/rules/` (L1/L2/L3 protocol), and `.cursor/rules/`.
 - Run local production build/tests after code changes; fix until green.
 - Append new deploy/type lessons here when you discover them.
 
-## Lessons learned (auto)
-- Quality gate `root:test` failed — re-run and fix locally before merge/deploy.
-- Playwright **npm must be exactly 1.50.1** to match `mcr.microsoft.com/playwright:v1.50.1-jammy`. A caret (`^1.54.1`) resolved to 1.62.1 and failed submit with `chromium_headless_shell-1234` missing. Do **not** bump the Docker image to 1.62 — Chrome 151 breaks WhatsApp `getChats` (`error: "r"`). Launch with `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/wa-chrome`.
-- `npm start` can fail hard on duplicate ESM imports (for example `fs` in `server/index.js`) even when tests pass; rerun startup locally after server entry changes.
-- Voice GUI push-to-talk needs a browser secure context (`window.isSecureContext`). Plain `http://VPS-IP:8787` after Coolify/VPS migrate blocks `getUserMedia` / Web Speech; enable Coolify domain + Let’s Encrypt HTTPS (no repo nginx/Caddyfile). Client must check `isSecureContext` and not silently ignore `SpeechRecognition.onerror` without MediaRecorder fallback.
-- Gemini orchestration: with `GEMINI_API_KEY` set (and no `AGENT_LLM_PROVIDER` override), the voice/joinUp chat backend uses `GeminiSessionManager` (`gemini-3.6-flash` by default from live discovery). MCP tools remain server-side. Free-tier calls go through `GeminiRateLimiter` (RPM spacing + 429 backoff). Discover models with `node scripts/list-google-models.js`.
-- WhatsApp live ingest: shared `whatsapp-web.js` session with exponential reconnect (halt on LOGOUT **and** Chrome launch failure). Docker must use Playwright **v1.50.1-jammy** (Chromium ~133), not 1.61.1 / Chrome 151 — that breaks `getChats` (`error: "r"`) and `message_create`. Do not download Chrome at build time on Coolify. Do not `npm install -g @anthropic-ai/claude-code` in the image (ships `claude.exe`, Coolify unpack hits `no space left on device`); use `npm install --omit=dev`. If Coolify export fails on overlayfs, prune builder/images on the **server** (never `--volumes`). Raw persist includes 1:1 / Message yourself (`אני`); job matching still uses tracked/allow-list. **Always treat `אני` as tracked** even when it is missing from Mongo: label `אני`, own `@c.us`, or own old-style `<wid>-<ts>@g.us` (Message yourself is often a group). Do not treat someone else's `{phone}-{ts}@g.us` as self. If `getChat` fails, ingest used to store the JID as `chatName` and then skip `group_not_tracked` even for allow-listed groups — seed the chat-id→name cache from `getChats` on ready and never cache empty group names. `GET /api/whatsapp/messages` lists captured bodies.
-- `POST /api/jobs/tracked-groups` persists the exact group name to `data/whatsapp-groups.json` (and Mongo if connected) even when WhatsApp is not authenticated. Live JID resolve is best-effort; `WA_GROUP_AMBIGUOUS` is still refused. Seed names also live in `config.json` `whatsapp.groups`.
+## Durable lessons have moved
+The lessons that used to accumulate here have been promoted into glob-scoped rule files under
+`.cursor/rules/`:
+- `00-core-invariants.mdc` — secrets hygiene, Docker image discipline, quality-gate discipline. **Always applies.**
+- `whatsapp-playwright.mdc` — Playwright/Chromium version pin, WhatsApp session + JID handling, tracked-groups persistence.
+- `server-runtime.mdc` — `server/index.js` duplicate-ESM-import startup failure.
+- `integrations.mdc` — Gemini orchestration, voice GUI secure-context requirement, CV/Drive sync.
+
+(A stray `typescript-vercel-quality.mdc` — copy-pasted from JoinUpApp and referencing `next_app`/`Avatar`,
+neither of which exist in this repo — was removed; its one real line, the voice GUI secure-context
+lesson, is now in `integrations.mdc`.)
+
+## When you learn a new deploy bug
+1. Append a short bullet under **New lessons (not yet promoted)** below.
+2. Promote it into the matching `.mdc` file above (or a new one, with an explicit `globs:`) once this
+   section has ~5 unpromoted bullets, or before a release.
+
+## New lessons (not yet promoted)
 - Job matching is CS-graduate / junior software (Frontend, Backend, QA, data, mobile, DevOps, intern) not Full Stack only. Exclude non-CS disciplines (materials / mechanical / civil / chemical / electrical). Product Manager stays out.
-- Track WhatsApp groups by **JID** as the ingest key. Display names are labels only; `getChat` / `getChats` often throw minified `"r"` even when the session is authenticated (VPS `GET /api/whatsapp/groups` fails). Do not skip `group_not_tracked` just because `chatName` is `120363…@g.us` **or** a legacy `{phone}-{ts}@g.us`. Seed `config.json` `whatsapp.groupJids` (and `data/whatsapp-groups.json` `jids`) so ingest matches before Store title resolve. Also read `Store.GroupMetadata.subject`. Persist JID↔name in Mongo + memory with **no TTL**, then rematch messages that were stored as raw JIDs. `GET /api/whatsapp/messages` lists captured bodies.
-- CV lives on the Coolify **data volume** (`data/cv.pdf` + `data/cv-profile.json`). GUI Settings upload/save — no rebuild. Pipeline also falls back to `assets/cv.pdf`. Jobs table is `GET /api/jobs/recent` (JobDb + Mongo). Excel `data/job_applications.xlsx` syncs to Drive with the same OAuth files as MCP (`gdrive-credentials.json` / `gdrive-tokens.json` or env); file id in `data/gdrive-jobs-tracker.json`. Do not commit those JSON files.

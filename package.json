@@ -9,7 +9,8 @@
     "start": "node scripts/start-with-bootstrap.js",
     "start:joinup-telegram": "node scripts/start-joinup-telegram.js",
     "bootstrap:workspace": "node scripts/bootstrap-workspace.js",
-    "build:graph": "repomix --output .graph-context.xml && graphifyy --output .graph-context-py.json",
+    "build:graph": "node scripts/generate-topology.js --output=.graph-context.md",
+    "check:graph": "node scripts/check-topology-freshness.js",
     "dev": "node --watch server/index.js",
     "mock": "cross-env VOICE_AGENT_MOCK=1 node server/index.js",
     "chat": "node scripts/interactive-chat.js",
@@ -47,7 +48,8 @@
     "whatsapp:ingest-coverage": "node scripts/whatsapp-ingest-coverage.js",
     "test:whatsapp-session": "node scripts/test-whatsapp-session.js",
     "test:whatsapp-ingest": "node scripts/test-whatsapp-ingest.js",
-    "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js"
+    "test:whatsapp-gui-track": "node scripts/test-whatsapp-gui-track.js",
+    "test:pipeline-triage": "node --test scripts/pipeline-triage.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -74,6 +76,7 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
+    "gpt-tokenizer": "^4.0.0",
     "promptfoo": "^0.121.19"
   }
 }
