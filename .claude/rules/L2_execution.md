@@ -16,4 +16,17 @@ You are the Executor (the current fast/cheap-tier model, see project config for 
 - **Quality Gates**: The system will automatically run quality gates (`npm run build`, `npm test`) after your edits. You must fix any reported errors.
 - **Git Commits**: If you are requested to commit, use clean, descriptive commit messages.
 
+## Long-running verification & honest completion
+
+Two real incidents in a sibling project running this same pattern (MultiVendor) apply here
+especially, since L2 is the stage most likely to run a real test suite: never block
+synchronously on a run longer than a minute or two (a stage that goes quiet 10+ minutes gets
+killed by a no-progress watchdog whether or not it's stuck), and never set up a repeating monitor
+that re-wakes your full context on every progress tick either (seen for real — dozens of
+thousands of tokens per wake for zero new decision-relevant information). Run long verification
+in the background to a log file, then issue one bounded wait that exits the moment it detects
+completion. And a "done" report has to mean actually done: if your own turn is ending before a
+verification run you started has finished, that is not a completed stage — say so explicitly
+rather than letting a finished-looking report imply results that don't exist yet.
+
 Do not attempt to plan or architect new systems. Execute the given step and stop.

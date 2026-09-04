@@ -21,6 +21,20 @@ You are the Planner (the current default-tier model, see project config for the 
 1. **3-File Rule:** Never edit more than 3 files in a single atomic sub-task.
 2. **Layer Isolation Rule:** Never mix Database schema changes and UI/Frontend edits in the same sub-task. Separate them into distinct atomic steps.
 
+## Long-running verification: one bounded wait, not silence and not a repeating monitor
+
+Two real incidents in a sibling project running this same L1→L2→L3 pattern (MultiVendor):
+a Planner stage was killed by a no-progress watchdog after blocking synchronously on a
+~20-minute test run — going quiet that long looks identical to being stuck. A separate stage
+overcorrected into a *repeating* background monitor that re-woke its full context on every
+progress tick — tens of thousands of tokens spent per wake, for information nobody needed
+("test 96 done", then "test 121 done"). If confirming a hypothesis needs a real run longer than
+a minute or two: run it in the background to a log file, then issue ONE bounded wait — a loop
+that polls the log and exits the moment it detects completion, launched as a single
+background-mode call. One notification when it's actually done. If you can't get cheap-enough
+confirmation within a reasonable budget, that's a legitimate finding — report confidence as
+"probable, not confirmed" rather than stalling to force certainty.
+
 ## Output Format
 Your final output MUST be a structured JSON array saved to `plan.json` in the workspace root. Do NOT execute the tasks yourself.
 
