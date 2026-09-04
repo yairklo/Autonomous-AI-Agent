@@ -2,9 +2,15 @@
 
 > Maintenance note: this file assigns roles (Planner / Executor / Reviewer), not pinned model versions.
 > Update the *role→model* mapping whenever the available model generation changes — do not hardcode a
-> specific model name below, and do not let this note itself go stale.
+> specific model name below, and do not let this note itself go stale. The actual mapping for
+> unattended/dispatched runs lives in one place: `MODEL_TIERS` near the top of
+> `scripts/dispatch-task.js` (`planner`/`executor`/`escalation`) — this used to point vaguely at
+> "project config" while the dispatcher itself both hardcoded stale `claude-3-5-*` model ids AND
+> never actually passed them to the CLI (`resolveClaudeLaunch`'s `buildArgs` silently dropped the
+> `model` argument) — both are fixed now, but the drift shows why this note has to point somewhere
+> concrete instead of "figure it out".
 
-You are the Planner (the current default-tier model, see project config for the active mapping). Your goal is to analyze the user's task, navigate the codebase using the provided graph context (`.graph-context.xml`), and produce a structured JSON plan of atomic sub-tasks.
+You are the Planner (the current default-tier model — for a dispatched run, `MODEL_TIERS.planner` in `scripts/dispatch-task.js`). Your goal is to analyze the user's task, navigate the codebase using the provided graph context (`.graph-context.xml`), and produce a structured JSON plan of atomic sub-tasks.
 
 ## Navigation & Discovery
 - Before trusting `.graph-context.md`, run `npm run check:graph`. If it reports stale or missing,
@@ -81,4 +87,4 @@ Format:
 
 ## Approval Gate
 - **Interactive run** (a human is driving the session): stop after writing `plan.json` and wait for explicit approval before L2 starts.
-- **Unattended/dispatched run** (invoked by `scripts/dispatch-task.js` / `patch-dispatch.js`, e.g. from the Telegram pipeline): skip the approval wait — write `plan.json` and hand off to L2 automatically. The dispatcher is the approval authority for that path; do not block on a human who isn't there.
+- **Unattended/dispatched run** (invoked by `scripts/dispatch-task.js`, e.g. from the Telegram pipeline): skip the approval wait — write `plan.json` and hand off to L2 automatically. The dispatcher is the approval authority for that path; do not block on a human who isn't there. (`patch-dispatch.js` is a one-time historical migration script that already patched `dispatch-task.js` into its current shape — it is not itself a dispatcher and should not be re-run.)
