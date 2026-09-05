@@ -1,0 +1,10 @@
+---
+description: Node server entrypoint runtime lessons
+globs: server/index.js
+alwaysApply: false
+---
+
+# Server runtime (Autonomous AI Agent)
+
+- `npm start` can fail hard on duplicate ESM imports (for example `fs` in `server/index.js`) even
+  when tests pass — rerun startup locally after any server entry change, don't rely on tests alone.

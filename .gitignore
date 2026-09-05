@@ -8,7 +8,9 @@ uploads/
 Thumbs.db
 coverage/
 dist/
-.claude/
+.claude/*
+!.claude/rules/
+.graph-context.md
 sessions.json
 gemini-sessions.json
 data/cv-profile.json

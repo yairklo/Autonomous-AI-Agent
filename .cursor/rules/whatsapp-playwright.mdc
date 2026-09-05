@@ -1,0 +1,40 @@
+---
+description: WhatsApp ingest session handling and the Playwright/Chromium version pin it depends on
+globs: Dockerfile*,docker-compose.yaml,scripts/*whatsapp*,server/**/*whatsapp*,data/whatsapp*,config.json
+alwaysApply: false
+---
+
+# WhatsApp ingest & Playwright (Autonomous AI Agent)
+
+## Playwright version is load-bearing
+- npm dependency must be **exactly `1.50.1`** to match `mcr.microsoft.com/playwright:v1.50.1-jammy`.
+  A caret (`^1.54.1`) has resolved to 1.62.1 and failed submit with `chromium_headless_shell-1234`
+  missing.
+- Do **not** bump the Docker image past 1.50.1-jammy — Chrome 151 breaks WhatsApp `getChats`
+  (`error: "r"`) and `message_create`.
+- Launch with `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/wa-chrome`.
+
+## Session & reconnect
+- Shared `whatsapp-web.js` session with exponential reconnect; halt on `LOGOUT` **and** on Chrome
+  launch failure.
+
+## Self-message / JID handling
+- Raw persist includes 1:1 / "Message yourself" (`אני`); job matching still uses tracked/allow-list.
+  **Always treat `אני` as tracked** even when missing from Mongo: label `אני`, own `@c.us`, or own
+  old-style `<wid>-<ts>@g.us` (Message yourself is often a group). Do not treat someone else's
+  `{phone}-{ts}@g.us` as self.
+- Track WhatsApp groups by **JID**, not display name — `getChat` / `getChats` often throw a minified
+  `"r"` even when the session is authenticated. Do not skip `group_not_tracked` just because
+  `chatName` is `120363…@g.us` or a legacy `{phone}-{ts}@g.us`.
+- Seed `config.json` `whatsapp.groupJids` (and `data/whatsapp-groups.json` `jids`) so ingest matches
+  before Store title resolve; also read `Store.GroupMetadata.subject`. Persist JID↔name in Mongo +
+  memory with **no TTL**, then rematch messages that were stored as raw JIDs.
+- If `getChat` fails, ingest used to store the JID as `chatName` and then skip `group_not_tracked`
+  even for allow-listed groups — seed the chat-id→name cache from `getChats` on ready and never
+  cache empty group names.
+
+## Tracked-groups persistence
+- `POST /api/jobs/tracked-groups` persists the exact group name to `data/whatsapp-groups.json` (and
+  Mongo if connected) even when WhatsApp is not authenticated. Live JID resolve is best-effort;
+  `WA_GROUP_AMBIGUOUS` is still refused. Seed names also live in `config.json` `whatsapp.groups`.
+- `GET /api/whatsapp/messages` lists captured bodies.

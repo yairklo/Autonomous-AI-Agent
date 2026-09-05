@@ -23,6 +23,19 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 
+// Role -> model mapping for the unattended dispatch pipeline (Planner /
+// Executor / escalation-on-failure). Same principle as .claude/rules/*.md's
+// own maintenance notes: this assigns *roles*, but unlike those docs, this
+// is executable code that has to name a real, current model id somewhere --
+// keep that naming isolated to this one object so a model-generation
+// upgrade is a one-line change here, not a hunt through call sites.
+// Last updated for the Claude 5 generation; update whenever it changes.
+const MODEL_TIERS = {
+  planner: 'claude-sonnet-5', // architecture/planning: needs the stronger model
+  executor: 'claude-haiku-4-5-20251001', // routine per-step execution: cheap/fast tier
+  escalation: 'claude-sonnet-5', // retried steps that failed on the cheap tier
+};
+
 loadDotEnv(path.join(repoRoot, '.env'));
 
 const args = process.argv.slice(2);
@@ -187,9 +200,9 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
 
 
   ensureGraphCache(resolvedPath);
-  console.log(`Running Claude Planner (claude-3-5-sonnet)...`);
+  console.log(`Running Claude Planner (${MODEL_TIERS.planner})...`);
   
-  const plannerLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
+  const plannerLaunch = resolveClaudeLaunch(MODEL_TIERS.planner);
   const planFileName = `plan-${Date.now()}.json`;
   const plannerPrompt = `Read PROMPT.md, .cursorrules, AGENTS.md, and .cursor/rules/. Create a file named ${planFileName} containing ONLY a valid JSON array of tasks to implement this feature: ${taskDescription}. You MUST write to ${planFileName} using your file tools. Do not ask for confirmation.`;
   
@@ -209,7 +222,7 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
     process.exit(1);
   }
 
-  let haikuLaunch = resolveClaudeLaunch('claude-3-5-haiku-20241022');
+  let haikuLaunch = resolveClaudeLaunch(MODEL_TIERS.executor);
   
   for (const step of plan) {
     console.log(`[dispatch] Executing step ${step.id || 'unknown'}...`);
@@ -236,7 +249,7 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
     if (!stepSuccess) {
       console.error(`[dispatch] Nuclear Escalation for step ${step.id}! Rolling back and escalating to Sonnet.`);
       execSync('git reset --hard', { cwd: resolvedPath, stdio: 'ignore' });
-      const escalateLaunch = resolveClaudeLaunch('claude-3-5-sonnet-20241022');
+      const escalateLaunch = resolveClaudeLaunch(MODEL_TIERS.escalation);
       const escalateFilesStr = (step.target_files || []).join(', ');
       const escalateInstruction = step.instruction || step.task || step.description || 'Implement step according to plan';
       const escalatePrompt = `Read AGENTS.md and .cursorrules. Execute instruction: "${escalateInstruction}" on files: ${escalateFilesStr}. Complete the task and do not ask for confirmation.`;
@@ -251,7 +264,7 @@ if (process.env.DISPATCH_DRY_RUN === '1') {
   }
 
   console.log('✓ Claude execution completed. Falling through to final pushes.');
-  const agentLaunch = resolveClaudeLaunch('claude-3-5-haiku'); 
+  const agentLaunch = resolveClaudeLaunch(MODEL_TIERS.executor);
 // Re-assert prompt files exist for E2E (Cursor sometimes removes them).
 if (!fs.existsSync(promptPath)) fs.writeFileSync(promptPath, promptContent, 'utf8');
 if (!fs.existsSync(cursorrulesPath)) fs.writeFileSync(cursorrulesPath, cursorrulesContent, 'utf8');
@@ -382,7 +395,7 @@ function applyRegistryPolicyForPath(cwd) {
 function resolveClaudeLaunch(model) {
   return {
     bin: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    display: 'claude code',
+    display: `claude code (${model})`,
     kind: 'cmd',
     buildArgs: (prompt, cwd) => [
       '-y',
@@ -390,8 +403,9 @@ function resolveClaudeLaunch(model) {
       '--print',
       '--permission-mode',
       'bypassPermissions',
+      ...(model ? ['--model', model] : []),
       prompt
-    ] // model passing might require specific flags or env vars for claude CLI
+    ]
   };
 }
 

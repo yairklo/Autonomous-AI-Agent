@@ -1,0 +1,28 @@
+---
+description: Gemini orchestration, voice GUI, and CV/Drive sync integration lessons
+globs: server/llm-session.js,server/**/*gemini*,client/**,scripts/list-google-models.js,data/cv*,gdrive-*.json
+alwaysApply: false
+---
+
+# Integrations (Autonomous AI Agent)
+
+## Gemini orchestration
+- With `GEMINI_API_KEY` set (and no `AGENT_LLM_PROVIDER` override), the voice/joinUp chat backend
+  uses `GeminiSessionManager` (`gemini-3.6-flash` by default from live discovery). MCP tools remain
+  server-side. Free-tier calls go through `GeminiRateLimiter` (RPM spacing + 429 backoff). Discover
+  models with `node scripts/list-google-models.js`.
+
+## Voice GUI
+- Push-to-talk needs a browser secure context (`window.isSecureContext`). Plain
+  `http://VPS-IP:8787` after a Coolify/VPS migration blocks `getUserMedia` / Web Speech — enable a
+  Coolify domain + Let's Encrypt HTTPS (no repo nginx/Caddyfile). Client must check
+  `isSecureContext` and not silently ignore `SpeechRecognition.onerror` without a MediaRecorder
+  fallback.
+
+## CV / job data persistence
+- CV lives on the Coolify **data volume** (`data/cv.pdf` + `data/cv-profile.json`). GUI Settings
+  upload/save — no rebuild needed. Pipeline also falls back to `assets/cv.pdf`.
+- Jobs table is `GET /api/jobs/recent` (JobDb + Mongo). Excel `data/job_applications.xlsx` syncs to
+  Drive with the same OAuth files as MCP (`gdrive-credentials.json` / `gdrive-tokens.json` or env);
+  file id in `data/gdrive-jobs-tracker.json`. Do not commit those JSON files (see
+  `00-core-invariants.mdc`).
